@@ -1,0 +1,19 @@
+{
+  "name": "jarvis-marketplace",
+  "owner": {
+    "name": "Raphael Prudencio",
+    "email": "rsprudencio@gmail.com",
+    "url": "https://github.com/rsprudencio"
+  },
+  "metadata": {
+    "description": "Jarvis AI Assistant - Personal knowledge management, strategic context, and auditable git operations",
+    "version": "1.0.0",
+    "homepage": "https://github.com/rsprudencio/jarvis-plugin"
+  },
+  "plugins": [
+    {
+      "name": "jarvis",
+      "source": "./plugin"
+    }
+  ]
+}

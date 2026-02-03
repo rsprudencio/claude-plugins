@@ -1,0 +1,2 @@
+# Jarvis Tools MCP Server Dependencies
+mcp>=1.0.0
