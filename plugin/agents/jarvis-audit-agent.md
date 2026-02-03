@@ -151,9 +151,10 @@ Rewrite recent commit messages to remove unwanted text patterns.
 
 ### Vault Location
 
-**FIRST**: Read `vault_path` from `~/.config/jarvis/config.json` to determine the vault location.
+**Note:** The jarvis_commit MCP tool automatically detects the vault location from `~/.config/jarvis/config.json`.
+You do not need to read or pass vault_path - this is handled internally by the MCP tools.
 
-All git operations MUST be performed within this vault directory.
+All git operations are automatically performed within the configured vault directory.
 
 ### Forbidden Patterns
 
@@ -199,9 +200,6 @@ The caller will provide a structured request with these fields:
 - `push`: Boolean, whether to push after commit (default: false)
 
 ## Execution Workflow
-
-### Step 0: Verify Vault Location
-Read `~/.config/jarvis/config.json` to get `vault_path`. All operations must be within this path.
 
 ### Step 1: Check Status (Optional)
 If you need to verify what will be committed:
