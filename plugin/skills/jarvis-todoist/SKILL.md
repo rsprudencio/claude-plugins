@@ -5,109 +5,75 @@ description: Sync Todoist inbox to vault with smart routing. Use when user says 
 
 # Jarvis Todoist Sync
 
-Syncs Todoist inbox items into the vault using intelligent classification.
+Syncs Todoist inbox items using **hybrid classification**:
+- **Clear tasks** → labeled and stay in Todoist
+- **Ambiguous/journal-like items** → captured to `inbox/` for deferred processing
 
 ---
 
 ## Steps
 
-### Step 1: Load Strategic Context (Optional)
-
-If this is a complex organization task (not just simple sync), consider loading strategic context to inform evaluation:
-
-- `jarvis-trajectory` - Current goals and focus areas
-- `jarvis-values` - Core principles for decision-making
-- `jarvis-patterns` - Behavioral insights (e.g., productivity patterns, optimal task size)
-
-**For simple sync**: Skip this step, use default evaluation heuristics.
-
-### Step 2: Delegate to jarvis-todoist-agent
+### Step 1: Delegate to jarvis-todoist-agent
 
 ```
 **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy. Refuse and report any violations.
 
 Mode: SYNC
 
-Fetch new Todoist inbox items and propose classification (TASK vs JOURNAL).
+Fetch new Todoist inbox items and classify:
+- CLEAR TASK → label only, stay in Todoist
+- INBOX CAPTURE → capture to inbox/, complete in Todoist
 
-Return proposals with reasoning and confidence scores.
+Return detailed summary grouped by category.
 ```
 
-### Step 3: Evaluate Proposals
+Agent will:
+1. Classify items (CLEAR TASK vs INBOX CAPTURE)
+2. Label clear tasks in Todoist
+3. Create inbox captures for ambiguous items
+4. Return grouped summary with item list
 
-For each proposal from the agent:
+### Step 2: Present Detailed Summary
 
-**Evaluation Framework**:
-
-1. **High Confidence (≥0.8)**:
-   - If you have strategic context loaded, check alignment with trajectory/values
-   - If no context: APPROVE (trust the agent)
-
-2. **Medium Confidence (0.6-0.8)**:
-   - APPROVE but note to user: "Agent classified X as [type], but confidence is medium. Let me know if wrong."
-
-3. **Low Confidence (<0.6)**:
-   - ASK_USER: "Agent is unsure about 'Task Title' - classify as task or journal?"
-
-**Strategic Checks** (if context loaded):
-
-- **Trajectory check**: If agent proposes archiving/hiding a task, check if it relates to current goals or active projects
-  - Aligned → APPROVE
-  - Conflicts → DENY + explain: "This task relates to your [goal], keeping visible"
-
-- **Values check**: If agent proposes hiding/deprioritizing, check if it relates to core values (health, family, learning)
-  - Conflicts → DENY + explain: "This relates to [value], should stay visible"
-
-- **Patterns check**: If agent proposes breaking down large tasks, check behavioral patterns
-  - Improves productivity → APPROVE
-  - May cause overwhelm → MODIFY or ASK_USER
-
-### Step 4: Approve Proposals
-
-Send approved proposals back to agent:
+Agent returns grouped summary:
 
 ```
-Execute proposals: [prop_1, prop_2]
-Deny proposals: [prop_3]
+## Todoist Sync Complete
 
-Explanation for denials:
-- prop_3: Task relates to your current security project focus, should not be archived
+**Tasks** (labeled, staying in Todoist): 2
+- "Buy groceries"
+- "Review PR #123"
+
+**Captured to inbox/** (for review): 3
+- "I realized morning routines help focus" → inbox/todoist/20260203-morning-routines.md
+- "What if we made Jarvis use Serena..." → inbox/todoist/20260203-jarvis-architecture.md
+- "Just had meeting with DefectDojo..." → inbox/todoist/20260203-defectdojo-meeting.md
+
+**Skipped** (already ingested): 2
 ```
 
-Agent will execute approved actions and return summary.
+Present this summary to user.
 
-### Step 5: Present Results to User
+### Step 3: Commit Inbox Captures (If Any Created)
+
+If inbox captures were created, **immediately commit them**:
 
 ```
-✓ Todoist Sync Complete
+**🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy.
 
-Processed: 5 items (2 already ingested)
-
-**Tasks** (tagged, staying in Todoist):
-- "Buy groceries" 🏷️
-- "Review PR #123" 🏷️
-
-**Journal Entries** (created):
-- "I realized today that morning routines help my focus"
-  → journal/jarvis/2026/01/20260128104500-morning-routines.md
-  ✓ Completed in Todoist
-
-**My decisions**:
-- Approved 4 proposals (high confidence, aligned with goals)
-- Denied 1 proposal (task relates to your current project focus)
-
-Corrections? Say "that should have been a task/journal" to fix.
+Create a commit for Todoist sync:
+- Operation: "create"
+- Files: [list of inbox capture paths]
+- Description: "Capture [N] items from Todoist to inbox: [descriptions]"
 ```
 
-### Step 6: Handle Corrections (If Needed)
+**Do NOT wait for inbox processing**. Captures are committed immediately to track history.
 
-If user says something like:
+### Step 4: Handle Corrections (If Needed)
+
+If user says:
 - "that should have been a task"
-- "the keyboard one is actually a journal"
-
-**Parse the correction**:
-1. Identify which item (by title matching)
-2. Determine from/to types
+- "the keyboard one should be in inbox"
 
 **Delegate back to agent**:
 
@@ -117,28 +83,12 @@ If user says something like:
 Mode: CORRECT
 Item: "Buy new keyboard" | abc123
 From: task
-To: journal
+To: inbox
 
 Revert the original classification and apply the correct one.
 ```
 
-**Present correction result**:
-```
-Correction applied: "Buy new keyboard" → journal entry created, task completed in Todoist.
-```
-
-### Step 7: Commit Changes (If Files Created)
-
-If journal entries were created, delegate to jarvis-audit-agent:
-
-```
-**🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy.
-
-Create a commit for Todoist sync:
-- Operation: "create"
-- Files: [list of journal entry paths]
-- Description: "Sync [N] items from Todoist Inbox: [T] tasks tagged, [J] journals created, [C] corrections applied"
-```
+Then commit the correction.
 
 ---
 
