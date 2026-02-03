@@ -56,7 +56,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis-tools")
 
-server = Server("jarvis-tools")
+server = Server("tools")
 
 # Tool definitions
 TOOLS = [

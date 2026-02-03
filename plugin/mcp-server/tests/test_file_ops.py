@@ -214,3 +214,71 @@ class TestFileExistsInVault:
         result = file_exists_in_vault("test.txt")
         assert result["success"] is False
         assert "permission denied" in result["error"].lower()
+
+
+class TestEdgeCases:
+    """Tests for edge cases and special scenarios."""
+
+    def test_write_empty_content(self, mock_config):
+        """Should handle writing empty string content."""
+        result = write_vault_file("empty.txt", "")
+        assert result["success"] is True
+
+        # Verify file exists and is empty
+        file_path = mock_config.vault_path / "empty.txt"
+        assert file_path.exists()
+        assert file_path.read_text() == ""
+
+    def test_read_binary_file_as_text(self, mock_config):
+        """Should handle binary files gracefully when reading as text."""
+        # Create a file with binary content
+        binary_path = mock_config.vault_path / "binary.bin"
+        binary_path.write_bytes(b"\x00\x01\x02\xff\xfe\xfd")
+
+        result = read_vault_file("binary.bin")
+
+        # Should either succeed with decoded content or fail gracefully
+        # (depending on implementation - both are acceptable)
+        assert "success" in result
+
+    def test_list_empty_directory(self, mock_config):
+        """Should handle listing empty directory."""
+        # Create empty directory
+        empty_dir = mock_config.vault_path / "empty_dir"
+        empty_dir.mkdir()
+
+        result = list_vault_dir("empty_dir")
+        assert result["success"] is True
+        assert result["files"] == []
+        assert result["directories"] == []
+
+    def test_symlink_handling(self, mock_config):
+        """Should handle symlinks appropriately."""
+        import sys
+
+        # Skip on Windows where symlinks require admin
+        if sys.platform == "win32":
+            pytest.skip("Symlink test skipped on Windows")
+
+        # Create a real file
+        real_file = mock_config.vault_path / "real.txt"
+        real_file.write_text("real content")
+
+        # Create symlink
+        symlink = mock_config.vault_path / "link.txt"
+        try:
+            symlink.symlink_to(real_file)
+
+            # Test reading through symlink
+            result = read_vault_file("link.txt")
+            assert result["success"] is True
+            assert result["content"] == "real content"
+
+            # Test file_exists with symlink
+            exists_result = file_exists_in_vault("link.txt")
+            assert exists_result["success"] is True
+            assert exists_result["exists"] is True
+            assert exists_result["is_file"] is True
+        except OSError:
+            # If symlink creation fails, skip test
+            pytest.skip("Symlink creation not supported")

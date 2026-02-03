@@ -99,3 +99,80 @@ def no_config(mock_config):
     """No config file exists."""
     mock_config.delete_file()
     return mock_config
+
+
+@pytest.fixture
+def git_repo(temp_vault: Path) -> Path:
+    """Vault with initialized git repo and sample commits."""
+    # Git repo already initialized in temp_vault
+    # Add git config for tests
+    os.system(f'cd {temp_vault} && git config user.email "test@example.com"')
+    os.system(f'cd {temp_vault} && git config user.name "Test User"')
+
+    # Create initial commit
+    test_file = temp_vault / "test.txt"
+    test_file.write_text("Initial content")
+    os.system(f'cd {temp_vault} && git add test.txt && git commit -q -m "Initial commit"')
+
+    return temp_vault
+
+
+@pytest.fixture
+def git_repo_with_jarvis_commits(git_repo: Path) -> Path:
+    """Git repo with sample JARVIS Protocol commits."""
+    # Create a journal entry
+    journal_file = git_repo / "journal" / "2026" / "01" / "20260123153045-test-entry.md"
+    journal_file.write_text("# Test Entry\n\nTest content")
+
+    # Commit with JARVIS Protocol tag
+    os.system(f'cd {git_repo} && git add {journal_file}')
+    commit_msg = 'Jarvis CREATE: Test journal entry\n\n[JARVIS:Cc:20260123153045]'
+    os.system(f'cd {git_repo} && git commit -q -m "{commit_msg}"')
+
+    # Create another commit
+    note_file = git_repo / "notes" / "test-note.md"
+    note_file.write_text("# Test Note")
+    os.system(f'cd {git_repo} && git add {note_file}')
+    edit_msg = 'Jarvis EDIT: Update test note\n\n[JARVIS:Ea]'
+    os.system(f'cd {git_repo} && git commit -q -m "{edit_msg}"')
+
+    return git_repo
+
+
+@pytest.fixture
+def mock_subprocess(monkeypatch):
+    """Mock subprocess.run for testing command failures."""
+    import subprocess
+    from unittest.mock import Mock
+
+    class SubprocessMock:
+        """Helper to mock subprocess.run with custom behaviors."""
+        def __init__(self):
+            self.call_count = 0
+            self.mock_return = None
+            self.mock_side_effect = None
+
+        def set_return(self, returncode=0, stdout="", stderr=""):
+            """Set what subprocess.run should return."""
+            result = Mock()
+            result.returncode = returncode
+            result.stdout = stdout
+            result.stderr = stderr
+            self.mock_return = result
+
+        def set_side_effect(self, side_effect):
+            """Set a side effect (e.g., exception)."""
+            self.mock_side_effect = side_effect
+
+        def __call__(self, *args, **kwargs):
+            """Mock implementation of subprocess.run."""
+            self.call_count += 1
+            if self.mock_side_effect:
+                if isinstance(self.mock_side_effect, Exception):
+                    raise self.mock_side_effect
+                return self.mock_side_effect(*args, **kwargs)
+            return self.mock_return if self.mock_return else Mock(returncode=0, stdout="", stderr="")
+
+    mock = SubprocessMock()
+    monkeypatch.setattr(subprocess, "run", mock)
+    return mock
