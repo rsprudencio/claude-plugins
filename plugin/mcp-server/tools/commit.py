@@ -11,38 +11,53 @@ from .git_common import run_git_command
 logger = logging.getLogger("jarvis-tools.commit")
 
 
-def stage_files(files: Optional[list[str]] = None) -> dict:
+def stage_files(files: Optional[list[str]] = None, stage_all: bool = False) -> dict:
     """Stage files for commit in the vault repository.
 
     Args:
-        files: List of specific files to stage, or None for all changes.
+        files: List of specific files to stage. If None or empty, stages nothing.
+        stage_all: If True, stages all changes (git add -A). Takes precedence over files.
 
     Returns:
         {"success": bool, "error": str (if failed), "staged_count": int}
+
+    Note:
+        - stage_all=True: Stages all changes (staged_count: -1)
+        - files=[...]: Stages specific files (staged_count: len(files))
+        - files=None or []: Stages nothing (staged_count: 0)
+
+    Safety:
+        This function requires an EXPLICIT stage_all=True flag to stage all files.
+        Passing None or [] will NOT stage anything, preventing accidental commits.
     """
-    if files:
-        # Stage specific files
-        for file_path in files:
-            success, result = run_git_command(["add", file_path])
-            if not success:
-                return {
-                    "success": False,
-                    "error": f"Failed to stage file: {file_path}",
-                    "stderr": result.get("stderr", "")
-                }
-        logger.info(f"Staged {len(files)} file(s)")
-        return {"success": True, "staged_count": len(files)}
-    else:
-        # Stage all changes
+    # Explicit flag required for staging all files
+    if stage_all:
         success, result = run_git_command(["add", "-A"])
         if not success:
             return {
                 "success": False,
-                "error": "Failed to stage files",
+                "error": "Failed to stage all files",
                 "stderr": result.get("stderr", "")
             }
         logger.info("Staged all changes (git add -A)")
         return {"success": True, "staged_count": -1}  # -1 indicates "all"
+
+    # None or empty list stages nothing (safe default)
+    if not files:
+        logger.info("No files to stage (empty list or None)")
+        return {"success": True, "staged_count": 0}
+
+    # Stage specific files
+    for file_path in files:
+        success, result = run_git_command(["add", file_path])
+        if not success:
+            return {
+                "success": False,
+                "error": f"Failed to stage file: {file_path}",
+                "stderr": result.get("stderr", "")
+            }
+    logger.info(f"Staged {len(files)} file(s)")
+    return {"success": True, "staged_count": len(files)}
 
 
 def execute_commit(commit_message: str) -> dict:

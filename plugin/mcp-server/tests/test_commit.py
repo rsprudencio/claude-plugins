@@ -30,13 +30,13 @@ class TestStageFiles:
         assert result["success"] is True
         assert result["staged_count"] == 2
 
-    def test_stage_all_with_none(self, mock_config, git_repo):
-        """Stage all changes when files=None."""
+    def test_stage_all_with_flag(self, mock_config, git_repo):
+        """Stage all changes when stage_all=True."""
         # Create multiple unstaged files
         (git_repo / "file1.txt").write_text("content1")
         (git_repo / "file2.txt").write_text("content2")
 
-        result = stage_files(None)
+        result = stage_files(stage_all=True)
 
         assert result["success"] is True
         assert result["staged_count"] == -1  # -1 indicates "all"
@@ -55,8 +55,8 @@ class TestStageFiles:
         assert result["staged_count"] == 5
 
     def test_staged_count_minus_one_for_all(self, mock_config, git_repo):
-        """Returns -1 when staging all files."""
-        result = stage_files(None)
+        """Returns -1 when staging all files with stage_all=True."""
+        result = stage_files(stage_all=True)
 
         assert result["staged_count"] == -1
 
@@ -94,13 +94,20 @@ class TestStageFiles:
         assert result["success"] is True
 
     def test_empty_files_list(self, mock_config, git_repo):
-        """Empty files list succeeds with zero count."""
+        """Empty files list stages nothing (safe default)."""
         result = stage_files([])
 
         assert result["success"] is True
-        # Empty list means no files to stage, returns 0
-        # (Implementation may return -1 if treated as None)
-        assert result["staged_count"] in [0, -1]
+        # Empty list stages nothing, preventing accidental commits
+        assert result["staged_count"] == 0
+
+    def test_none_stages_nothing(self, mock_config, git_repo):
+        """None stages nothing (safe default)."""
+        result = stage_files(None)
+
+        assert result["success"] is True
+        # None stages nothing - must use stage_all=True explicitly
+        assert result["staged_count"] == 0
 
 
 class TestExecuteCommit:
