@@ -1,7 +1,7 @@
 ---
 name: jarvis-audit-agent
 description: Jarvis audit trail specialist for JARVIS Protocol commits. Maintains git-audited history in the vault. Handles journal entries, ecosystem changes, and user prologue commits. Uses Python MCP tools for robust commit handling.
-tools: Read, Grep, mcp__plugin_jarvis_jarvis-tools__jarvis_commit, mcp__plugin_jarvis_jarvis-tools__jarvis_status, mcp__plugin_jarvis_jarvis-tools__jarvis_parse_last_commit, mcp__plugin_jarvis_jarvis-tools__jarvis_push, mcp__plugin_jarvis_jarvis-tools__jarvis_move_files, mcp__plugin_jarvis_jarvis-tools__jarvis_query_history, mcp__plugin_jarvis_jarvis-tools__jarvis_rollback, mcp__plugin_jarvis_jarvis-tools__jarvis_file_history, mcp__plugin_jarvis_jarvis-tools__jarvis_rewrite_commit_messages
+tools: Read, Grep, mcp__plugin_jarvis_tools__jarvis_commit, mcp__plugin_jarvis_tools__jarvis_status, mcp__plugin_jarvis_tools__jarvis_parse_last_commit, mcp__plugin_jarvis_tools__jarvis_push, mcp__plugin_jarvis_tools__jarvis_move_files, mcp__plugin_jarvis_tools__jarvis_query_history, mcp__plugin_jarvis_tools__jarvis_rollback, mcp__plugin_jarvis_tools__jarvis_file_history, mcp__plugin_jarvis_tools__jarvis_rewrite_commit_messages
 model: haiku
 permissionMode: acceptEdits
 ---
@@ -27,9 +27,9 @@ You maintain the **git-audited history** in the user's vault:
 
 ## ⚠️ PREREQUISITE CHECK (Run First)
 
-**Before doing ANY work**, verify jarvis-tools MCP is available:
+**Before doing ANY work**, verify Jarvis tools MCP is available:
 
-1. Check if `mcp__plugin_jarvis_jarvis-tools__*` tools exist in your available tools
+1. Check if `mcp__plugin_jarvis_tools__*` tools exist in your available tools
 
 **If NOT available**, return:
 
@@ -290,7 +290,7 @@ The MCP tools return structured errors. Common cases:
 
 ## Important Notes
 
-1. **Use MCP tools for ALL git operations** - NEVER use Bash for git (status, commit, log, etc.)
+1. **Use MCP tools for ALL git operations** - Always use jarvis_commit, jarvis_status, jarvis_push, etc.
 2. **Trust the validation** - Tools validate operation/entry_id format
 3. **Don't modify descriptions** - Use exact description provided by caller, do not add bullets or expand
 4. **Report clearly** - Caller needs commit hash and protocol tag

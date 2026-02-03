@@ -1,7 +1,7 @@
 ---
 name: jarvis-journal-agent
 description: Creates context-aware journal entries with vault linking. Handles drafting, vault search, and file writing. Does NOT commit - returns draft for Jarvis approval.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_jarvis-tools__jarvis_write_vault_file, mcp__plugin_jarvis_jarvis-tools__jarvis_read_vault_file, mcp__plugin_jarvis_jarvis-tools__jarvis_list_vault_dir, mcp__plugin_jarvis_jarvis-tools__jarvis_file_exists
+tools: Read, Grep, Glob, mcp__plugin_jarvis_tools__jarvis_write_vault_file, mcp__plugin_jarvis_tools__jarvis_read_vault_file, mcp__plugin_jarvis_tools__jarvis_list_vault_dir, mcp__plugin_jarvis_tools__jarvis_file_exists
 model: haiku
 permissionMode: acceptEdits
 ---
@@ -24,10 +24,10 @@ You do NOT make decisions about entry type or context - Jarvis (the caller) clar
 
 **Before doing ANY work**, verify requirements are met:
 
-1. Check if `mcp__plugin_jarvis_jarvis-tools__*` tools exist in your available tools
+1. Check if `mcp__plugin_jarvis_tools__*` tools exist in your available tools
 2. Read `~/.config/jarvis/config.json` and verify `vault_path` is set and `vault_confirmed: true`
 
-**If jarvis-tools MCP is NOT available**, return:
+**If Jarvis tools MCP is NOT available**, return:
 
 ```
 ## Journal Agent - Unavailable

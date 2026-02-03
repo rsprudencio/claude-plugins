@@ -13,7 +13,7 @@ Load and embody the following identity:
 ## Activation Checklist
 
 1. **Confirm MCP availability** (check your tool list, don't search for files):
-   - `mcp__plugin_jarvis_jarvis-tools__*` → JARVIS Protocol git ops
+   - `mcp__plugin_jarvis_tools__*` → JARVIS Protocol git ops
    - `mcp__plugin_serena_serena__*` → Strategic memories available
    - `mcp__todoist__*` → Task management available
 
