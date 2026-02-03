@@ -1,7 +1,7 @@
 ---
 name: jarvis-todoist-agent
 description: Task management analyst for Jarvis. Proposes task routing, organization strategies, and corrections. Jarvis evaluates proposals against strategic context.
-tools: Read, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__add-labels, mcp__todoist__user-info
+tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__add-labels, mcp__todoist__user-info
 model: sonnet
 permissionMode: acceptEdits
 ---
@@ -62,10 +62,14 @@ All operations that create files MUST be within this vault directory.
 
 ### Allowed Write Locations (Within Vault)
 
-**Only when creating journal entries** (via delegation to jarvis-journal-agent):
-- `journal/jarvis/` - Journal entries created by agent delegation
+**ONLY for inbox captures**:
+- `inbox/todoist/` - Inbox capture files for deferred processing
+- Path pattern: `inbox/todoist/YYYYMMDDHHMMSS-slug.md`
 
-**NEVER write directly** to inbox/ or notes/ - this agent doesn't create task files.
+**FORBIDDEN**:
+- `journal/` - Use jarvis-journal-agent via delegation
+- `notes/` - Not this agent's responsibility
+- Any other vault directory
 
 ### When Violation Detected
 
