@@ -1,0 +1,18 @@
+{
+  "name": "jarvis-strategic",
+  "description": "Strategic analysis & briefings - orient, catchup, summarize, patterns (requires jarvis + Serena MCP)",
+  "version": "1.0.0",
+  "author": {
+    "name": "Raphael Prudencio"
+  },
+  "homepage": "https://github.com/rsprudencio/claude-plugins",
+  "repository": "https://github.com/rsprudencio/claude-plugins",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "jarvis",
+    "strategic-analysis",
+    "patterns",
+    "briefings",
+    "reflection"
+  ]
+}
