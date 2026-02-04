@@ -4,9 +4,101 @@ This file contains development instructions and conventions for Claude when work
 
 ---
 
-## Version Bumping (Required Before Reinstall)
+## Commit Message Guidelines
 
-**ALWAYS bump version in `plugin/.claude-plugin/plugin.json` before reinstalling.**
+### Subject Line (First Line)
+- **Imperative mood**: "Add feature" not "Added feature"
+- **Start with verb**: Add, Fix, Update, Remove, Refactor
+- **Keep under 72 characters**
+- **Include scope if helpful**: "Fix jarvis-todoist-agent: remove non-existent tool"
+
+### Common Prefixes
+
+| Prefix | Use For |
+|--------|---------|
+| Add | New features, files, capabilities |
+| Fix | Bug fixes |
+| Update | Enhancements to existing features |
+| Remove | Deletions |
+| Refactor | Code restructuring (no behavior change) |
+
+### Body (Optional but Recommended for Non-Trivial Changes)
+
+- Blank line after subject
+- Explain **WHAT** and **WHY**, not HOW
+- For version bumps: Include "Version bump: X.Y.Z → A.B.C (patch/minor/major)"
+
+### Combined Commits (Preferred)
+
+Feature + version bump in one commit:
+
+```
+Add jarvis-explorer-agent and bump to v0.3.0
+
+New Features:
+- Vault-aware exploration agent for search
+- Supports vault structure and access control
+
+Version bump: 0.2.2 → 0.3.0 (minor: new agent)
+```
+
+Version-only commit (rare - only for hotfix releases):
+
+```
+Bump version to 0.3.2
+
+Hotfix release for critical production issue.
+Version bump: 0.3.1 → 0.3.2 (patch)
+```
+
+---
+
+## Development Workflow
+
+When making plugin changes that require a version bump:
+
+1. **Make code changes** (agents, skills, MCP server, etc.)
+2. **`/bump`** - Bump version and stage version files (plugin.json + CLAUDE.md)
+3. **`git add <other-files>`** - Stage all other changed files
+4. **`git commit -m "Your changes and bump to v0.X.Y"`** - Commit with proper message
+5. **`git tag -a v0.X.Y -m "Version 0.X.Y: Description"`** - Tag the commit
+6. **`git push && git push --tags`** - Push commits and tags to remote
+7. **`/reinstall`** - Clear cache and reinstall plugin
+8. **Restart Claude Code** - Required for plugin changes to take effect
+
+**The flow:** changes → bump → commit → tag → push → reinstall → restart
+
+### Pre-Commit Checklist
+
+Before committing plugin changes:
+
+- [ ] Version bumped? (use `/bump` if releasing)
+- [ ] All modified files staged? (`git status`)
+- [ ] Commit message follows guidelines?
+- [ ] No sensitive files? (.env, credentials)
+
+---
+
+## Version Bumping Workflow
+
+**Use `/bump` skill to bump version and stage files for commit.**
+
+### The Rule
+
+1. Make code changes (agents, skills, MCP server, etc.)
+2. **Use `/bump`** to:
+   - Update version in `plugin/.claude-plugin/plugin.json`
+   - Update CLAUDE.md version history (for minor/major)
+   - Stage both files automatically
+3. Stage other changed files: `git add <files>`
+4. Commit changes with proper message
+5. **Tag the version commit**: `git tag -a v0.X.Y -m "Version 0.X.Y: Description"`
+6. Push: `git push && git push --tags`
+7. Reinstall plugin with `/reinstall`
+
+**DO NOT bump version without code changes.** Empty version bumps are not allowed.
+
+**ALWAYS tag version bump commits.** This creates a permanent marker for each release and enables proper version tracking (`git tag --contains <commit>`).
 
 ### Semantic Versioning Rules
 
@@ -37,6 +129,51 @@ Use for:
 
 ### Current Version
 Check: `plugin/.claude-plugin/plugin.json`
+
+---
+
+## Git Tag Workflow
+
+After committing a version bump:
+
+### 1. Create Annotated Tag
+
+```bash
+git tag -a v0.X.Y -m "Version 0.X.Y: Brief description"
+```
+
+### 2. Tag Message Convention
+
+Follow this format for tag messages:
+
+```
+Version 0.3.1: Fix jarvis-todoist-agent missing tool
+Version 0.3.0: Add jarvis-explorer-agent
+Version 0.2.2: Add CLAUDE.md development guide
+```
+
+### 3. Push Tags
+
+```bash
+# Push specific tag
+git push origin v0.X.Y
+
+# Or push all tags
+git push --tags
+```
+
+### 4. Verify
+
+```bash
+# Check if HEAD is tagged
+git tag --contains HEAD
+
+# List recent tags
+git tag -l --sort=-version:refname | head -5
+
+# Show tag details
+git show v0.X.Y
+```
 
 ---
 
