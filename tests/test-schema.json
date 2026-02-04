@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.local/test-schema.json",
+  "title": "Jarvis Agent Test Schema",
+  "description": "Schema for defining test cases for Jarvis agents and skills",
+  "type": "object",
+
+  "required": ["agent", "version", "test_suites"],
+
+  "properties": {
+    "agent": {
+      "type": "string",
+      "description": "Agent identifier (e.g., 'jarvis:jarvis-explorer-agent')",
+      "pattern": "^jarvis:jarvis-[a-z-]+$"
+    },
+
+    "version": {
+      "type": "string",
+      "description": "Test suite version (semver)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+
+    "description": {
+      "type": "string",
+      "description": "Test suite description"
+    },
+
+    "test_suites": {
+      "type": "object",
+      "description": "Named test suites grouping related tests",
+      "patternProperties": {
+        "^[a-z_]+$": {
+          "$ref": "#/$defs/test_suite"
+        }
+      }
+    },
+
+    "metadata": {
+      "type": "object",
+      "description": "Test suite metadata and statistics"
+    }
+  },
+
+  "$defs": {
+    "test_suite": {
+      "type": "object",
+      "required": ["name", "tests"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable suite name"
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"],
+          "description": "Test suite priority"
+        },
+        "tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/test_case"
+          }
+        }
+      }
+    },
+
+    "test_case": {
+      "type": "object",
+      "required": ["id", "name", "input", "expect"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique test ID (e.g., 'EXP-001')"
+        },
+        "name": {
+          "type": "string",
+          "description": "Short test name"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed test description"
+        },
+        "skip_if": {
+          "type": "string",
+          "description": "Condition to skip test (e.g., 'vault_has_git')"
+        },
+        "setup": {
+          "type": "string",
+          "description": "Setup function to run before test"
+        },
+        "cleanup": {
+          "type": "string",
+          "description": "Cleanup function to run after test"
+        },
+        "input": {
+          "type": "object",
+          "description": "Input to pass to agent"
+        },
+        "expect": {
+          "$ref": "#/$defs/expectations",
+          "description": "Expected outcomes"
+        },
+        "multi_step": {
+          "type": "array",
+          "description": "Multi-step test with state",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {"type": "integer"},
+              "input": {"type": "object"},
+              "store": {"type": "string"},
+              "expect": {"$ref": "#/$defs/expectations"}
+            }
+          }
+        }
+      }
+    },
+
+    "expectations": {
+      "type": "object",
+      "description": "Assertion rules for test validation",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["success", "partial", "error"],
+          "description": "Expected status"
+        },
+        "error_code": {
+          "type": "string",
+          "description": "Expected error code"
+        },
+        "results_min": {
+          "type": "integer",
+          "description": "Minimum result count"
+        },
+        "results_max": {
+          "type": "integer",
+          "description": "Maximum result count"
+        },
+        "results_count": {
+          "type": "integer",
+          "description": "Exact result count"
+        },
+        "has_fields": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Required fields (dot notation)"
+        },
+        "field_equals": {
+          "type": "object",
+          "description": "Field must equal value"
+        },
+        "field_contains": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "text": {"type": "string"}
+          }
+        },
+        "contains": {
+          "type": "string",
+          "description": "Output contains text"
+        },
+        "message_contains": {
+          "type": "string",
+          "description": "Message field contains text"
+        },
+        "summary_contains": {
+          "type": "string",
+          "description": "Summary field contains text"
+        },
+        "all_match": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "value": {}
+          },
+          "description": "All items at path match value"
+        },
+        "all_match_one_of": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "values": {"type": "array"}
+          }
+        },
+        "all_match_pattern": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "regex": {"type": "string"}
+          }
+        },
+        "none_match_pattern": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "regex": {"type": "string"}
+          }
+        },
+        "all_have_tags": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "All results have these tags"
+        },
+        "none_have_tags": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "each_has_any_tag": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "all_dates_between": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"}
+          }
+        },
+        "dates_within_days": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "days": {"type": "integer"}
+          }
+        },
+        "all_in_range": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "min": {"type": "number"},
+            "max": {"type": "number"}
+          }
+        },
+        "range_check": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "min": {"type": "number"},
+            "max": {"type": "number"}
+          }
+        },
+        "sorted_desc": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"}
+          }
+        },
+        "array_contains": {
+          "type": "object",
+          "properties": {
+            "path": {"type": "string"},
+            "values": {"type": "array"},
+            "pattern": {"type": "string"}
+          }
+        },
+        "one_of": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/expectations"},
+          "description": "At least one condition must pass"
+        },
+        "if_results": {
+          "$ref": "#/$defs/expectations",
+          "description": "Conditional assertions if results exist"
+        },
+        "if_has_history": {
+          "$ref": "#/$defs/expectations"
+        },
+        "if_sensitive_results": {
+          "$ref": "#/$defs/expectations"
+        }
+      }
+    }
+  }
+}

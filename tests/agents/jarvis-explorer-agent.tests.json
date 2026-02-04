@@ -1,0 +1,626 @@
+{
+  "$schema": "../test-schema.json",
+  "agent": "jarvis:jarvis-explorer-agent",
+  "version": "1.0.0",
+  "description": "Test suite for jarvis-explorer-agent - vault search and exploration",
+
+  "test_suites": {
+    "core": {
+      "name": "Core Search Features",
+      "priority": "critical",
+      "tests": [
+        {
+          "id": "EXP-001",
+          "name": "Simple text search",
+          "description": "Basic text search with date filter should return relevant results",
+          "input": {
+            "search_text": "Romain",
+            "date_range": {"start": "2026"},
+            "model": "haiku"
+          },
+          "expect": {
+            "status": "success",
+            "results_min": 1,
+            "has_fields": ["results", "summary", "pagination"],
+            "results_schema": {
+              "file": "string",
+              "title": "string",
+              "excerpt": "string",
+              "relevance": {"type": "number", "min": 0.0, "max": 1.0},
+              "metadata": "object"
+            }
+          }
+        },
+        {
+          "id": "EXP-002",
+          "name": "No filters error",
+          "description": "Empty query should fail gracefully with helpful message",
+          "input": {},
+          "expect": {
+            "one_of": [
+              {"status": "error", "error_code": "NO_FILTERS"},
+              {"contains": "filter"}
+            ]
+          }
+        },
+        {
+          "id": "EXP-003",
+          "name": "No results found",
+          "description": "Search with no matches returns empty array gracefully",
+          "input": {
+            "search_text": "xyznonexistentterm123xyz",
+            "date_range": {"start": "2026"}
+          },
+          "expect": {
+            "status": "success",
+            "results_count": 0,
+            "summary_contains": "no results"
+          }
+        },
+        {
+          "id": "EXP-004",
+          "name": "Case insensitive search",
+          "description": "Lowercase query should match mixed-case content",
+          "input": {
+            "search_text": "romain",
+            "date_range": {"start": "2026"}
+          },
+          "expect": {
+            "status": "success",
+            "results_min": 1
+          }
+        }
+      ]
+    },
+
+    "filtering": {
+      "name": "Filter & Query Options",
+      "priority": "critical",
+      "tests": [
+        {
+          "id": "EXP-010",
+          "name": "Filter by entry type",
+          "description": "Return only entries matching specified types",
+          "input": {
+            "entry_types": ["incident-log"],
+            "limit": 5
+          },
+          "expect": {
+            "status": "success",
+            "results_max": 5,
+            "all_match": {
+              "path": "results[*].metadata.type",
+              "value": "incident-log"
+            }
+          }
+        },
+        {
+          "id": "EXP-011",
+          "name": "Filter by tags (AND)",
+          "description": "Results must have ALL specified tags",
+          "input": {
+            "tags": {
+              "include": ["work", "security"],
+              "operator": "AND"
+            },
+            "limit": 10
+          },
+          "expect": {
+            "status": "success",
+            "all_have_tags": ["work", "security"]
+          }
+        },
+        {
+          "id": "EXP-012",
+          "name": "Filter by tags (OR)",
+          "description": "Results must have ANY of the specified tags",
+          "input": {
+            "tags": {
+              "include": ["work", "personal"],
+              "operator": "OR"
+            },
+            "limit": 10
+          },
+          "expect": {
+            "status": "success",
+            "each_has_any_tag": ["work", "personal"]
+          }
+        },
+        {
+          "id": "EXP-013",
+          "name": "Exclude tags",
+          "description": "Results must NOT have excluded tags",
+          "input": {
+            "entry_types": ["note"],
+            "tags": {
+              "include": ["work"],
+              "exclude": ["draft"]
+            },
+            "limit": 10
+          },
+          "expect": {
+            "status": "success",
+            "all_have_tags": ["work"],
+            "none_have_tags": ["draft"]
+          }
+        },
+        {
+          "id": "EXP-014",
+          "name": "Filter by directory",
+          "description": "Search only in specified directories",
+          "input": {
+            "search_text": "security",
+            "directories": ["journal/"]
+          },
+          "expect": {
+            "status": "success",
+            "all_match_pattern": {
+              "path": "results[*].file",
+              "regex": "^journal/"
+            }
+          }
+        },
+        {
+          "id": "EXP-015",
+          "name": "Multiple directories",
+          "description": "Search in multiple specified directories",
+          "input": {
+            "search_text": "test",
+            "directories": ["journal/", "notes/"]
+          },
+          "expect": {
+            "status": "success",
+            "all_match_pattern": {
+              "path": "results[*].file",
+              "regex": "^(journal/|notes/)"
+            }
+          }
+        }
+      ]
+    },
+
+    "dates": {
+      "name": "Date Range Filtering",
+      "priority": "critical",
+      "tests": [
+        {
+          "id": "EXP-020",
+          "name": "ISO date range",
+          "description": "Filter by explicit ISO date range",
+          "input": {
+            "search_text": "Romain",
+            "date_range": {
+              "start": "2026-01-01",
+              "end": "2026-01-31"
+            }
+          },
+          "expect": {
+            "status": "success",
+            "all_dates_between": {
+              "path": "results[*].metadata.created",
+              "start": "2026-01-01T00:00:00Z",
+              "end": "2026-01-31T23:59:59Z"
+            }
+          }
+        },
+        {
+          "id": "EXP-021",
+          "name": "Relative date (7d)",
+          "description": "Support relative date format: last 7 days",
+          "input": {
+            "entry_types": ["note"],
+            "date_range": {"start": "7d"}
+          },
+          "expect": {
+            "status": "success",
+            "dates_within_days": {
+              "path": "results[*].metadata.created",
+              "days": 7
+            }
+          }
+        },
+        {
+          "id": "EXP-022",
+          "name": "Year shortcut",
+          "description": "Support year shortcut: '2026' expands to full year",
+          "input": {
+            "search_text": "security",
+            "date_range": {"start": "2026"}
+          },
+          "expect": {
+            "status": "success",
+            "all_dates_in_year": {
+              "path": "results[*].metadata.created",
+              "year": 2026
+            }
+          }
+        },
+        {
+          "id": "EXP-023",
+          "name": "Invalid date format",
+          "description": "Reject invalid date formats with clear error",
+          "input": {
+            "date_range": {
+              "start": "yesterday",
+              "end": "tomorrow"
+            }
+          },
+          "expect": {
+            "status": "error",
+            "error_code": "INVALID_DATE",
+            "message_contains": "ISO format"
+          }
+        }
+      ]
+    },
+
+    "pagination": {
+      "name": "Pagination & Limits",
+      "priority": "critical",
+      "tests": [
+        {
+          "id": "EXP-030",
+          "name": "Limit results",
+          "description": "Respect limit parameter and return pagination metadata",
+          "input": {
+            "entry_types": ["note"],
+            "limit": 3
+          },
+          "expect": {
+            "status": "success",
+            "results_max": 3,
+            "has_fields": ["pagination.total", "pagination.returned", "pagination.has_more", "pagination.offset"],
+            "field_equals": {
+              "pagination.offset": 0
+            }
+          }
+        },
+        {
+          "id": "EXP-031",
+          "name": "Offset pagination",
+          "description": "Return next page using offset",
+          "input": {
+            "entry_types": ["note"],
+            "limit": 5,
+            "offset": 5
+          },
+          "expect": {
+            "status": "success",
+            "field_equals": {
+              "pagination.offset": 5
+            }
+          }
+        },
+        {
+          "id": "EXP-032",
+          "name": "No duplicate results",
+          "description": "Page 1 and page 2 should have no overlapping results",
+          "multi_step": [
+            {
+              "step": 1,
+              "input": {
+                "entry_types": ["note"],
+                "limit": 5,
+                "offset": 0
+              },
+              "store": "page1_files"
+            },
+            {
+              "step": 2,
+              "input": {
+                "entry_types": ["note"],
+                "limit": 5,
+                "offset": 5
+              },
+              "expect": {
+                "no_overlap": {
+                  "path": "results[*].file",
+                  "with": "page1_files"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    "security": {
+      "name": "Sensitive Directory Handling",
+      "priority": "critical",
+      "tests": [
+        {
+          "id": "EXP-040",
+          "name": "Skip sensitive directories",
+          "description": "By default, skip people/ and documents/",
+          "input": {
+            "search_text": "Romain Mahe"
+          },
+          "expect": {
+            "status": "success",
+            "has_fields": ["sensitive_dirs_skipped", "sensitive_suggestion"],
+            "array_contains": {
+              "path": "sensitive_dirs_skipped",
+              "values": ["people/", "documents/"]
+            },
+            "none_match_pattern": {
+              "path": "results[*].file",
+              "regex": "^(people/|documents/)"
+            }
+          }
+        },
+        {
+          "id": "EXP-041",
+          "name": "Include sensitive dirs when requested",
+          "description": "With include_sensitive: true, search people/ and documents/",
+          "input": {
+            "search_text": "Romain",
+            "include_sensitive": true
+          },
+          "expect": {
+            "status": "success",
+            "if_sensitive_results": {
+              "has_field": "sensitive",
+              "value": true
+            }
+          }
+        },
+        {
+          "id": "EXP-042",
+          "name": "Person name detection",
+          "description": "Detect person names and suggest people/ directory",
+          "input": {
+            "search_text": "John Smith"
+          },
+          "expect": {
+            "status": "success",
+            "field_contains": {
+              "path": "sensitive_suggestion",
+              "text": "people/"
+            }
+          }
+        }
+      ]
+    },
+
+    "advanced": {
+      "name": "Advanced Features",
+      "priority": "high",
+      "tests": [
+        {
+          "id": "EXP-050",
+          "name": "Complex multi-filter",
+          "description": "Combine 6+ filters: text, type, tags, date, directory, limit",
+          "input": {
+            "search_text": "security",
+            "entry_types": ["note", "incident-log"],
+            "tags": {
+              "include": ["work"],
+              "exclude": ["draft"]
+            },
+            "date_range": {
+              "start": "30d",
+              "end": "today"
+            },
+            "directories": ["journal/"],
+            "limit": 10
+          },
+          "expect": {
+            "status": "success",
+            "results_max": 10,
+            "all_match_one_of": {
+              "path": "results[*].metadata.type",
+              "values": ["note", "incident-log"]
+            },
+            "all_have_tags": ["work"],
+            "none_have_tags": ["draft"],
+            "all_match_pattern": {
+              "path": "results[*].file",
+              "regex": "^journal/"
+            }
+          }
+        },
+        {
+          "id": "EXP-051",
+          "name": "Link discovery (depth 1)",
+          "description": "Find entries linking to specified note",
+          "input": {
+            "linked_to": "[[PGC Self Review]]",
+            "link_depth": 1
+          },
+          "expect": {
+            "status": "success",
+            "results_min": 1
+          }
+        },
+        {
+          "id": "EXP-052",
+          "name": "Link depth warning",
+          "description": "Warn when link_depth > 1",
+          "input": {
+            "linked_to": "[[PGC Self Review]]",
+            "link_depth": 2
+          },
+          "expect": {
+            "status": "success",
+            "has_field": "warnings",
+            "array_contains": {
+              "path": "warnings",
+              "pattern": "depth > 1"
+            }
+          }
+        }
+      ]
+    },
+
+    "git_history": {
+      "name": "Git History Search",
+      "priority": "medium",
+      "tests": [
+        {
+          "id": "EXP-060",
+          "name": "Search deleted files",
+          "description": "Find deleted files in git history",
+          "input": {
+            "search_text": "CTF",
+            "include_history": true,
+            "history_options": {
+              "since": "90d",
+              "operations": ["delete"]
+            }
+          },
+          "expect": {
+            "status": "success",
+            "has_field": "history_results",
+            "if_has_history": {
+              "all_match": {
+                "path": "history_results[*].operation",
+                "value": "delete"
+              }
+            }
+          }
+        },
+        {
+          "id": "EXP-061",
+          "name": "Search file changes",
+          "description": "Find recent edit operations in git history",
+          "input": {
+            "directories": ["notes/"],
+            "include_history": true,
+            "history_options": {
+              "since": "30d",
+              "include_changes": true
+            }
+          },
+          "expect": {
+            "status": "success",
+            "has_field": "history_results"
+          }
+        },
+        {
+          "id": "EXP-062",
+          "name": "Git unavailable error",
+          "description": "Graceful error when vault has no git repo",
+          "skip_if": "vault_has_git",
+          "input": {
+            "search_text": "test",
+            "include_history": true
+          },
+          "expect": {
+            "status": "error",
+            "error_code": "GIT_HISTORY_UNAVAILABLE",
+            "message_contains": "git repository"
+          }
+        }
+      ]
+    },
+
+    "performance": {
+      "name": "Performance & Output Quality",
+      "priority": "medium",
+      "tests": [
+        {
+          "id": "EXP-070",
+          "name": "Performance metrics present",
+          "description": "Response includes performance data",
+          "input": {
+            "search_text": "test",
+            "limit": 5
+          },
+          "expect": {
+            "status": "success",
+            "has_fields": [
+              "performance.search_duration_ms",
+              "performance.files_scanned"
+            ],
+            "range_check": {
+              "path": "performance.search_duration_ms",
+              "min": 0,
+              "max": 5000
+            }
+          }
+        },
+        {
+          "id": "EXP-071",
+          "name": "Relevance scoring",
+          "description": "Results sorted by relevance, scores in valid range",
+          "input": {
+            "search_text": "Romain",
+            "limit": 5
+          },
+          "expect": {
+            "status": "success",
+            "all_in_range": {
+              "path": "results[*].relevance",
+              "min": 0.0,
+              "max": 1.0
+            },
+            "sorted_desc": {
+              "path": "results[*].relevance"
+            }
+          }
+        },
+        {
+          "id": "EXP-072",
+          "name": "Malformed frontmatter handling",
+          "description": "Don't crash on malformed YAML, set metadata: null",
+          "setup": "create_file_with_broken_yaml",
+          "input": {
+            "search_text": "test_broken_yaml"
+          },
+          "expect": {
+            "status": "success",
+            "if_results": {
+              "field_equals": {
+                "path": "results[0].metadata",
+                "value": null
+              }
+            }
+          },
+          "cleanup": "delete_test_file"
+        }
+      ]
+    },
+
+    "model_selection": {
+      "name": "Model Configuration",
+      "priority": "low",
+      "tests": [
+        {
+          "id": "EXP-080",
+          "name": "Default haiku model",
+          "description": "No model specified uses haiku by default",
+          "input": {
+            "search_text": "test"
+          },
+          "expect": {
+            "status": "success",
+            "agent_used_model": "haiku"
+          }
+        },
+        {
+          "id": "EXP-081",
+          "name": "Explicit sonnet model",
+          "description": "Request sonnet model for complex reasoning",
+          "input": {
+            "search_text": "complex analysis",
+            "model": "sonnet"
+          },
+          "expect": {
+            "status": "success",
+            "agent_used_model": "sonnet"
+          }
+        }
+      ]
+    }
+  },
+
+  "metadata": {
+    "total_tests": 32,
+    "critical_tests": 20,
+    "high_priority": 8,
+    "medium_priority": 3,
+    "low_priority": 1,
+    "requires_setup": 1,
+    "requires_git": 3
+  }
+}
