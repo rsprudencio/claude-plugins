@@ -2,10 +2,10 @@
 """
 Jarvis Tools MCP Server
 
-Git operations and vault file access for JARVIS Protocol.
+Git operations and vault file access for JARVIS protocol.
 
 Tools - Git Operations:
-- jarvis_commit: Create JARVIS Protocol commits
+- jarvis_commit: Create JARVIS protocol commits
 - jarvis_status: Get git status
 - jarvis_parse_last_commit: Parse recent commit
 - jarvis_push: Push to remote
@@ -62,7 +62,7 @@ server = Server("tools")
 TOOLS = [
     Tool(
         name="jarvis_commit",
-        description="Create a JARVIS Protocol git commit with validation and formatting.",
+        description="Create a JARVIS protocol git commit with validation and formatting.",
         inputSchema={
             "type": "object",
             "properties": {

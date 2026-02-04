@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
-  "description": "AI assistant for PKM, strategic context, Todoist sync, and auditable git operations with JARVIS Protocol",
-  "version": "0.2.2",
+  "description": "AI assistant for PKM, strategic context, Todoist sync, and auditable git operations with JARVIS protocol",
+  "version": "0.3.0",
   "author": {
     "name": "Raphael Prudencio"
   },

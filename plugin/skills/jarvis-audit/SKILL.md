@@ -1,10 +1,10 @@
 ---
 name: jarvis-audit
-description: Git audit protocol reference. Background knowledge for JARVIS Protocol commits.
+description: Git audit protocol reference. Background knowledge for JARVIS protocol commits.
 user-invocable: false
 ---
 
-# JARVIS Protocol - Git Audit System
+# JARVIS protocol - Git Audit System
 
 Every file operation creates an auditable git commit via `jarvis-audit-agent`.
 

@@ -1,4 +1,4 @@
-"""Tests for JARVIS Protocol formatting and validation."""
+"""Tests for JARVIS protocol formatting and validation."""
 import pytest
 
 from protocol import (

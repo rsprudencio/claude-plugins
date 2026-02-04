@@ -1,7 +1,7 @@
 [project]
 name = "jarvis-tools"
 version = "0.2.0"
-description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS Protocol"
+description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",

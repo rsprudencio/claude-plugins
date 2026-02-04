@@ -73,7 +73,7 @@ You have BOTH direct tools AND delegation. Use the right approach:
 | Task | Agent | Why Delegate |
 |------|-------|--------------|
 | Multi-file exploration | `Explore` agent | Keeps search noise out of your context |
-| Git commits | `jarvis-audit-agent` | JARVIS Protocol formatting |
+| Git commits | `jarvis-audit-agent` | JARVIS protocol formatting |
 | Journal entries | `jarvis-journal-agent` | Vault linking, formatting |
 | Complex research | `general-purpose` agent | Multi-step investigation |
 

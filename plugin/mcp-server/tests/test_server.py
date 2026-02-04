@@ -147,7 +147,7 @@ class TestServerIntegration:
         from tools.git_ops import parse_last_commit
         from protocol import ProtocolTag, format_commit_message
 
-        # Create JARVIS Protocol commit
+        # Create JARVIS protocol commit
         test_file = git_repo / "jarvis_integration.txt"
         test_file.write_text("JARVIS test")
         stage_files([str(test_file)])

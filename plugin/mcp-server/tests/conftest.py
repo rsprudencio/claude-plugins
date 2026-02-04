@@ -119,12 +119,12 @@ def git_repo(temp_vault: Path) -> Path:
 
 @pytest.fixture
 def git_repo_with_jarvis_commits(git_repo: Path) -> Path:
-    """Git repo with sample JARVIS Protocol commits."""
+    """Git repo with sample JARVIS protocol commits."""
     # Create a journal entry
     journal_file = git_repo / "journal" / "2026" / "01" / "20260123153045-test-entry.md"
     journal_file.write_text("# Test Entry\n\nTest content")
 
-    # Commit with JARVIS Protocol tag
+    # Commit with JARVIS protocol tag
     os.system(f'cd {git_repo} && git add {journal_file}')
     commit_msg = 'Jarvis CREATE: Test journal entry\n\n[JARVIS:Cc:20260123153045]'
     os.system(f'cd {git_repo} && git commit -q -m "{commit_msg}"')

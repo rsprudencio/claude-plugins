@@ -1,6 +1,6 @@
-"""JARVIS Protocol implementation.
+"""JARVIS protocol implementation.
 
-Handles validation, formatting, and construction of JARVIS Protocol
+Handles validation, formatting, and construction of JARVIS protocol
 commit messages and tags.
 """
 import re
@@ -34,7 +34,7 @@ TRIGGER_LETTERS = {
 
 @dataclass
 class ProtocolTag:
-    """Represents a JARVIS Protocol tag."""
+    """Represents a JARVIS protocol tag."""
     operation: OperationType
     trigger_mode: TriggerMode
     entry_id: Optional[str] = None
@@ -68,7 +68,7 @@ class ValidationError(Exception):
 
 
 class ProtocolValidator:
-    """Validates JARVIS Protocol inputs."""
+    """Validates JARVIS protocol inputs."""
 
     @classmethod
     def validate_operation(cls, operation: str) -> bool:
