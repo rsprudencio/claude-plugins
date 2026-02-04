@@ -136,7 +136,7 @@ If plugin doesn't load after reinstall:
 
 ### Version History
 
-- **0.2.2** - TBD
+- **0.3.0** - jarvis-explorer-agent (vault-aware search), test framework v1.0, capitalization fixes
 - **0.2.1** - MCP rename (jarvis-tools→tools), Todoist workflow simplification, inbox processing enhancements
 - **0.2.0** - Initial comprehensive test coverage, audit agent refinements
 
