@@ -273,6 +273,8 @@ If plugin doesn't load after reinstall:
 
 ### Version History
 
+- **1.1.0** - Shell integration in setup wizard, jarvis.zsh/jarvis.bash snippets
+- **1.0.0** - Modular architecture: split into jarvis, jarvis-todoist, jarvis-strategic plugins
 - **0.3.0** - jarvis-explorer-agent (vault-aware search), test framework v1.0, capitalization fixes
 - **0.2.1** - MCP rename (jarvis-tools→tools), Todoist workflow simplification, inbox processing enhancements
 - **0.2.0** - Initial comprehensive test coverage, audit agent refinements

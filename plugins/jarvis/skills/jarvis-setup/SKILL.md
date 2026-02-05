@@ -1,6 +1,6 @@
 ---
 name: jarvis-setup
-description: Interactive setup wizard for Jarvis. Configure vault path.
+description: Interactive setup wizard for Jarvis. Configure vault path and shell integration.
 user_invocable: true
 ---
 
@@ -97,7 +97,47 @@ Jarvis can use your values, goals, and trajectory for personalized assistance.
 Run /jarvis:jarvis-interview anytime to set or update these.
 ```
 
-### 6. Suggest permissions (for smoother experience)
+### 6. Shell Integration (Optional but Recommended)
+
+Ask if the user wants the `jarvis` command added to their shell:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Add 'jarvis' shell command for quick access?"
+      header: "Shell"
+      options:
+        - label: "Yes, add to my shell config (Recommended)"
+          description: "Adds jarvis() function to ~/.zshrc or ~/.bashrc"
+        - label: "No, I'll set it up manually"
+          description: "You can copy from plugins/jarvis/shell/"
+      multiSelect: false
+```
+
+If user says yes:
+
+1. **Detect shell** - Check `$SHELL` environment variable
+2. **Find plugin's shell snippet**:
+   ```bash
+   # Get the plugin install path
+   local plugin_dir=$(claude plugin list --json 2>/dev/null | jq -r '.[] | select(.id | startswith("jarvis@")) | .installPath')
+   ```
+3. **Read the appropriate snippet**:
+   - For zsh: `$plugin_dir/shell/jarvis.zsh`
+   - For bash: `$plugin_dir/shell/jarvis.bash`
+4. **Check if already exists** in shell config (grep for "function jarvis")
+5. **Append to shell config** (with user confirmation):
+   - zsh: `~/.zshrc`
+   - bash: `~/.bashrc`
+6. **Remind user to reload**: `source ~/.zshrc` or restart terminal
+
+**Shell Snippet Location**: The canonical function lives in `plugins/jarvis/shell/`:
+- `jarvis.zsh` - For zsh users (uses zsh glob qualifiers)
+- `jarvis.bash` - For bash users (uses find command)
+
+If adapting for other shells, use the zsh version as reference and adjust syntax as needed.
+
+### 7. Suggest permissions (for smoother experience)
 
 Suggest adding these permissions to avoid repeated prompts:
 
@@ -116,16 +156,18 @@ For a smoother experience, add to ~/.claude/settings.json:
 This allows Jarvis to read/write its config without prompting each time.
 ```
 
-### 7. Show completion summary
+### 8. Show completion summary
 
 ```
 Setup complete!
 
 Vault: [path]
+Shell: [jarvis command added to ~/.zshrc | not configured]
 
-Commands:
-  /jarvis - Activate Jarvis mode
-  /jarvis:jarvis-setup - Update this config
+Quick Start:
+  $ jarvis                - Launch Claude with Jarvis identity (if shell configured)
+  /jarvis                 - Activate Jarvis mode (within Claude)
+  /jarvis:jarvis-setup    - Update this config
   /jarvis:jarvis-interview - Set values/goals
 ```
 
