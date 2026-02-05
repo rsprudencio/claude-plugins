@@ -66,9 +66,23 @@ Then re-ask the setup mode question (without the "explain" option).
 
 Fetch in parallel:
 
-1. **Projects**: `mcp__todoist__find-projects` - Get all existing projects
-2. **Inbox tasks**: `mcp__todoist__find-tasks` with `projectId: "inbox"`, `limit: 100`
-3. **Recent tasks from all projects**: `mcp__todoist__find-tasks-by-date` with `startDate: "today"`, `daysCount: 30`
+1. **User info**: `mcp__todoist__user-info` - Get plan type (Free/Pro/Business)
+2. **Projects**: `mcp__todoist__find-projects` - Get all existing projects
+3. **Inbox tasks**: `mcp__todoist__find-tasks` with `projectId: "inbox"`, `limit: 100`
+4. **Recent tasks from all projects**: `mcp__todoist__find-tasks-by-date` with `startDate: "today"`, `daysCount: 30`
+
+### Project Limit Check
+
+**Todoist plan limits:**
+- Free: 5 active projects max
+- Pro/Business: 300 active projects max
+
+Calculate: `available_slots = limit - current_project_count`
+
+If `available_slots <= 0`:
+- Warn user: "You've reached your Todoist project limit (5 for Free plan). I'll route to existing projects only."
+- Skip any recommendations that would create new projects
+- Suggest upgrading or archiving unused projects
 
 ---
 
@@ -166,14 +180,39 @@ options:
 
 ## Step 6: Create Missing Projects (If Needed)
 
-If recommendations include new projects:
+**First, check project limit from Step 2:**
+
+```
+current_projects = [count from find-projects]
+plan_limit = 5 if Free else 300
+available_slots = plan_limit - current_projects
+projects_to_create = [count of new projects in recommendations]
+```
+
+**If `projects_to_create > available_slots`:**
+
+```markdown
+⚠️ **Project Limit Warning**
+
+You're on Todoist Free (5 project limit).
+- Current projects: 4
+- Available slots: 1
+- Recommendations need: 2 new projects
+
+I can only create 1 new project. Options:
+1. Pick which project to create (route others to Inbox)
+2. Route all to existing projects
+3. Archive an existing project to free up a slot
+```
+
+**If slots available**, ask:
 
 ```
 header: "New projects"
 question: "I'll create these new Todoist projects:"
 options:
   - label: "Create all"
-    description: "MyApp, Errands (2 new projects)"
+    description: "MyApp, Errands (2 new projects) - You have 3 slots available"
   - label: "Let me choose"
     description: "I'll pick which ones to create"
   - label: "Skip project creation"
@@ -330,6 +369,8 @@ Same as Step 7-8.
 | Todoist MCP unavailable | Cannot proceed - required for analysis |
 | No inbox tasks | "Your inbox is empty! Add some tasks first, or define rules manually." |
 | Project creation fails | Report error, offer to route to Inbox instead |
+| Project limit reached (Free: 5) | Route to existing projects only, suggest archiving unused or upgrading |
+| Would exceed project limit | Only create projects up to available slots, route remainder to Inbox |
 
 ---
 
