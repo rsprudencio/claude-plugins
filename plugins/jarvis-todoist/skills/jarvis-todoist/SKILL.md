@@ -13,6 +13,16 @@ Syncs Todoist inbox items using **hybrid classification**:
 
 ## Steps
 
+### Step 0: Load Custom Routing Rules (If Available)
+
+**Before delegating**, check for custom routing rules:
+
+1. Use `mcp__plugin_serena_serena__read_memory` to read `todoist-routing-rules`
+2. If found: Include the rules in the delegation prompt
+3. If not found: Use default classification (TASK vs INBOX CAPTURE)
+
+**First-time users**: Suggest running `/jarvis-todoist-setup` to configure personalized routing.
+
 ### Step 1: Delegate to jarvis-todoist-agent
 
 ```
@@ -20,17 +30,32 @@ Syncs Todoist inbox items using **hybrid classification**:
 
 Mode: SYNC
 
+[IF ROUTING RULES EXIST, INCLUDE THEM HERE:]
+---
+## Custom Routing Rules
+
+[Paste contents of todoist-routing-rules memory]
+
+Apply these rules IN ORDER. First match wins.
+For any item matching a custom classification:
+- Apply the specified labels
+- Move to the specified project (if different from current)
+- For ROADMAP items: Note for memory sync after approval
+---
+
 Fetch new Todoist inbox items and classify:
+- Check custom classifications FIRST (if rules provided above)
 - CLEAR TASK → label only, stay in Todoist
 - INBOX CAPTURE → capture to inbox/, complete in Todoist
 
 Return detailed summary grouped by category.
+Include which custom classification matched (if any).
 ```
 
 Agent will:
-1. Classify items (CLEAR TASK vs INBOX CAPTURE)
-2. Label clear tasks in Todoist
-3. Create inbox captures for ambiguous items
+1. Apply custom routing rules first (if provided)
+2. Fall back to standard classification (TASK vs INBOX CAPTURE)
+3. Label and route items appropriately
 4. Return grouped summary with item list
 
 ### Step 2: Present Detailed Summary
@@ -53,6 +78,19 @@ Agent returns grouped summary:
 ```
 
 Present this summary to user.
+
+### Step 2b: Memory Sync (If Custom Rules Require It)
+
+If routing rules specified **Memory Sync** for any classification (e.g., SIDE_PROJECT → `side-project-ideas`):
+
+1. Ask user: "3 items matched SIDE_PROJECT. Add to your ideas memory?"
+2. If approved: Use `mcp__plugin_serena_serena__edit_memory` to append items to specified memory
+3. Format: Add to section specified in rules (e.g., "Backlog" or "Ideas")
+
+This keeps strategic memories up-to-date automatically. For example:
+- Home renovation ideas → `home-renovation-plan` memory
+- Freelance leads → `freelance-pipeline` memory
+- Book recommendations → `reading-list` memory
 
 ### Step 3: Commit Inbox Captures (If Any Created)
 

@@ -1,7 +1,7 @@
 ---
 name: jarvis-todoist-agent
 description: Task management analyst for Jarvis. Proposes task routing, organization strategies, and corrections. Jarvis evaluates proposals against strategic context.
-tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__user-info
+tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__user-info, mcp__todoist__find-projects, mcp__todoist__add-projects
 model: sonnet
 permissionMode: acceptEdits
 ---
