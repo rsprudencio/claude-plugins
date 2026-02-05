@@ -6,13 +6,30 @@ description: Bump Jarvis plugin version and stage files for commit
 
 You are helping the developer bump the Jarvis plugin version.
 
+## Modular Architecture
+
+The plugin is split into 3 independent plugins:
+
+| Plugin | Path | Description |
+|--------|------|-------------|
+| `jarvis` | `plugins/jarvis/.claude-plugin/plugin.json` | Core (vault, journal, audit) |
+| `jarvis-todoist` | `plugins/jarvis-todoist/.claude-plugin/plugin.json` | Todoist integration |
+| `jarvis-strategic` | `plugins/jarvis-strategic/.claude-plugin/plugin.json` | Strategic analysis |
+
+**Default:** Bump `jarvis` (core) unless user specifies otherwise.
+
 ## Workflow
 
-### Step 1: Read Current Version
+### Step 1: Determine Which Plugin
 
-Read `plugin/.claude-plugin/plugin.json` to get the current version.
+If user specifies a plugin name (e.g., `/bump minor todoist`), bump that plugin.
+Otherwise, default to `jarvis` (core).
 
-### Step 2: Determine Bump Type
+### Step 2: Read Current Version
+
+Read the appropriate `plugins/<plugin>/.claude-plugin/plugin.json` to get the current version.
+
+### Step 3: Determine Bump Type
 
 Based on the user's request or auto-detect from changes:
 
@@ -23,31 +40,31 @@ Based on the user's request or auto-detect from changes:
 **Default:** patch if user doesn't specify
 
 If user says "major", ask for confirmation:
-> ⚠️ **Major version bump** changes X.Y.Z → X+1.0.0
+> Warning: **Major version bump** changes X.Y.Z → X+1.0.0
 > This indicates breaking changes. Are you sure? (yes/no)
 
-### Step 3: Calculate New Version
+### Step 4: Calculate New Version
 
 Parse current version and calculate new version based on bump type.
 
-### Step 4: Update Version Files
+### Step 5: Update Version Files
 
-**File 1: `plugin/.claude-plugin/plugin.json`**
+**File 1: `plugins/<plugin>/.claude-plugin/plugin.json`**
 - Update the `version` field to the new version
 
-**File 2: `CLAUDE.md`** (only for minor/major bumps)
-- Find the "### Current Version" section or "Version History" section
+**File 2: `CLAUDE.md`** (only for minor/major bumps to core plugin)
+- Find the "### Version History" section
 - Add new entry at the top:
   ```markdown
   - **X.Y.Z** - Brief description based on recent changes
   ```
 
-For patch bumps, skip updating CLAUDE.md (unless significant).
+For patch bumps or extension plugins, skip updating CLAUDE.md.
 
-### Step 5: Stage Files
+### Step 6: Stage Files
 
 ```bash
-git add plugin/.claude-plugin/plugin.json
+git add plugins/<plugin>/.claude-plugin/plugin.json
 ```
 
 If CLAUDE.md was updated:
@@ -55,20 +72,20 @@ If CLAUDE.md was updated:
 git add CLAUDE.md
 ```
 
-### Step 6: Report
+### Step 7: Report
 
 ```
-✅ Version bumped: 0.3.1 → 0.3.2 (patch)
+Version bumped: 1.0.0 → 1.1.0 (minor) [jarvis]
 
 Files staged:
-- plugin/.claude-plugin/plugin.json
+- plugins/jarvis/.claude-plugin/plugin.json
 [- CLAUDE.md]
 
 Next steps:
 1. Stage other changed files: git add <files>
 2. Review: git diff --staged
-3. Commit: git commit -m "Your changes and bump to v0.3.2"
-4. Tag: git tag -a v0.3.2 -m "Version 0.3.2: Description"
+3. Commit: git commit -m "Your changes and bump to v1.1.0"
+4. Tag: git tag -a v1.1.0 -m "Version 1.1.0: Description"
 5. Push: git push && git push --tags
 6. Reinstall: /reinstall
 7. Restart Claude Code
@@ -79,10 +96,12 @@ Next steps:
 ## Usage Examples
 
 ```bash
-/bump           # Auto-detect (default: patch)
-/bump patch     # Explicit patch bump
-/bump minor     # Minor version bump
-/bump major     # Major version bump (will confirm)
+/bump                 # Bump core (jarvis), default: patch
+/bump patch           # Explicit patch bump to core
+/bump minor           # Minor bump to core
+/bump minor todoist   # Minor bump to jarvis-todoist
+/bump patch strategic # Patch bump to jarvis-strategic
+/bump major           # Major bump (will confirm first)
 ```
 
 ---
@@ -93,3 +112,4 @@ Next steps:
 - Does NOT commit, tag, or reinstall (those are separate steps)
 - Use `/reinstall` AFTER committing to apply changes to Claude Code
 - Version bumps should be part of feature commits (combined), not standalone
+- Extension plugins (todoist, strategic) are versioned independently from core

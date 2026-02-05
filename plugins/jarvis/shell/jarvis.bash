@@ -14,7 +14,6 @@ function jarvis() {
         local prompt_file=$(find "$cache_dir/$plugin" -name "system-prompt.md" 2>/dev/null | head -1)
         if [[ -f "$prompt_file" ]]; then
             system_prompt+="$(cat "$prompt_file")"$'\n\n---\n\n'
-            # Use core plugin's settings.json
             if [[ "$plugin" == "jarvis" ]]; then
                 found_core=true
                 settings_file="$(dirname "$prompt_file")/settings.json"
@@ -29,8 +28,7 @@ function jarvis() {
         return 1
     fi
 
-    # Launch Claude with concatenated prompts
-    local cmd="__JARVIS_CLAUDE_STATUSLINE__=1 claude --append-system-prompt \"\$system_prompt\""
+    # Launch Claude with concatenated prompts and settings
     if [[ -f "$settings_file" ]]; then
         __JARVIS_CLAUDE_STATUSLINE__=1 claude \
             --append-system-prompt "$system_prompt" \

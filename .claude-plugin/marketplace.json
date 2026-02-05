@@ -1,19 +1,32 @@
 {
-  "name": "jarvis-marketplace",
+  "name": "raph-claude-plugins",
+  "version": "1.0.0",
+  "description": "Claude Code plugins by raph - modular tools for productivity and knowledge management",
   "owner": {
     "name": "Raphael Prudencio",
-    "email": "rsprudencio@gmail.com",
     "url": "https://github.com/rsprudencio"
   },
-  "metadata": {
-    "description": "Jarvis AI Assistant - Personal knowledge management, strategic context, and auditable git operations",
-    "version": "1.0.0",
-    "homepage": "https://github.com/rsprudencio/jarvis-plugin"
-  },
+  "homepage": "https://github.com/rsprudencio/claude-plugins",
+  "repository": "https://github.com/rsprudencio/claude-plugins",
+  "license": "CC-BY-NC-4.0",
   "plugins": [
     {
       "name": "jarvis",
-      "source": "./plugin"
+      "source": "./plugins/jarvis",
+      "version": "1.0.0",
+      "description": "Core Jarvis - vault management, journal entries, git audit trail, JARVIS protocol (REQUIRED for extensions)"
+    },
+    {
+      "name": "jarvis-todoist",
+      "source": "./plugins/jarvis-todoist",
+      "version": "1.0.0",
+      "description": "Todoist integration - task management analyst (requires: jarvis + Todoist MCP)"
+    },
+    {
+      "name": "jarvis-strategic",
+      "source": "./plugins/jarvis-strategic",
+      "version": "1.0.0",
+      "description": "Strategic analysis & briefings - orient, catchup, summarize, patterns (requires: jarvis + Serena MCP)"
     }
   ]
 }
