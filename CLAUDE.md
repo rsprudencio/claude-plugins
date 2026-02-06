@@ -87,9 +87,9 @@ Before committing plugin changes:
 
 1. Make code changes (agents, skills, MCP server, etc.)
 2. **Use `/bump`** to:
-   - Update version in `plugin/.claude-plugin/plugin.json`
+   - Update version in `plugins/jarvis/.claude-plugin/plugin.json` (and optionally other plugin manifests)
    - Update CLAUDE.md version history (for minor/major)
-   - Stage both files automatically
+   - Stage version files automatically
 3. Stage other changed files: `git add <files>`
 4. Commit changes with proper message
 5. **Tag the version commit**: `git tag -a v0.X.Y -m "Version 0.X.Y: Description"`
@@ -128,7 +128,7 @@ Use for:
 - **ALWAYS ask user before major bumps**
 
 ### Current Version
-Check: `plugin/.claude-plugin/plugin.json`
+Check: `plugins/jarvis/.claude-plugin/plugin.json` (core plugin version)
 
 ---
 
@@ -182,22 +182,18 @@ git show v0.X.Y
 When reinstalling during development (after code changes):
 
 ### Step 1: Bump Version
-Edit `plugin/.claude-plugin/plugin.json` and increment version according to rules above.
+Edit `plugins/jarvis/.claude-plugin/plugin.json` (and other affected plugin manifests) and increment version according to rules above.
 
 ### Step 2: Clean Cache & Reinstall
 
+**Preferred:** Use **`/reinstall`** skill - handles everything automatically.
+
+Manual alternative:
 ```bash
-# Clear all cached versions
-rm -rf ~/.claude/plugins/cache/jarvis-marketplace/jarvis/*
-
-# Update marketplace
+rm -rf ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*
 claude plugin marketplace update
-
-# Uninstall existing
-claude plugin uninstall jarvis@jarvis-marketplace
-
-# Install fresh
-claude plugin install jarvis@jarvis-marketplace
+claude plugin uninstall jarvis@raph-claude-plugins
+claude plugin install jarvis@raph-claude-plugins
 ```
 
 ### Step 3: Restart Claude Code
@@ -209,12 +205,12 @@ claude plugin install jarvis@jarvis-marketplace
 
 Reinstall is required after modifying:
 
-- **Agent definitions** - Files in `plugin/agents/*.md`
-- **Skills** - Files in `plugin/skills/*/SKILL.md`
-- **MCP server code** - Files in `plugin/mcp-server/`
-- **Plugin manifest** - `plugin/.claude-plugin/plugin.json`
-- **MCP configuration** - `plugin/.mcp.json`
-- **System prompt** - `plugin/system-prompt.md`
+- **Agent definitions** - Files in `plugins/*/agents/*.md`
+- **Skills** - Files in `plugins/*/skills/*/SKILL.md`
+- **MCP server code** - Files in `plugins/jarvis/mcp-server/`
+- **Plugin manifests** - `plugins/*/.claude-plugin/plugin.json`
+- **MCP configuration** - `plugins/jarvis/.mcp.json`
+- **System prompts** - `plugins/*/system-prompt.md`
 
 ---
 
@@ -224,7 +220,7 @@ If plugin doesn't load after reinstall:
 
 1. **Verify cache cleared**:
    ```bash
-   ls ~/.claude/plugins/cache/jarvis-marketplace/jarvis/
+   ls ~/.claude/plugins/cache/raph-claude-plugins/jarvis/
    # Should only show current version
    ```
 
@@ -253,23 +249,28 @@ If plugin doesn't load after reinstall:
 
 ## Development Notes
 
-### Plugin Architecture
+### Plugin Architecture (Modular Marketplace)
 
-- **Agents** - Autonomous sub-agents (journal, audit, todoist)
-- **Skills** - User-invocable workflows (slash commands)
-- **MCP Server** - `jarvis-tools` provides vault file ops and git operations
-- **System Prompt** - Jarvis identity and delegation model
+The plugin is split into 3 independent plugins in a single marketplace:
+
+- **`plugins/jarvis/`** - Core: MCP server, agents (journal, audit, explorer), core skills
+- **`plugins/jarvis-todoist/`** - Optional: Todoist agent + skills
+- **`plugins/jarvis-strategic/`** - Optional: Strategic analysis skills
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `plugin/.claude-plugin/plugin.json` | Plugin manifest (version, name, author) |
-| `plugin/system-prompt.md` | Jarvis core identity and constraints |
-| `plugin/.mcp.json` | MCP server registration |
-| `plugin/mcp-server/` | Python MCP server implementation |
-| `plugin/agents/*.md` | Agent definitions with tools/prompts |
-| `plugin/skills/*/SKILL.md` | Skill workflows |
+| `.claude-plugin/marketplace.json` | Marketplace manifest (all plugins) |
+| `plugins/jarvis/.claude-plugin/plugin.json` | Core plugin manifest (version, name) |
+| `plugins/jarvis/system-prompt.md` | Jarvis core identity and constraints |
+| `plugins/jarvis/.mcp.json` | MCP server registration |
+| `plugins/jarvis/mcp-server/` | Python MCP server (14 tools) |
+| `plugins/jarvis/agents/*.md` | Core agent definitions |
+| `plugins/jarvis/skills/*/SKILL.md` | Core skill workflows |
+| `plugins/jarvis-todoist/agents/*.md` | Todoist agent definition |
+| `plugins/jarvis-todoist/skills/*/SKILL.md` | Todoist skill workflows |
+| `plugins/jarvis-strategic/skills/*/SKILL.md` | Strategic skill workflows |
 
 ### Version History
 
@@ -284,16 +285,18 @@ If plugin doesn't load after reinstall:
 
 ## Quick Commands Reference
 
+**Preferred: Use `/reinstall` skill** - handles cache clear, marketplace update, uninstall, and reinstall automatically.
+
 ```bash
-# Reinstall (with cache clear)
-rm -rf ~/.claude/plugins/cache/jarvis-marketplace/jarvis/* && \
+# Manual reinstall (if /reinstall unavailable)
+rm -rf ~/.claude/plugins/cache/raph-claude-plugins/jarvis/* && \
 claude plugin marketplace update && \
-claude plugin uninstall jarvis@jarvis-marketplace && \
-claude plugin install jarvis@jarvis-marketplace
+claude plugin uninstall jarvis@raph-claude-plugins && \
+claude plugin install jarvis@raph-claude-plugins
 
 # Check installed version
-cat ~/.claude/plugins/cache/jarvis-marketplace/jarvis/*/plugin.json | grep version
+cat ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*/plugin.json | grep version
 
 # View agent configuration
-cat ~/.claude/plugins/cache/jarvis-marketplace/jarvis/*/agents/jarvis-todoist-agent.md | head -10
+cat ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*/agents/jarvis-journal-agent.md | head -10
 ```

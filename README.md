@@ -1,6 +1,6 @@
 # Raph's Claude Plugins
 
-**Version:** 1.0.0
+**Version:** 1.2.0
 **Author:** Raphael Prudencio
 **License:** CC BY-NC 4.0 (free to use, no commercial use)
 
@@ -22,7 +22,7 @@ This marketplace provides modular Claude Code plugins for AI-assisted workflows.
 - Git audit trail with JARVIS protocol
 - 14 MCP tools for vault operations
 - 3 core agents: audit, journal, explorer
-- 5 core skills: setup, journal, inbox, audit, activation
+- 6 core skills: setup, journal, inbox, audit, activation, schedule
 
 **Dependencies:** None
 
@@ -36,10 +36,11 @@ claude plugin install jarvis@raph-claude-plugins
 ### 📋 Optional: `jarvis-todoist`
 
 **Features:**
-- Smart task routing and classification
+- Smart task routing with 6-option classification
 - Inbox capture workflow
-- Todoist sync capabilities
+- Todoist sync with scheduled action detection
 - Task management analyst agent
+- Setup wizard for routing rules
 
 **Dependencies:**
 - `jarvis` plugin (core)
@@ -138,7 +139,7 @@ Then launch with: `jarvis` instead of `claude`
 | **Core only** | ~6,363 words | -2,726 words |
 | **Core + Todoist** | ~8,633 words | -456 words |
 | **Core + Strategic** | ~9,193 words | +104 words |
-| **Full (v1.0.0)** | ~11,463 words | +2,374 words |
+| **Full (v1.2.0)** | ~11,463 words | +2,374 words |
 
 **Key Benefit:** Non-Todoist users save ~30% context by installing core only.
 
@@ -195,5 +196,5 @@ See development documentation:
 
 ---
 
-**Status:** Production Ready v1.0.0
-**Release Date:** 2026-02-04
+**Status:** Production Ready v1.2.0
+**Latest Release:** 2026-02-05
