@@ -104,7 +104,7 @@ class TestConfigCaching:
         from tools import config as config_module
 
         # Create config with invalid JSON
-        config_dir = tmp_path / ".config" / "jarvis"
+        config_dir = tmp_path / ".jarvis"
         config_dir.mkdir(parents=True)
         config_file = config_dir / "config.json"
         config_file.write_text("{invalid json")
@@ -162,9 +162,15 @@ class TestGetDebugInfo:
         assert isinstance(info["cwd"], str)
         assert isinstance(info["home"], str)
 
-    def test_shows_config_exists_true_when_configured(self, mock_config):
+    def test_shows_config_exists_true_when_configured(self, mock_config, monkeypatch):
         """Should show config_exists=True when config file present."""
         from tools.config import get_debug_info
+
+        # Create config at the path get_debug_info will check
+        config_dir = mock_config.vault_path.parent / ".jarvis"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.json").write_text('{"vault_path": "test"}')
+        monkeypatch.setattr("pathlib.Path.home", lambda: mock_config.vault_path.parent)
 
         info = get_debug_info()
         assert info["config_exists"] is True

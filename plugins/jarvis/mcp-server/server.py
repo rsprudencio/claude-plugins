@@ -20,6 +20,10 @@ Tools - Vault File Operations (require setup confirmation):
 - jarvis_read_vault_file: Read file from vault
 - jarvis_list_vault_dir: List vault directory contents
 - jarvis_file_exists: Check if file exists in vault
+
+Tools - Memory Operations (ChromaDB semantic indexing):
+- jarvis_index_vault: Bulk index all vault .md files
+- jarvis_index_file: Index a single file (incremental)
 """
 import asyncio
 import json
@@ -48,6 +52,7 @@ from tools.git_ops import (
     parse_last_commit, get_status, push_to_remote, move_files,
     query_history, rollback_commit, file_history, rewrite_commit_messages
 )
+from tools.memory import index_vault, index_file
 
 logging.basicConfig(
     level=logging.INFO,
@@ -250,6 +255,42 @@ TOOLS = [
             },
             "required": ["relative_path"]
         }
+    ),
+    # Memory operations (ChromaDB semantic indexing)
+    Tool(
+        name="jarvis_index_vault",
+        description="Bulk index all .md files in the vault into ChromaDB for semantic search.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "force": {
+                    "type": "boolean",
+                    "description": "Re-index all files, even already indexed (default: false)"
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "Only index files in this subdirectory (optional)"
+                },
+                "include_sensitive": {
+                    "type": "boolean",
+                    "description": "Include documents/ and people/ directories (default: false)"
+                }
+            }
+        }
+    ),
+    Tool(
+        name="jarvis_index_file",
+        description="Index a single vault file into ChromaDB (for incremental indexing after journal creation).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "relative_path": {
+                    "type": "string",
+                    "description": "Path relative to vault root"
+                }
+            },
+            "required": ["relative_path"]
+        }
     )
 ]
 
@@ -297,6 +338,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             args.get("relative_path", ".")
         ),
         "jarvis_file_exists": lambda args: file_exists_in_vault(
+            args.get("relative_path", "")
+        ),
+        # Memory operations
+        "jarvis_index_vault": lambda args: index_vault(
+            force=args.get("force", False),
+            directory=args.get("directory"),
+            include_sensitive=args.get("include_sensitive", False)
+        ),
+        "jarvis_index_file": lambda args: index_file(
             args.get("relative_path", "")
         )
     }

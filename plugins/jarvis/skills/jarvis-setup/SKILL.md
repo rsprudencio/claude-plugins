@@ -18,7 +18,7 @@ Run this wizard to configure Jarvis. It's idempotent - re-running updates existi
 **You CAN**:
 - Scan filesystem to detect potential vault paths
 - Check which tools are available in your tool list
-- Read ~/.config/jarvis/config.json
+- Read ~/.jarvis/config.json
 
 **ALWAYS ask and get confirmation** before activating MCPs or loading projects.
 
@@ -27,7 +27,7 @@ Run this wizard to configure Jarvis. It's idempotent - re-running updates existi
 ### 1. Load existing config (if any)
 
 ```bash
-cat ~/.config/jarvis/config.json 2>/dev/null
+cat ~/.jarvis/config.json 2>/dev/null
 ```
 
 This is the ONLY file you read automatically.
@@ -53,10 +53,10 @@ You can scan common locations (~/Documents/Obsidian, ~/vaults, etc.) to suggest 
 
 ### 3. Write config after answer
 
-Only after receiving the answer, write `~/.config/jarvis/config.json`:
+Only after receiving the answer, write `~/.jarvis/config.json`:
 
 ```bash
-mkdir -p ~/.config/jarvis
+mkdir -p ~/.jarvis
 ```
 
 ```json
@@ -90,14 +90,29 @@ To enable full functionality:
 - Todoist: Configure Todoist MCP in settings
 ```
 
-### 5. Mention strategic context
+### 5. Memory system setup
+
+Ensure the memory database directory exists:
+
+```bash
+mkdir -p ~/.jarvis/memory_db
+```
+
+Then suggest indexing:
+
+```
+Jarvis has semantic search powered by ChromaDB.
+Run /jarvis:jarvis-memory-index to index your vault for /recall searches.
+```
+
+### 6. Mention strategic context
 
 ```
 Jarvis can use your values, goals, and trajectory for personalized assistance.
 Run /jarvis:jarvis-interview anytime to set or update these.
 ```
 
-### 6. Shell Integration (Optional but Recommended)
+### 7. Shell Integration (Optional but Recommended)
 
 Ask if the user wants the `jarvis` command added to their shell:
 
@@ -137,7 +152,7 @@ If user says yes:
 
 If adapting for other shells, use the zsh version as reference and adjust syntax as needed.
 
-### 7. Suggest permissions (for smoother experience)
+### 8. Suggest permissions (for smoother experience)
 
 Suggest adding these permissions to avoid repeated prompts:
 
@@ -147,16 +162,15 @@ For a smoother experience, add to ~/.claude/settings.json:
 {
   "permissions": {
     "allow": [
-      "Read(~/.config/jarvis/**)",
-      "Write(~/.config/jarvis/**)"
+      "Read(~/.jarvis/*)"
     ]
   }
 }
 
-This allows Jarvis to read/write its config without prompting each time.
+This allows Jarvis to read its config without prompting each time.
 ```
 
-### 8. Show completion summary
+### 9. Show completion summary
 
 ```
 Setup complete!

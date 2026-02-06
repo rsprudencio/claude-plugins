@@ -8,10 +8,10 @@ _config_cache = None
 
 
 def get_config() -> dict:
-    """Load config from ~/.config/jarvis/config.json with caching."""
+    """Load config from ~/.jarvis/config.json with caching."""
     global _config_cache
     if _config_cache is None:
-        config_path = Path.home() / ".config" / "jarvis" / "config.json"
+        config_path = Path.home() / ".jarvis" / "config.json"
         if config_path.exists():
             with open(config_path) as f:
                 _config_cache = json.load(f)
@@ -80,7 +80,7 @@ def get_verified_vault_path() -> Tuple[str, str]:
 
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
-    config_path = Path.home() / ".config" / "jarvis" / "config.json"
+    config_path = Path.home() / ".jarvis" / "config.json"
     return {
         "config_path": str(config_path),
         "config_exists": config_path.exists(),

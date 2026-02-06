@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Read(~/.config/jarvis/*)"
+      "Read(~/.jarvis/*)"
     ]
   }
 }

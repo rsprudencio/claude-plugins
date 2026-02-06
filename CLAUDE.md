@@ -274,6 +274,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.3.0** - ChromaDB semantic memory: /recall, /memory-index, /memory-stats skills, vault-wide indexing, explorer semantic pre-search, config migration to ~/.jarvis/
 - **1.2.0** - Scheduling: SCHEDULED mode, schedule management skill, session-start checks, 6-option inbox routing, focus check
 - **1.1.0** - Shell integration in setup wizard, jarvis.zsh/jarvis.bash snippets
 - **1.0.0** - Modular architecture: split into jarvis, jarvis-todoist, jarvis-strategic plugins

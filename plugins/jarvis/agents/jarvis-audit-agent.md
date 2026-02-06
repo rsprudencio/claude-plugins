@@ -151,7 +151,7 @@ Rewrite recent commit messages to remove unwanted text patterns.
 
 ### Vault Location
 
-**Note:** The jarvis_commit MCP tool automatically detects the vault location from `~/.config/jarvis/config.json`.
+**Note:** The jarvis_commit MCP tool automatically detects the vault location from `~/.jarvis/config.json`.
 You do not need to read or pass vault_path - this is handled internally by the MCP tools.
 
 All git operations are automatically performed within the configured vault directory.

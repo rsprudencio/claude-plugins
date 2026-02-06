@@ -5,6 +5,7 @@ description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS pro
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
+    "chromadb>=0.5.0",
 ]
 
 [project.optional-dependencies]

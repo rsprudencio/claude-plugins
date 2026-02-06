@@ -25,7 +25,7 @@ You do NOT make decisions about entry type or context - Jarvis (the caller) clar
 **Before doing ANY work**, verify requirements are met:
 
 1. Check if `mcp__plugin_jarvis_tools__*` tools exist in your available tools
-2. Read `~/.config/jarvis/config.json` and verify `vault_path` is set and `vault_confirmed: true`
+2. Read `~/.jarvis/config.json` and verify `vault_path` is set and `vault_confirmed: true`
 
 **If Jarvis tools MCP is NOT available**, return:
 
@@ -65,7 +65,7 @@ If both checks pass, proceed with the requested operation.
 
 ### Vault Location
 
-**FIRST**: Read `vault_path` from `~/.config/jarvis/config.json` to determine the vault location.
+**FIRST**: Read `vault_path` from `~/.jarvis/config.json` to determine the vault location.
 
 All Write operations MUST be within this vault directory.
 

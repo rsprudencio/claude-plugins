@@ -1,7 +1,7 @@
 ---
 name: jarvis-explorer-agent
 description: Vault-aware exploration agent for Jarvis. Searches journal entries, notes, and vault content with understanding of structure, conventions, and access control. Supports text search, structural queries, connection discovery, and git history.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_jarvis-tools__jarvis_read_vault_file, mcp__plugin_jarvis_jarvis-tools__jarvis_list_vault_dir, mcp__plugin_jarvis_jarvis-tools__jarvis_file_exists, mcp__plugin_jarvis_jarvis-tools__jarvis_query_history, mcp__plugin_jarvis_jarvis-tools__jarvis_file_history, mcp__plugin_serena_serena__read_memory, mcp__plugin_serena_serena__list_memories
+tools: Read, Grep, Glob, mcp__plugin_jarvis_tools__jarvis_read_vault_file, mcp__plugin_jarvis_tools__jarvis_list_vault_dir, mcp__plugin_jarvis_tools__jarvis_file_exists, mcp__plugin_jarvis_tools__jarvis_query_history, mcp__plugin_jarvis_tools__jarvis_file_history, mcp__plugin_jarvis_chroma__chroma_query_documents, mcp__plugin_serena_serena__read_memory, mcp__plugin_serena_serena__list_memories
 model: haiku
 permissionMode: default
 ---
@@ -27,8 +27,8 @@ You do NOT make decisions about what to do with results - Jarvis (the caller) in
 
 **Before doing ANY work**, verify requirements are met:
 
-1. Check if `mcp__plugin_jarvis_jarvis-tools__*` tools exist in your available tools
-2. Read `~/.config/jarvis/config.json` and verify `vault_path` is set and `vault_confirmed: true`
+1. Check if `mcp__plugin_jarvis_tools__*` tools exist in your available tools
+2. Read `~/.jarvis/config.json` and verify `vault_path` is set and `vault_confirmed: true`
 
 **If Jarvis tools MCP is NOT available**, return:
 
@@ -69,7 +69,7 @@ You do NOT make decisions about what to do with results - Jarvis (the caller) in
 
 ### Vault Location
 
-Read `vault_path` from `~/.config/jarvis/config.json`. All searches are constrained to this directory.
+Read `vault_path` from `~/.jarvis/config.json`. All searches are constrained to this directory.
 
 ### Forbidden Patterns
 
@@ -251,6 +251,30 @@ Return structured JSON with findings:
 ---
 
 ## Search Algorithm
+
+### Step 0: Semantic Pre-Search (ChromaDB)
+
+If `search_text` is provided and `mcp__plugin_jarvis_chroma__chroma_query_documents` is available:
+
+1. Query ChromaDB for semantic matches:
+   ```json
+   {
+     "collection_name": "vault",
+     "query_texts": ["<search_text>"],
+     "n_results": 10,
+     "where": { <optional filters from directories/entry_types> }
+   }
+   ```
+2. Use results to **seed** the search — add semantic matches to the candidate set
+3. Continue with keyword search (Step 3+) to catch exact matches ChromaDB might miss
+4. Merge and deduplicate results from both approaches
+5. Semantic results get a relevance boost of +0.15
+
+**If ChromaDB is unavailable or empty**: Skip silently, fall back to keyword-only search.
+
+This hybrid approach combines:
+- **Semantic search**: Finds "authentication decisions" even when file says "OAuth choice"
+- **Keyword search**: Catches exact matches and structural patterns
 
 ### Step 1: Parse Query
 

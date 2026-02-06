@@ -48,7 +48,7 @@ You are a **task management specialist** who analyzes Todoist tasks and **propos
 
 ### Vault Location
 
-**FIRST**: Read `vault_path` from `~/.config/jarvis/config.json` to determine the vault location.
+**FIRST**: Read `vault_path` from `~/.jarvis/config.json` to determine the vault location.
 
 All operations that create files MUST be within this vault directory.
 
