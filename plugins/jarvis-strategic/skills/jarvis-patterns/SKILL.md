@@ -273,10 +273,62 @@ Offer to:
 - Trend comparisons
 - Predictive insights
 
+---
+
+## Mid-Session Focus Check
+
+**Trigger**: "Jarvis, what threads are open?" or "focus check" or "what am I working on?"
+
+This is a **point-in-time analysis**, not live monitoring. It summarizes the current session on demand.
+
+### Workflow
+
+1. **Summarize conversation threads**:
+   - Topics discussed in the current session
+   - Status of each: active, dormant (mentioned early but not revisited), concluded
+   - Any pending decisions or open questions
+
+2. **Surface pending items**:
+   - Unfinished tasks mentioned during session
+   - Items the user said they'd come back to
+   - Topics that drifted without resolution
+
+3. **Suggest next steps**:
+   - Close dormant threads via journal capture ("Want me to journal that thought about X?")
+   - Set a Todoist reminder for items that need follow-up
+   - Refocus on the primary task if drift is detected
+
+### Example Output
+
+```
+## Focus Check
+
+**Active threads:**
+1. Scheduling implementation (primary) — in progress
+2. Roadmap memory update — pending
+
+**Dormant threads:**
+3. Shell integration testing — mentioned at start, not revisited
+
+**Suggested actions:**
+- Continue with scheduling (primary focus)
+- Roadmap update can happen after implementation
+- Want me to create a reminder for shell testing?
+```
+
+### Important
+
+- This is **always available on demand** — no config flag needed
+- It reads conversation context only, no vault/API queries required
+- Keep it lightweight — this should take seconds, not minutes
+
+---
+
 ## Notes
 
-- This is the most resource-intensive workflow
+- Historical pattern analysis is the most resource-intensive workflow
 - Results should inform strategic planning
 - Run monthly at minimum for value
 - Patterns memory gets smarter over time
 - ADHD patterns are critical - surface them clearly
+- Mid-session focus check is lightweight and always available

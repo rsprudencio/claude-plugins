@@ -9,40 +9,52 @@ description: Process and organize inbox items. Use when user says "Jarvis, organ
 
 1. **Scan** `inbox/` for unprocessed items
 
-2. **Categorize** each item and suggest destination:
+2. **Classify each item** using 6 routing options:
 
-   **For Todoist-origin items** (check frontmatter: `source: todoist`):
-   - Journal material → trigger jarvis-journal skill (creates journal entry, deletes inbox file)
-   - Still a task → push back to Todoist project (creates task, deletes inbox file)
-   - Notes/reference → move to `notes/` or `references/`
-   - Outdated/irrelevant → confirm deletion
+   | Classification | Destination | Handler |
+   |----------------|-------------|---------|
+   | **Journal entry** | `journal/jarvis/` | Delegate to jarvis-journal-agent |
+   | **Work note** | `work/[slug].md` | Direct creation with frontmatter |
+   | **Personal note** | `notes/[slug].md` | Direct creation with frontmatter |
+   | **Person/contact** | `people/[name].md` | Direct creation with frontmatter |
+   | **Discard** | (deleted) | Remove from inbox after confirmation |
+   | **Skip** | stays in `inbox/` | Keep for later processing |
 
-   **For other inbox items**:
-   - Notes → `notes/[appropriate-subfolder]/`
-   - Journal material → trigger jarvis-journal skill
-   - Reference docs → `references/`
-   - Temporary/trash → confirm deletion
+   **For Todoist-origin items** (frontmatter: `source: todoist`):
+   - Suggest the most likely classification based on content
+   - If item looks like a task that was misclassified, offer to push back to Todoist
+
+   **Note file format** (for work/personal/contact notes):
+   ```yaml
+   ---
+   source: todoist  # or "manual" for non-Todoist items
+   created: 2026-02-05
+   tags: []
+   ---
+
+   # [Title]
+
+   [Content]
+   ```
 
 3. **Present plan** to user with review options:
 
    **Option A: Review each item** (default for small batches <5 items)
    ```
-   Found 3 items in inbox:
+   Item 1/3: "I realized morning routines help my focus"
+   Source: Todoist (captured 2 days ago)
+   → Proposed: Journal entry
 
-   1. "morning-routines.md" (Todoist)
-      → Proposed: Journal entry
-      → Alternative: Keep as note | Push to Todoist | Delete
-
-   2. "jarvis-architecture.md" (Todoist)
-      → Proposed: Keep as note (notes/ideas/)
-      → Alternative: Journal | Push to Todoist | Delete
-
-   3. "meeting-notes.md"
-      → Proposed: Keep as note (notes/meetings/)
-      → Alternative: Journal | Delete
-
-   Approve all? Or review individually?
+   Classify as:
+   1. Journal entry (recommended)
+   2. Work note → work/
+   3. Personal note → notes/
+   4. Person/contact → people/
+   5. Discard
+   6. Skip for now
    ```
+
+   User can **stop anytime**: "stop review" → remaining items stay in inbox.
 
    **Option B: Batch approve** (for larger batches ≥5 items)
    ```
@@ -50,16 +62,17 @@ description: Process and organize inbox items. Use when user says "Jarvis, organ
 
    Proposed actions:
    - Journal: 4 items
-   - Notes: 6 items
-   - Delete: 2 items
+   - Work notes: 3 items
+   - Personal notes: 3 items
+   - Discard: 2 items
 
-   Approve batch? (You can review detailed list if needed)
+   Approve batch? (You can review detailed list or review individually)
    ```
 
 4. **Execute** based on user choice:
-   - If individual review: Process item by item with confirmations
+   - If individual review: Process item by item, stop on "stop review"
    - If batch approve: Execute all at once, show summary after
-   - Move files to destinations
+   - Route files to correct destinations
    - Create any needed folders
 
 5. **Commit** via `jarvis-audit-agent`:

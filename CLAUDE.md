@@ -273,6 +273,7 @@ If plugin doesn't load after reinstall:
 
 ### Version History
 
+- **1.2.0** - Scheduling: SCHEDULED mode, schedule management skill, session-start checks, 6-option inbox routing, focus check
 - **1.1.0** - Shell integration in setup wizard, jarvis.zsh/jarvis.bash snippets
 - **1.0.0** - Modular architecture: split into jarvis, jarvis-todoist, jarvis-strategic plugins
 - **0.3.0** - jarvis-explorer-agent (vault-aware search), test framework v1.0, capitalization fixes

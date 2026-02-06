@@ -13,9 +13,28 @@ Syncs Todoist inbox items using **hybrid classification**:
 
 ## Steps
 
-### Step 0: Load Custom Routing Rules (If Available)
+### Step 0: Check Scheduled Actions
 
-**Before delegating**, check for custom routing rules:
+Check if any recurring Jarvis actions are due (these are pre-configured by the user via `/jarvis-schedule`):
+
+1. **Delegate to agent**:
+   ```
+   **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy.
+
+   Mode: SCHEDULED
+   ```
+
+2. **If scheduled actions are due**:
+   - Present the list to the user (sorted: most overdue first)
+   - Ask: "You have [N] scheduled actions due. Run them now?"
+   - If approved: Execute each action by invoking the corresponding skill, then complete the Todoist task
+   - If declined: Note them and proceed to sync
+
+3. **If no actions due**: Proceed silently to Step 0b.
+
+### Step 0b: Load Custom Routing Rules (If Available)
+
+**Before delegating SYNC**, check for custom routing rules:
 
 1. Use `mcp__plugin_serena_serena__read_memory` to read `todoist-routing-rules`
 2. If found: Include the rules in the delegation prompt
@@ -57,6 +76,15 @@ Agent will:
 2. Fall back to standard classification (TASK vs INBOX CAPTURE)
 3. Label and route items appropriately
 4. Return grouped summary with item list
+
+### Step 1b: Review or Defer
+
+After the agent returns its proposals, ask the user:
+
+> "Review items now or defer to inbox?"
+
+- **Review now**: Present item-by-item classification (user can stop anytime with "stop review" — remaining items go to inbox). Each item gets the full 6 classification options (see `/jarvis-inbox`): Journal entry, Work note, Personal note, Person/contact, Discard, Skip.
+- **Defer**: All ambiguous items go straight to `inbox/todoist/` without item-by-item review. Tasks still get labeled in Todoist as usual. This is the "silent" path — no interruption, inbox captures committed in bulk.
 
 ### Step 2: Present Detailed Summary
 
@@ -139,10 +167,9 @@ Then commit the correction.
 
 ---
 
-## Future Enhancements (Phase 2)
+## Future Enhancements
 
 - **ANALYZE mode**: "Jarvis, analyze my Todoist" → Agent proposes optimizations (archive stale, break down large)
 - **ORGANIZE mode**: "Jarvis, I'm overwhelmed" → Agent proposes hiding low-priority, reordering by goals
 - **Bi-directional sync**: Complete task in vault → sync to Todoist
 - **Proactive suggestions**: Agent notices patterns and suggests without prompt
-- **Scheduled automation**: Cron job for automated sync

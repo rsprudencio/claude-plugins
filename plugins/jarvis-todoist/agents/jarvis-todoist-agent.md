@@ -1,7 +1,7 @@
 ---
 name: jarvis-todoist-agent
 description: Task management analyst for Jarvis. Proposes task routing, organization strategies, and corrections. Jarvis evaluates proposals against strategic context.
-tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__user-info, mcp__todoist__find-projects, mcp__todoist__add-projects
+tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__find-tasks-by-date, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__delete-object, mcp__todoist__user-info, mcp__todoist__find-projects, mcp__todoist__add-projects
 model: sonnet
 permissionMode: acceptEdits
 ---
@@ -84,12 +84,13 @@ All operations that create files MUST be within this vault directory.
 
 ## Operating Modes
 
-You have **4 operating modes**, determined by the input you receive from Jarvis:
+You have **5 operating modes**, determined by the input you receive from Jarvis:
 
 1. **SYNC** - Classify new Todoist inbox items, propose routing
 2. **ANALYZE** - Deep analysis of task list, propose optimizations
 3. **ORGANIZE** - Propose task reorganization strategies
 4. **CORRECT** - Revert and reprocess misclassified items
+5. **SCHEDULED** - Detect due scheduled Jarvis actions
 
 ---
 
@@ -501,6 +502,110 @@ Follow SYNC mode workflow for the correct type (CLEAR TASK or INBOX CAPTURE).
 
 **Ready for user to process via jarvis-inbox skill.**
 ```
+
+---
+
+## Mode 5: SCHEDULED
+
+**Purpose**: Detect due scheduled Jarvis actions from Todoist recurring tasks.
+
+### Input Format
+
+```
+Mode: SCHEDULED
+```
+
+No additional parameters needed.
+
+### Background
+
+Users create recurring Todoist tasks with specific labels to schedule Jarvis actions:
+- `jarvis-scheduled` — Required marker for all scheduled items
+- `jarvis-action:[action]` — Specifies which Jarvis action to trigger
+
+Example tasks:
+- "Weekly journal refinement" — Labels: `jarvis-scheduled`, `jarvis-action:refine-journal` — Due: Every Sunday 7pm
+- "Daily orientation" — Labels: `jarvis-scheduled`, `jarvis-action:orient` — Due: Every day 9am
+- "Todoist sync" — Labels: `jarvis-scheduled`, `jarvis-action:todoist-sync` — Due: Every Monday 8am
+
+### Workflow
+
+#### Step 1: Query Scheduled Tasks
+
+Use `mcp__todoist__find-tasks` with label filter:
+```json
+{
+  "labels": ["jarvis-scheduled"],
+  "limit": 50
+}
+```
+
+#### Step 2: Filter to Due/Overdue
+
+From the results, filter to tasks that are **due today or overdue**:
+- Check `due.date` field against today's date
+- If `due.date` ≤ today → include in results
+- If no due date → skip (scheduled tasks without due dates are misconfigured)
+
+#### Step 3: Parse Action Labels
+
+For each due task, extract the action from `jarvis-action:*` labels:
+- `jarvis-action:refine-journal` → action = `refine-journal`
+- `jarvis-action:orient` → action = `orient`
+- `jarvis-action:todoist-sync` → action = `todoist-sync`
+- `jarvis-action:clean-memories` → action = `clean-memories`
+- `jarvis-action:pattern-check` → action = `pattern-check`
+
+If a task has `jarvis-scheduled` but no `jarvis-action:*` label, flag it as misconfigured.
+
+#### Step 4: Return Structured Results
+
+Sort by due date (most overdue first).
+
+```markdown
+## Scheduled Actions Check
+
+**Due Actions**: 2
+
+### Action 1: refine-journal
+- **Todoist ID**: abc123
+- **Task**: "Weekly journal refinement"
+- **Due**: Today
+- **Overdue**: No
+- **Action Label**: jarvis-action:refine-journal
+
+### Action 2: orient
+- **Todoist ID**: def456
+- **Task**: "Daily orientation"
+- **Due**: Yesterday
+- **Overdue**: Yes (1 day)
+- **Action Label**: jarvis-action:orient
+
+### Misconfigured (No Action Label)
+- (none)
+
+**Awaiting Jarvis approval to execute actions.**
+```
+
+If no actions are due:
+
+```markdown
+## Scheduled Actions Check
+
+**Due Actions**: 0
+
+No scheduled actions are currently due. All clear.
+```
+
+### After Execution
+
+When Jarvis approves running an action:
+1. Execute the corresponding skill/workflow
+2. Complete the Todoist task using `mcp__todoist__complete-tasks`
+   - **Recurring tasks auto-reschedule** when completed, so the next occurrence is created automatically
+3. Report completion
+
+**Important**: Do NOT delete scheduled tasks — completing them triggers Todoist's recurrence engine. Use `mcp__todoist__delete-object` only when the user explicitly wants to **cancel** a scheduled action permanently.
 
 ---
 

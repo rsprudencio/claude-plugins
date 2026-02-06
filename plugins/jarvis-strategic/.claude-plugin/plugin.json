@@ -1,7 +1,7 @@
 {
   "name": "jarvis-strategic",
   "description": "Strategic analysis & briefings - orient, catchup, summarize, patterns (requires jarvis + Serena MCP)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": {
     "name": "Raphael Prudencio"
   },
