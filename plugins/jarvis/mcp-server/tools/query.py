@@ -10,7 +10,8 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from .memory import _get_collection, _DB_DIR
+from .memory import _get_collection
+from .paths import get_path
 from .namespaces import parse_id, ALL_TYPES
 
 
@@ -333,8 +334,9 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
 
             # Storage size
             storage_bytes = 0
-            if os.path.isdir(_DB_DIR):
-                for dirpath, _, filenames in os.walk(_DB_DIR):
+            db_dir = get_path("db_path")
+            if os.path.isdir(db_dir):
+                for dirpath, _, filenames in os.walk(db_dir):
                     for f in filenames:
                         storage_bytes += os.path.getsize(os.path.join(dirpath, f))
             result["storage_bytes"] = storage_bytes

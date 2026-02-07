@@ -33,6 +33,10 @@ Tools - Memory CRUD (file-backed with ChromaDB index):
 - jarvis_memory_read: Read a named memory by name
 - jarvis_memory_list: List memory files with metadata
 - jarvis_memory_delete: Delete memory file + index entry
+
+Tools - Path Configuration:
+- jarvis_resolve_path: Resolve a named path to absolute location
+- jarvis_list_paths: List all configured paths with resolved values
 """
 import asyncio
 import json
@@ -62,6 +66,7 @@ from tools.git_ops import (
     query_history, rollback_commit, file_history, rewrite_commit_messages
 )
 from tools.memory import index_vault, index_file
+from tools.paths import get_path, get_relative_path, list_all_paths, validate_paths_config, PathNotConfiguredError
 from tools.query import query_vault, doc_read, collection_stats
 from tools.memory_crud import (
     memory_write as mem_write,
@@ -508,6 +513,34 @@ TOOLS = [
             "required": ["name"]
         }
     ),
+    # Path configuration tools
+    Tool(
+        name="jarvis_resolve_path",
+        description="Resolve a named path to its absolute filesystem location. Use for configurable vault paths.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'db_path')"
+                },
+                "substitutions": {
+                    "type": "object",
+                    "description": "Template variable replacements (e.g., {\"YYYY\": \"2026\", \"MM\": \"02\"})"
+                },
+                "ensure_exists": {
+                    "type": "boolean",
+                    "description": "Create directory if it does not exist (default: false)"
+                }
+            },
+            "required": ["name"]
+        }
+    ),
+    Tool(
+        name="jarvis_list_paths",
+        description="List all configured paths with their resolved values. Diagnostic tool.",
+        inputSchema={"type": "object", "properties": {}}
+    ),
 ]
 
 
@@ -607,6 +640,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             project=args.get("project"),
             confirm=args.get("confirm", False),
         ),
+        # Path configuration
+        "jarvis_resolve_path": lambda args: handle_resolve_path(args),
+        "jarvis_list_paths": lambda args: handle_list_paths(),
     }
 
     try:
@@ -667,6 +703,44 @@ async def handle_commit(args: dict) -> dict:
         "files_changed": stats["files_changed"],
         "insertions": stats["insertions"],
         "deletions": stats["deletions"]
+    }
+
+
+def handle_resolve_path(args: dict) -> dict:
+    """Handle jarvis_resolve_path."""
+    name = args.get("name", "")
+    substitutions = args.get("substitutions")
+    ensure_exists = args.get("ensure_exists", False)
+
+    try:
+        resolved = get_path(name, substitutions=substitutions, ensure_exists=ensure_exists)
+        is_vault_relative = name not in {"db_path", "project_memories_path"}
+        result = {
+            "success": True,
+            "name": name,
+            "resolved": resolved,
+            "is_vault_relative": is_vault_relative,
+            "exists": os.path.exists(resolved),
+        }
+        if is_vault_relative:
+            result["relative"] = get_relative_path(name)
+        return result
+    except PathNotConfiguredError as e:
+        return {"success": False, "error": str(e)}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+
+def handle_list_paths() -> dict:
+    """Handle jarvis_list_paths."""
+    from tools.config import get_vault_path
+    result = list_all_paths()
+    warnings = validate_paths_config()
+    return {
+        "success": True,
+        "vault_path": get_vault_path(),
+        "warnings": warnings,
+        **result,
     }
 
 

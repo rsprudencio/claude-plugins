@@ -180,7 +180,8 @@ class TestQueryVault:
         """Reset ChromaDB singleton for test isolation."""
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_query_db")
+        # Point db_path at a temp directory via config
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_query_db")})
 
     def _index_test_files(self, mock_config):
         """Create and index test files."""
@@ -278,7 +279,7 @@ class TestDocRead:
     def _reset_and_index(self, mock_config):
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_read_db")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_read_db")})
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -341,7 +342,7 @@ class TestCollectionStats:
     def _reset_and_index(self, mock_config):
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_stats_db")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_stats_db")})
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -393,7 +394,7 @@ class TestCollectionStats:
     def test_collection_stats_empty(self, mock_config):
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_stats_empty_db")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_stats_empty_db")})
 
         result = collection_stats()
         assert result["success"] is True

@@ -10,7 +10,10 @@ def _reset_chromadb(mock_config):
     """Reset ChromaDB singleton for test isolation."""
     import tools.memory as mem
     mem._chroma_client = None
-    mem._DB_DIR = str(mock_config.vault_path / ".test_crud_db")
+    mock_config.set(memory={
+        "db_path": str(mock_config.vault_path / ".test_crud_db"),
+        "project_memories_path": str(mock_config.vault_path / ".jarvis" / "memories"),
+    })
 
 
 def _cleanup_chromadb():

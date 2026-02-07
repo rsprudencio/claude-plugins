@@ -63,12 +63,12 @@ All operations that create files MUST be within this vault directory.
 ### Allowed Write Locations (Within Vault)
 
 **ONLY for inbox captures**:
-- `inbox/todoist/` - Inbox capture files for deferred processing
-- Path pattern: `inbox/todoist/YYYYMMDDHHMMSS-slug.md`
+- `paths.inbox_todoist` (default: `inbox/todoist/`) - Inbox capture files for deferred processing
+- Path pattern: `{paths.inbox_todoist}/YYYYMMDDHHMMSS-slug.md`
 
 **FORBIDDEN**:
-- `journal/` - Use jarvis-journal-agent via delegation
-- `notes/` - Not this agent's responsibility
+- `paths.journal_jarvis` / `paths.journal_daily` (default: `journal/`) - Use jarvis-journal-agent via delegation
+- `paths.notes` (default: `notes/`) - Not this agent's responsibility
 - Any other vault directory
 
 ### When Violation Detected
@@ -200,7 +200,7 @@ Return proposals in this format:
 - **Confidence**: 0.92
 - **Reasoning**: Contains 'realized', past-tense reflection, personal insight - needs review before journaling
 - **Proposed Actions**:
-  1. Create inbox capture file: inbox/todoist/YYYYMMDDHHMMSS-morning-routines.md
+  1. Create inbox capture file: {paths.inbox_todoist}/YYYYMMDDHHMMSS-morning-routines.md (configurable)
   2. Complete task in Todoist (captured for review)
   3. Add label `jarvis-ingested`
 - **Impact**: Medium (creates inbox file, completes in Todoist)
@@ -251,7 +251,7 @@ For each **approved proposal**:
 2. Report: `✓ Tagged task "Buy new keyboard" (abc123)`
 
 **If INBOX CAPTURE**:
-1. Create simple capture file in `inbox/todoist/`:
+1. Create simple capture file in `paths.inbox_todoist` (default: `inbox/todoist/`):
    - Generate filename: `YYYYMMDDHHMMSS-[slug].md`
    - Slug: 3-5 words from title, lowercase kebab-case
    - Content: YAML frontmatter + title + description
@@ -295,8 +295,8 @@ Return execution summary:
 **Tasks** (labeled, staying in Todoist): 1
 - "Buy new keyboard" (abc123)
 
-**Captured to inbox/** (for review): 1
-- "I realized morning routines help focus" → inbox/todoist/20260128104500-morning-routines.md
+**Captured to inbox** (for review): 1
+- "I realized morning routines help focus" → {paths.inbox_todoist}/20260128104500-morning-routines.md (configurable)
 
 **Skipped** (already ingested): 0
 
@@ -467,7 +467,7 @@ Find the Todoist item by title or ID. Verify it has `jarvis-ingested` label.
 #### Step 2: Revert Original Classification
 
 **If was INBOX CAPTURE (now should be CLEAR TASK)**:
-1. Find inbox file by searching `inbox/todoist/` for matching `todoist_id` in frontmatter
+1. Find inbox file by searching `paths.inbox_todoist` (default: `inbox/todoist/`) for matching `todoist_id` in frontmatter
 2. Delete inbox file
 3. Uncomplete Todoist task using `mcp__todoist__update-tasks`
 4. Keep `jarvis-ingested` label
@@ -494,7 +494,7 @@ Follow SYNC mode workflow for the correct type (CLEAR TASK or INBOX CAPTURE).
 
 **Apply Actions**:
 - Creating inbox capture...
-- Inbox file created: inbox/todoist/20260128120000-keyboard-upgrade.md
+- Inbox file created: {paths.inbox_todoist}/20260128120000-keyboard-upgrade.md (configurable)
 - Task completed in Todoist
 - Label `jarvis-ingested` retained
 

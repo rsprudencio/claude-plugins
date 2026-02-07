@@ -20,6 +20,12 @@ def get_config() -> dict:
     return _config_cache
 
 
+def clear_config_cache():
+    """Invalidate the cached config, forcing a re-read on next access."""
+    global _config_cache
+    _config_cache = None
+
+
 def get_vault_path() -> str:
     """Get vault_path from config, falling back to cwd if not set.
 

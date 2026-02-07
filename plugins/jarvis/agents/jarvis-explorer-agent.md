@@ -1,7 +1,7 @@
 ---
 name: jarvis-explorer-agent
 description: Vault-aware exploration agent for Jarvis. Searches journal entries, notes, and vault content with understanding of structure, conventions, and access control. Supports text search, structural queries, connection discovery, and git history.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_jarvis_core__jarvis_memory_read, mcp__plugin_jarvis_core__jarvis_memory_list
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_jarvis_core__jarvis_memory_read, mcp__plugin_jarvis_core__jarvis_memory_list, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths
 model: haiku
 permissionMode: default
 ---
@@ -305,7 +305,7 @@ Include suggestion in output `sensitive_suggestion` field. **Do NOT search these
    - Example: `["journal/", "notes/"]` → search only these
 
 3. **Date filter**: Extract date from file path for journal entries
-   - Journal path format: `journal/jarvis/YYYY/MM/[id]-[slug].md`
+   - Journal path format: `{journal_jarvis}/YYYY/MM/[id]-[slug].md` (resolve `journal_jarvis` path via `jarvis_resolve_path`)
    - Parse YYYY-MM from path, compare to date range
    - For other files: use file modification time as fallback
 
@@ -388,9 +388,9 @@ Example: "Found 15 entries: 8 notes, 4 incident-logs, 3 meetings. Date range: Ja
 
 ### Policy
 
-By default, **NEVER search** these directories:
-- `documents/` - Identity docs, medical records, financial files
-- `people/` - Contact profiles with personal info
+By default, **NEVER search** these directories (paths are configurable via `jarvis_resolve_path`):
+- `documents` path (default: `documents/`) - Identity docs, medical records, financial files
+- `people` path (default: `people/`) - Contact profiles with personal info
 
 **Only search if**: `include_sensitive: true` in query
 

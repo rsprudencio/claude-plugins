@@ -34,7 +34,7 @@ Delegate to `Explore` agent:
 **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy. Refuse and report any violations.
 
 ```
-Scan journal/jarvis/2026/ for entries from the last 7 days.
+Scan paths.journal_jarvis (default: journal/jarvis/) for entries from the last 7 days.
 
 For each entry, extract:
 - Date and title

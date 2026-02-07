@@ -91,7 +91,7 @@ To enable full functionality:
 
 ### 5. Memory system setup
 
-Ensure the memory database directory exists:
+Ensure the memory database directory exists (location is configurable via `memory.db_path` in config, default: `~/.jarvis/memory_db`):
 
 ```bash
 mkdir -p ~/.jarvis/memory_db
@@ -101,6 +101,7 @@ Then suggest indexing:
 
 ```
 Jarvis has semantic search powered by ChromaDB.
+DB location: ~/.jarvis/memory_db/ (configurable via memory.db_path in config)
 Run /jarvis:jarvis-memory-index to index your vault for /recall searches.
 ```
 

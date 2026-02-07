@@ -51,7 +51,7 @@ Load and embody the following identity:
    Filter to due/overdue items. Count only — don't present details yet.
 
    **Check 2: Inbox Accumulation**
-   Quick check: `mcp__plugin_jarvis_core__jarvis_list_vault_dir` on `inbox/`.
+   Quick check: `mcp__plugin_jarvis_core__jarvis_list_vault_dir` on the `inbox` path (resolve via `jarvis_resolve_path`, default: `inbox/`).
    Note the file count. Flag if > 5 items.
 
    **Check 3: Days Since Last Journal**

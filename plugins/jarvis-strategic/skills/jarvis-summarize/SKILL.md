@@ -45,7 +45,7 @@ Delegate to `Explore` agent:
 **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy. Refuse and report any violations.
 
 ```
-Scan journal/jarvis/ for all entries in [timeframe].
+Scan paths.journal_jarvis (default: journal/jarvis/) for all entries in [timeframe].
 
 Generate statistics:
 - Total entry count
@@ -71,13 +71,13 @@ Identify highlights:
 
 Delegate to `jarvis-journal-agent` to create entry.
 
-**Path Convention:**
-- Weekly summaries: `journal/jarvis/YYYY/summaries/weekly-[WW].md` (ISO week number)
-- Monthly summaries: `journal/jarvis/YYYY/summaries/monthly-[MM].md` (month number)
-- Quarterly summaries: `journal/jarvis/YYYY/summaries/quarterly-Q[N].md` (quarter)
-- Yearly summaries: `journal/jarvis/YYYY/summaries/yearly.md`
+**Path Convention** (base path is `paths.journal_jarvis`, default: `journal/jarvis/`):
+- Weekly summaries: `{paths.journal_jarvis}/YYYY/summaries/weekly-[WW].md` (ISO week number)
+- Monthly summaries: `{paths.journal_jarvis}/YYYY/summaries/monthly-[MM].md` (month number)
+- Quarterly summaries: `{paths.journal_jarvis}/YYYY/summaries/quarterly-Q[N].md` (quarter)
+- Yearly summaries: `{paths.journal_jarvis}/YYYY/summaries/yearly.md`
 
-Example: Week 4 of 2026 → `journal/jarvis/2026/summaries/weekly-04.md`
+Example: Week 4 of 2026 → `{paths.journal_jarvis}/2026/summaries/weekly-04.md` (configurable)
 
 **Entry format**:
 ```yaml

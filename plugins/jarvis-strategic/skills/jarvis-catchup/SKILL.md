@@ -49,7 +49,7 @@ Delegate to `Explore` agent:
 **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy. Refuse and report any violations.
 
 ```
-Scan journal/jarvis/ for ALL entries in the specified timeframe.
+Scan paths.journal_jarvis (default: journal/jarvis/) for ALL entries in the specified timeframe.
 
 For each entry, extract:
 - Full date and timestamp
@@ -61,8 +61,8 @@ For each entry, extract:
 - Links to other notes
 
 Also check:
-- journal/daily/ for daily notes in the period
-- inbox/ for any accumulated items
+- paths.journal_daily (default: journal/daily/) for daily notes in the period
+- paths.inbox (default: inbox/) for any accumulated items
 
 Return chronologically ordered with clear date headers.
 ```

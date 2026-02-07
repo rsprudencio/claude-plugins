@@ -274,6 +274,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.8.0** - Configurable paths: centralized path resolution via `tools/paths.py` replacing all hardcoded vault paths, 2 new MCP tools (jarvis_resolve_path, jarvis_list_paths), template variable substitution ({YYYY}/{MM}/{WW}), sensitive path detection, 45 new tests (25 total tools)
 - **1.7.0** - Remove Serena dependency: replace all Serena MCP references across 14 files in 3 plugins with native jarvis_memory_* tools, strategic memories now file-backed at .jarvis/strategic/, read-modify-write pattern replaces serena_edit_memory (jarvis-strategic 1.1.0, jarvis-todoist 1.3.0)
 - **1.6.0** - Memory CRUD tools: 4 new file-backed memory tools (jarvis_memory_write/read/list/delete), secret detection scanner, rename jarvis_memory_read→jarvis_doc_read and jarvis_memory_stats→jarvis_collection_stats with detailed mode, recency boost in query scoring (23 total tools)
 - **1.5.0** - Unified collection & namespaces: ChromaDB `jarvis` collection with namespaced IDs (vault:: prefix), enriched metadata schema (universal type/namespace/timestamps + vault_type), tools/namespaces.py module

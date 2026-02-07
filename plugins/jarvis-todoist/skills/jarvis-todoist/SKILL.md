@@ -7,7 +7,7 @@ description: Sync Todoist inbox to vault with smart routing. Use when user says 
 
 Syncs Todoist inbox items using **hybrid classification**:
 - **Clear tasks** → labeled and stay in Todoist
-- **Ambiguous/journal-like items** → captured to `inbox/` for deferred processing
+- **Ambiguous/journal-like items** → captured to `paths.inbox_todoist` (default: `inbox/todoist/`) for deferred processing
 
 ---
 
@@ -66,7 +66,7 @@ For any item matching a custom classification:
 Fetch new Todoist inbox items and classify:
 - Check custom classifications FIRST (if rules provided above)
 - CLEAR TASK → label only, stay in Todoist
-- INBOX CAPTURE → capture to inbox/, complete in Todoist
+- INBOX CAPTURE → capture to paths.inbox_todoist (configurable), complete in Todoist
 
 Return detailed summary grouped by category.
 Include which custom classification matched (if any).
@@ -85,7 +85,7 @@ After the agent returns its proposals, ask the user:
 > "Review items now or defer to inbox?"
 
 - **Review now**: Present item-by-item classification (user can stop anytime with "stop review" — remaining items go to inbox). Each item gets the full 6 classification options (see `/jarvis-inbox`): Journal entry, Work note, Personal note, Person/contact, Discard, Skip.
-- **Defer**: All ambiguous items go straight to `inbox/todoist/` without item-by-item review. Tasks still get labeled in Todoist as usual. This is the "silent" path — no interruption, inbox captures committed in bulk.
+- **Defer**: All ambiguous items go straight to `paths.inbox_todoist` (default: `inbox/todoist/`) without item-by-item review. Tasks still get labeled in Todoist as usual. This is the "silent" path — no interruption, inbox captures committed in bulk.
 
 ### Step 2: Present Detailed Summary
 
@@ -98,10 +98,10 @@ Agent returns grouped summary:
 - "Buy groceries"
 - "Review PR #123"
 
-**Captured to inbox/** (for review): 3
-- "I realized morning routines help focus" → inbox/todoist/20260203-morning-routines.md
-- "What if we made Jarvis modular..." → inbox/todoist/20260203-jarvis-architecture.md
-- "Just had meeting with DefectDojo..." → inbox/todoist/20260203-defectdojo-meeting.md
+**Captured to inbox** (for review): 3
+- "I realized morning routines help focus" → {paths.inbox_todoist}/20260203-morning-routines.md (configurable)
+- "What if we made Jarvis modular..." → {paths.inbox_todoist}/20260203-jarvis-architecture.md
+- "Just had meeting with DefectDojo..." → {paths.inbox_todoist}/20260203-defectdojo-meeting.md
 
 **Skipped** (already ingested): 2
 ```

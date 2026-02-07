@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .config import get_verified_vault_path
+from .paths import get_path
 
 # Valid memory name: lowercase alphanumeric with hyphens, no leading/trailing hyphen
 NAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
@@ -42,33 +43,34 @@ def validate_name(name: str) -> Optional[str]:
 
 
 def get_strategic_dir() -> tuple[str, str]:
-    """Returns (<vault_path>/.jarvis/strategic/, error).
+    """Returns the strategic memories directory, creating it if needed.
 
-    Creates the directory if needed.
+    Path is configurable via paths.strategic (default: <vault>/.jarvis/strategic/).
     """
-    vault_path, error = get_verified_vault_path()
-    if error:
-        return "", error
-    strategic_dir = os.path.join(vault_path, ".jarvis", "strategic")
-    os.makedirs(strategic_dir, exist_ok=True)
-    return strategic_dir, ""
+    try:
+        strategic_dir = get_path("strategic", ensure_exists=True)
+        return strategic_dir, ""
+    except (ValueError, Exception) as e:
+        return "", str(e)
 
 
 def get_project_dir(project: str) -> tuple[str, str]:
-    """Returns (<vault_path>/.jarvis/memories/<project>/, error).
+    """Returns the project memories directory, creating it if needed.
 
-    Creates the directory if needed.
+    Path is configurable via memory.project_memories_path
+    (default: ~/.jarvis/memories/<project>/).
     """
-    vault_path, error = get_verified_vault_path()
-    if error:
-        return "", error
     # Sanitize project name
     safe_project = re.sub(r'[^a-z0-9-]', '', project.lower().strip())
     if not safe_project:
         return "", f"Invalid project name: '{project}'"
-    project_dir = os.path.join(vault_path, ".jarvis", "memories", safe_project)
-    os.makedirs(project_dir, exist_ok=True)
-    return project_dir, ""
+    try:
+        base_dir = get_path("project_memories_path", ensure_exists=True)
+        project_dir = os.path.join(base_dir, safe_project)
+        os.makedirs(project_dir, exist_ok=True)
+        return project_dir, ""
+    except (ValueError, Exception) as e:
+        return "", str(e)
 
 
 def resolve_memory_path(name: str, scope: str = "global",
@@ -287,14 +289,15 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
                 dirs_to_scan.append(("project", project_dir, project))
         elif scope == "all":
             # Scan all project directories
-            vault_path, error = get_verified_vault_path()
-            if not error:
-                memories_base = os.path.join(vault_path, ".jarvis", "memories")
+            try:
+                memories_base = get_path("project_memories_path")
                 if os.path.isdir(memories_base):
                     for proj_name in os.listdir(memories_base):
                         proj_dir = os.path.join(memories_base, proj_name)
                         if os.path.isdir(proj_dir):
                             dirs_to_scan.append(("project", proj_dir, proj_name))
+            except (ValueError, Exception):
+                pass  # project_memories_path not configured or inaccessible
 
     results = []
     for entry_scope, directory, proj_name in dirs_to_scan:

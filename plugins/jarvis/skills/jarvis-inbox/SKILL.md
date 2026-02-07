@@ -7,18 +7,18 @@ description: Process and organize inbox items. Use when user says "Jarvis, organ
 
 ## Steps
 
-1. **Scan** `inbox/` for unprocessed items
+1. **Scan** `paths.inbox` (default: `inbox/`) for unprocessed items
 
 2. **Classify each item** using 6 routing options:
 
-   | Classification | Destination | Handler |
-   |----------------|-------------|---------|
-   | **Journal entry** | `journal/jarvis/` | Delegate to jarvis-journal-agent |
-   | **Work note** | `work/[slug].md` | Direct creation with frontmatter |
-   | **Personal note** | `notes/[slug].md` | Direct creation with frontmatter |
-   | **Person/contact** | `people/[name].md` | Direct creation with frontmatter |
+   | Classification | Destination (path name) | Handler |
+   |----------------|-------------------------|---------|
+   | **Journal entry** | `paths.journal_jarvis` (default: `journal/jarvis/`) | Delegate to jarvis-journal-agent |
+   | **Work note** | `paths.work` (default: `work/[slug].md`) | Direct creation with frontmatter |
+   | **Personal note** | `paths.notes` (default: `notes/[slug].md`) | Direct creation with frontmatter |
+   | **Person/contact** | `paths.people` (default: `people/[name].md`) | Direct creation with frontmatter |
    | **Discard** | (deleted) | Remove from inbox after confirmation |
-   | **Skip** | stays in `inbox/` | Keep for later processing |
+   | **Skip** | stays in `paths.inbox` | Keep for later processing |
 
    **For Todoist-origin items** (frontmatter: `source: todoist`):
    - Suggest the most likely classification based on content
@@ -86,7 +86,7 @@ description: Process and organize inbox items. Use when user says "Jarvis, organ
 
 ## Inbox Location
 
-Path: `inbox/`
+Path: `paths.inbox` (default: `inbox/`)
 
 ## Important
 

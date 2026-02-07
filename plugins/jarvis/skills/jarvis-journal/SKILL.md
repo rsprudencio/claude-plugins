@@ -31,7 +31,7 @@ description: Create journal entries with intelligent vault linking. Use when use
        "operation": "create",
        "description": "Journal entry: [brief summary]",
        "entry_id": "YYYYMMDDHHMMSS",
-       "files": ["journal/jarvis/YYYY/MM/YYYYMMDDHHMMSS.md"]
+       "files": ["{paths.journal_jarvis}/YYYY/MM/YYYYMMDDHHMMSS.md"]
      }
      ```
    - **Edit requested** → Collect feedback, re-delegate to agent with `mode: "edit"`
@@ -56,7 +56,7 @@ description: Create journal entries with intelligent vault linking. Use when use
 
 ## Entry Storage
 
-Path: `journal/jarvis/YYYY/MM/YYYYMMDDHHMMSS.md`
+Path: `{paths.journal_jarvis}/YYYY/MM/YYYYMMDDHHMMSS.md` (default: `journal/jarvis/YYYY/MM/YYYYMMDDHHMMSS.md`)
 
 ## Important
 

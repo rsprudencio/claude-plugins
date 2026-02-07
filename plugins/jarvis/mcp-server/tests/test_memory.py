@@ -136,7 +136,7 @@ class TestIndexVault:
         """Should index .md files with namespaced IDs."""
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_memory_db")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db")})
 
         # Create test files
         notes_dir = mock_config.vault_path / "notes"
@@ -168,7 +168,7 @@ class TestIndexVault:
         """Should skip templates directory."""
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_memory_db2")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db2")})
 
         templates_dir = mock_config.vault_path / "templates"
         templates_dir.mkdir(exist_ok=True)
@@ -188,7 +188,7 @@ class TestIndexFile:
         """Should index a single file with namespaced ID."""
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_memory_db3")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db3")})
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -216,7 +216,7 @@ class TestCollectionCreation:
         """If no collection exists, _get_collection() creates 'jarvis'."""
         import tools.memory as mem
         mem._chroma_client = None
-        mem._DB_DIR = str(mock_config.vault_path / ".test_fresh_install_db")
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_fresh_install_db")})
 
         collection = mem._get_collection()
         assert collection.name == "jarvis"

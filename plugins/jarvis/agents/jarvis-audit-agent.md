@@ -304,6 +304,8 @@ The MCP tools return structured errors. Common cases:
 ### Example 1: Journal Entry
 Input: `{operation: "create", description: "Daily reflection", entry_id: "20260123153045", files: ["journal/jarvis/2026/01/20260123153045.md"]}`
 
+Note: The file path in `files` uses the actual resolved path. The base directory (e.g., `journal/jarvis`) is configurable via the `journal_jarvis` path name.
+
 Call:
 ```
 jarvis_commit({

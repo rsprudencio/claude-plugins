@@ -1,7 +1,7 @@
 ---
 name: jarvis-journal-agent
 description: Creates context-aware journal entries with vault linking. Handles drafting, vault search, and file writing. Does NOT commit - returns draft for Jarvis approval.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_write_vault_file, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_write_vault_file, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths
 model: haiku
 permissionMode: acceptEdits
 ---
@@ -152,10 +152,11 @@ All Write operations MUST be within this vault directory.
 #### Step 1: Generate Entry ID and Path
 
 **For regular entries (note, incident-log, idea, reflection, meeting):**
-1. Generate 14-digit timestamp: `YYYYMMDDHHMMSS` (current time)
-2. Generate a kebab-case topic slug from the entry content (3-5 words max)
-3. Combine as: `YYYYMMDDHHMMSS-topic-slug.md`
-4. Path: `journal/jarvis/YYYY/MM/[entry_id]-[topic-slug].md`
+1. Resolve the journal base directory: call `jarvis_resolve_path` with `name="journal_jarvis"` (default: `journal/jarvis`)
+2. Generate 14-digit timestamp: `YYYYMMDDHHMMSS` (current time)
+3. Generate a kebab-case topic slug from the entry content (3-5 words max)
+4. Combine as: `YYYYMMDDHHMMSS-topic-slug.md`
+5. Path: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug].md`
 
 **Topic slug rules:**
 - Lowercase kebab-case
@@ -165,19 +166,20 @@ All Write operations MUST be within this vault directory.
 
 **For summary entries (briefing, summary, analysis):**
 1. Generate 14-digit timestamp for jarvis_id in frontmatter
-2. Use simplified filename based on subtype and period:
+2. Resolve the summaries directory: call `jarvis_resolve_path` with `name="journal_summaries"` (default: `journal/jarvis/{YYYY}/summaries`)
+3. Use simplified filename based on subtype and period:
    - **Weekly**: Calculate ISO week number from the period end date
      - Format: `weekly-[WW].md` (zero-padded, e.g., `weekly-04.md`)
-     - Path: `journal/jarvis/YYYY/summaries/weekly-[WW].md`
+     - Path: `{journal_summaries}/weekly-[WW].md`
    - **Monthly**: Extract month number from period
      - Format: `monthly-[MM].md` (zero-padded, e.g., `monthly-01.md`)
-     - Path: `journal/jarvis/YYYY/summaries/monthly-[MM].md`
+     - Path: `{journal_summaries}/monthly-[MM].md`
    - **Quarterly**: Extract quarter from period
      - Format: `quarterly-Q[N].md` (e.g., `quarterly-Q1.md`)
-     - Path: `journal/jarvis/YYYY/summaries/quarterly-Q[N].md`
+     - Path: `{journal_summaries}/quarterly-Q[N].md`
    - **Yearly**: Single file per year
      - Format: `yearly.md`
-     - Path: `journal/jarvis/YYYY/summaries/yearly.md`
+     - Path: `{journal_summaries}/yearly.md`
 
 **ISO Week Calculation:**
 - Week 1 is the first week with at least 4 days in January
@@ -194,7 +196,7 @@ All Write operations MUST be within this vault directory.
 #### Step 2: Search for Connections (Optional)
 If the content mentions specific topics, people, or systems:
 - Use Grep to search for related notes (max 2-3 searches)
-- Look in: `notes/`, `people/`, `work/` (if work context)
+- Look in: `notes` path, `people` path, `work` path (if work context) — resolve via `jarvis_resolve_path`
 - Extract: note titles for `[[wiki links]]`
 
 Keep searches focused. Don't over-search.
@@ -207,7 +209,7 @@ Generate the full entry with:
 - Suggested links and tags
 
 #### Step 4: Write File
-- Path: `journal/jarvis/YYYY/MM/[entry_id]-[topic-slug].md`
+- Path: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug].md` (as resolved in Step 1)
 - Ensure parent directories exist (create if needed)
 - Write the file
 
@@ -368,15 +370,17 @@ For any work-related entry (context: work), always include BOTH:
 
 ## Directory Structure
 
+The base directory is configurable via the `journal_jarvis` path name (default: `journal/jarvis`). Resolve at runtime with `jarvis_resolve_path(name="journal_jarvis")`.
+
 ```
-journal/jarvis/
+{journal_jarvis}/          # default: journal/jarvis/
 ├── 2026/
 │   ├── 01/
 │   │   ├── 20260124150157-opencode-permission-fix.md
 │   │   ├── 20260123104348-vault-structure-analysis.md
 │   │   └── 20260122141141-jarvis-integration-test.md
 │   ├── 02/
-│   └── summaries/
+│   └── summaries/         # or resolved via journal_summaries path
 │       ├── weekly-04.md
 │       ├── monthly-01.md
 │       └── quarterly-Q1.md
@@ -384,8 +388,8 @@ journal/jarvis/
 ```
 
 **Path formats:**
-- Regular entries: `journal/jarvis/YYYY/MM/[entry_id]-[topic-slug].md`
-- Summary entries: `journal/jarvis/YYYY/summaries/[type]-[number].md`
+- Regular entries: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug].md`
+- Summary entries: `{journal_summaries}/[type]-[number].md`
   - Weekly: `weekly-04.md` (ISO week number, zero-padded)
   - Monthly: `monthly-01.md` (month number, zero-padded)
   - Quarterly: `quarterly-Q1.md` (Q1, Q2, Q3, Q4)
@@ -448,9 +452,9 @@ If file write fails:
 
 **Actions:**
 1. Generate entry_id: `20260123163045-payment-service-timeout`
-2. Search: `Grep "payment-service" in notes/` → finds [[Payment Service Architecture]]
+2. Search: `Grep "payment-service"` in `notes` path (resolved via `jarvis_resolve_path`) → finds [[Payment Service Architecture]]
 3. Draft entry with frontmatter, original input, refined version
-4. Write to `journal/jarvis/2026/01/20260123163045-payment-service-timeout.md`
+4. Write to `{journal_jarvis}/2026/01/20260123163045-payment-service-timeout.md` (e.g., `journal/jarvis/2026/01/...`)
 
 **Output:**
 ```
@@ -489,7 +493,7 @@ Draft summary:
 
 **Actions:**
 1. Generate entry_id: `20260123200000-bible-patience-reflection`
-2. Search: `Grep "patience" in notes/` → finds [[Patience - Virtue]]
+2. Search: `Grep "patience"` in `notes` path (resolved via `jarvis_resolve_path`) → finds [[Patience - Virtue]]
 3. Draft entry
 4. Write file
 

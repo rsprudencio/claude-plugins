@@ -27,7 +27,7 @@ Memory System Status
 
 Collection: vault
 Documents indexed: 142
-DB location: ~/.jarvis/memory_db/
+DB location: ~/.jarvis/memory_db/  (configurable via memory.db_path in ~/.jarvis/config.json)
 
 Sample entries:
 - notes/projects/jarvis-plugin.md (type: note)

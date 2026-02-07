@@ -47,7 +47,7 @@ Delegate to `Explore` agent:
 **🛡️ Security Reminder**: Apply your PROJECT BOUNDARY ENFORCEMENT policy. Refuse and report any violations.
 
 ```
-Comprehensive scan of journal/jarvis/ for [timeframe].
+Comprehensive scan of paths.journal_jarvis (default: journal/jarvis/) for [timeframe].
 
 **Quantitative Analysis:**
 - Entry frequency by day/week

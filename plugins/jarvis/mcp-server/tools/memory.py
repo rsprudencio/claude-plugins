@@ -19,6 +19,7 @@ import chromadb
 
 from .config import get_verified_vault_path
 from .namespaces import vault_id, NAMESPACE_VAULT, TYPE_VAULT
+from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 
 logger = logging.getLogger("jarvis-tools")
 
@@ -26,19 +27,16 @@ logger = logging.getLogger("jarvis-tools")
 _chroma_client = None
 _COLLECTION_NAME = "jarvis"
 _BATCH_SIZE = 50
-_DB_DIR = os.path.join(str(Path.home()), ".jarvis", "memory_db")
-
-# Directories to skip by default
+# Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash"}
-_SENSITIVE_DIRS = {"documents", "people"}
 
 
 def _get_client() -> chromadb.ClientAPI:
     """Get or create singleton ChromaDB PersistentClient."""
     global _chroma_client
     if _chroma_client is None:
-        os.makedirs(_DB_DIR, exist_ok=True)
-        _chroma_client = chromadb.PersistentClient(path=_DB_DIR)
+        db_dir = get_path("db_path", ensure_exists=True)
+        _chroma_client = chromadb.PersistentClient(path=db_dir)
     return _chroma_client
 
 
@@ -127,8 +125,11 @@ def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
     top_dir = parts[0]
     if top_dir in _SKIP_DIRS:
         return True
-    if not include_sensitive and top_dir in _SENSITIVE_DIRS:
-        return True
+    if not include_sensitive:
+        # Check against configurable sensitive path names
+        sensitive_dirs = {get_relative_path(name) for name in SENSITIVE_PATHS}
+        if top_dir in sensitive_dirs:
+            return True
     return False
 
 
