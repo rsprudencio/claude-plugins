@@ -47,6 +47,7 @@ def _build_memory_metadata(name: str, scope: str, importance: str,
     meta = {
         "type": TYPE_MEMORY,
         "namespace": namespace,
+        "tier": "file",
         "scope": scope,
         "name": name,
         "importance": importance,

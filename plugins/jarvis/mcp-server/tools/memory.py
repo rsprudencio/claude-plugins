@@ -88,6 +88,7 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
     meta = {
         "type": TYPE_VAULT,
         "namespace": NAMESPACE_VAULT,
+        "tier": "file",
         "source": "vault-index",
         "created_at": frontmatter.get("created", now_iso),
         "updated_at": frontmatter.get("modified", now_iso),

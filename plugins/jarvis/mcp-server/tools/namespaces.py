@@ -22,6 +22,9 @@ NAMESPACE_OBS = "obs::"
 NAMESPACE_PATTERN = "pattern::"
 NAMESPACE_SUMMARY = "summary::"
 NAMESPACE_CODE = "code::"
+NAMESPACE_REL = "rel::"
+NAMESPACE_HINT = "hint::"
+NAMESPACE_PLAN = "plan::"
 
 # Content type values (for metadata 'type' field)
 TYPE_VAULT = "vault"
@@ -30,8 +33,18 @@ TYPE_OBSERVATION = "observation"
 TYPE_PATTERN = "pattern"
 TYPE_SUMMARY = "summary"
 TYPE_CODE = "code"
+TYPE_RELATIONSHIP = "relationship"
+TYPE_HINT = "hint"
+TYPE_PLAN = "plan"
 
-ALL_TYPES = [TYPE_VAULT, TYPE_MEMORY, TYPE_OBSERVATION, TYPE_PATTERN, TYPE_SUMMARY, TYPE_CODE]
+ALL_TYPES = [TYPE_VAULT, TYPE_MEMORY, TYPE_OBSERVATION, TYPE_PATTERN, TYPE_SUMMARY, TYPE_CODE, TYPE_RELATIONSHIP, TYPE_HINT, TYPE_PLAN]
+
+# --- Tier Constants ---
+
+TIER_FILE = "file"
+TIER_CHROMADB = "chromadb"
+TIER_1_PREFIXES = frozenset({"vault::", "memory::"})
+TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::"})
 
 
 # --- ID Generators ---
@@ -84,14 +97,58 @@ def code_id(file_path: str, symbol: str = "__module__") -> str:
     return f"code::{file_path}::{symbol}"
 
 
+def relationship_id(entity_a: str, entity_b: str) -> str:
+    """Generate a relationship ID between two entities.
+    
+    Entities are sorted alphabetically to ensure consistency regardless of order.
+    """
+    a, b = sorted([_slugify(entity_a), _slugify(entity_b)])
+    return f"rel::{a}::{b}"
+
+
+def hint_id(topic: str, seq: int = 0) -> str:
+    """Generate a hint ID with sequential number for ordering."""
+    return f"hint::{_slugify(topic)}::{seq}"
+
+
+def plan_id(name: str) -> str:
+    """Generate a plan ID from a descriptive name."""
+    return f"plan::{_slugify(name)}"
+
+
+# --- Tier Detection ---
+
+def get_tier(doc_id: str) -> str:
+    """Determine document tier from ID prefix (O(1) operation).
+    
+    Returns:
+        TIER_FILE for Tier 1 (vault::, memory::)
+        TIER_CHROMADB for Tier 2 (obs::, pattern::, summary::, code::, rel::, hint::, plan::)
+        TIER_FILE for bare paths (legacy vault documents)
+    """
+    # Check Tier 2 prefixes first (most specific)
+    for prefix in TIER_2_PREFIXES:
+        if doc_id.startswith(prefix):
+            return TIER_CHROMADB
+    
+    # Check Tier 1 prefixes
+    for prefix in TIER_1_PREFIXES:
+        if doc_id.startswith(prefix):
+            return TIER_FILE
+    
+    # Bare path defaults to Tier 1 (file-backed vault document)
+    return TIER_FILE
+
+
 # --- ID Parser ---
 
 @dataclass
 class ParsedId:
     """Decomposed document ID."""
-    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code"
+    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan"
     full_prefix: str     # "vault::", "memory::global::", "obs::", etc.
     content_id: str      # The part after the prefix
+    tier: str = TIER_FILE  # "file" or "chromadb"
     chunk: Optional[int] = None  # For vault chunks only
 
 
@@ -101,37 +158,48 @@ def parse_id(doc_id: str) -> ParsedId:
     Handles all known namespace prefixes. Legacy IDs (no prefix)
     are treated as vault documents for backward compatibility.
     """
+    tier = get_tier(doc_id)
+    
     if doc_id.startswith("vault::"):
         content = doc_id[7:]
         chunk = None
         if "#chunk-" in content:
             content, chunk_str = content.rsplit("#chunk-", 1)
             chunk = int(chunk_str)
-        return ParsedId("vault", "vault::", content, chunk)
+        return ParsedId("vault", "vault::", content, tier, chunk)
 
     if doc_id.startswith("memory::global::"):
-        return ParsedId("memory", "memory::global::", doc_id[16:])
+        return ParsedId("memory", "memory::global::", doc_id[16:], tier)
 
     if doc_id.startswith("memory::"):
         parts = doc_id.split("::", 2)
         project = parts[1] if len(parts) > 1 else ""
         name = parts[2] if len(parts) > 2 else ""
-        return ParsedId("memory", f"memory::{project}::", name)
+        return ParsedId("memory", f"memory::{project}::", name, tier)
 
     if doc_id.startswith("obs::"):
-        return ParsedId("obs", "obs::", doc_id[5:])
+        return ParsedId("obs", "obs::", doc_id[5:], tier)
 
     if doc_id.startswith("pattern::"):
-        return ParsedId("pattern", "pattern::", doc_id[9:])
+        return ParsedId("pattern", "pattern::", doc_id[9:], tier)
 
     if doc_id.startswith("summary::"):
-        return ParsedId("summary", "summary::", doc_id[9:])
+        return ParsedId("summary", "summary::", doc_id[9:], tier)
 
     if doc_id.startswith("code::"):
-        return ParsedId("code", "code::", doc_id[6:])
+        return ParsedId("code", "code::", doc_id[6:], tier)
+
+    if doc_id.startswith("rel::"):
+        return ParsedId("rel", "rel::", doc_id[5:], tier)
+
+    if doc_id.startswith("hint::"):
+        return ParsedId("hint", "hint::", doc_id[6:], tier)
+
+    if doc_id.startswith("plan::"):
+        return ParsedId("plan", "plan::", doc_id[6:], tier)
 
     # Bare path without namespace prefix — default to vault
-    return ParsedId("vault", "vault::", doc_id)
+    return ParsedId("vault", "vault::", doc_id, tier)
 
 
 # --- Helpers ---

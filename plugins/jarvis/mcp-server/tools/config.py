@@ -101,6 +101,30 @@ def get_memory_config() -> dict:
     return {**defaults, **config.get("memory", {})}
 
 
+def get_promotion_config() -> dict:
+    """Get promotion subsystem configuration with defaults.
+    
+    Returns config dict with promotion thresholds and behavior:
+    - importance_threshold: Minimum importance score to auto-promote (0.85)
+    - retrieval_count_threshold: Min retrieval count for promotion (3)
+    - age_importance_days: Days after which age+importance combo triggers (30)
+    - age_importance_score: Importance threshold for aged content (0.7)
+    - on_promoted_file_deleted: What to do when promoted file is deleted
+      ("remove" or "revert_to_chromadb")
+    
+    Backward-compatible: configs without 'promotion' section get defaults.
+    """
+    config = get_config()
+    defaults = {
+        "importance_threshold": 0.85,
+        "retrieval_count_threshold": 3,
+        "age_importance_days": 30,
+        "age_importance_score": 0.7,
+        "on_promoted_file_deleted": "remove",
+    }
+    return {**defaults, **config.get("promotion", {})}
+
+
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     config_path = Path.home() / ".jarvis" / "config.json"

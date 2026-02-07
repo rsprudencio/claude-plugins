@@ -1,7 +1,7 @@
 ---
 name: jarvis-explorer-agent
 description: Vault-aware exploration agent for Jarvis. Searches journal entries, notes, and vault content with understanding of structure, conventions, and access control. Supports text search, structural queries, connection discovery, and git history.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_jarvis_core__jarvis_memory_read, mcp__plugin_jarvis_core__jarvis_memory_list, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_jarvis_core__jarvis_memory_read, mcp__plugin_jarvis_core__jarvis_memory_list, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths, mcp__plugin_jarvis_core__jarvis_tier2_list, mcp__plugin_jarvis_core__jarvis_tier2_read
 model: haiku
 permissionMode: default
 ---
@@ -270,6 +270,8 @@ If `search_text` is provided and `mcp__plugin_jarvis_core__jarvis_query` is avai
 5. Semantic results get a relevance boost of +0.15
 
 **If jarvis_query is unavailable or returns empty**: Skip silently, fall back to keyword-only search.
+
+**Note on Tier 2 results**: `jarvis_query` may return both Tier 1 (file-backed, `tier: "file"`) and Tier 2 (ephemeral, `tier: "chromadb"`) results. Tier 2 results are auto-generated observations, patterns, and summaries stored only in ChromaDB. Include them in search results with a note about their ephemeral nature.
 
 This hybrid approach combines:
 - **Semantic search**: Finds "authentication decisions" even when file says "OAuth choice"

@@ -32,7 +32,7 @@ Call `mcp__plugin_jarvis_core__jarvis_query` with:
 
 ### 3. Present results
 
-Format results clearly:
+Format results clearly, handling both Tier 1 (file-backed) and Tier 2 (ephemeral) results:
 
 ```
 Found N results for "[query]":
@@ -43,6 +43,11 @@ Found N results for "[query]":
    Preview: [150 char preview]
 
 2. **[Title]** (relevance: 0.XX)
+   Source: observation (auto-generated)
+   Type: observation | Importance: 0.75
+   Preview: [150 char preview]
+
+3. **[Title]** (relevance: 0.XX)
    Path: journal/jarvis/2026/01/20260124-entry.md
    Type: journal | Importance: medium
    Preview: [150 char preview]
@@ -50,10 +55,15 @@ Found N results for "[query]":
 ...
 ```
 
-### 4. Offer to read
+**Tier 2 results**: When `tier == "chromadb"`, show `Source: [type] (auto-generated)` instead of `Path:`. These are ephemeral documents (observations, patterns, summaries).
+
+### 4. Offer to read or promote
 
 ```
 Want me to read any of these in full? (reply with the number)
+
+[If any Tier 2 results are shown:]
+Want me to save any Tier 2 items permanently? (reply with number to promote)
 ```
 
 ## Filtering (Optional)

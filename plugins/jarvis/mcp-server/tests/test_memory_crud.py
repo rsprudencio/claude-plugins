@@ -345,3 +345,30 @@ class TestIntegrationCycle:
         assert gone_result["found"] is False
 
         _cleanup_chromadb()
+
+
+
+class TestMemoryTierMetadata:
+    """Tests for tier field in memory metadata."""
+    
+    def test_memory_write_includes_tier(self, mock_config):
+        """Test that memory_write includes tier='file' in metadata."""
+        _cleanup_chromadb()
+        
+        result = memory_write(
+            name="test-tier-memory",
+            content="Testing tier metadata in memories"
+        )
+        assert result["success"] is True
+        
+        # Verify tier in metadata
+        from tools.memory import _get_collection
+        from tools.namespaces import global_memory_id
+        collection = _get_collection()
+        doc_id = global_memory_id("test-tier-memory")
+        doc = collection.get(ids=[doc_id])
+        assert doc["metadatas"][0]["tier"] == "file"
+        
+        # Cleanup
+        memory_delete(name="test-tier-memory", confirm=True)
+        _cleanup_chromadb()

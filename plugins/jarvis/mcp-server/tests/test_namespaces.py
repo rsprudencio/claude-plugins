@@ -256,11 +256,163 @@ class TestConstants:
         assert TYPE_VAULT == "vault"
         assert TYPE_MEMORY == "memory"
 
-    def test_all_types_has_six(self):
-        assert len(ALL_TYPES) == 6
+    def test_all_types_has_nine(self):
+        assert len(ALL_TYPES) == 9
         assert "vault" in ALL_TYPES
         assert "memory" in ALL_TYPES
         assert "observation" in ALL_TYPES
         assert "pattern" in ALL_TYPES
         assert "summary" in ALL_TYPES
         assert "code" in ALL_TYPES
+        assert "relationship" in ALL_TYPES
+        assert "hint" in ALL_TYPES
+        assert "plan" in ALL_TYPES
+
+
+
+class TestTierConstants:
+    """Tests for tier-related constants."""
+    
+    def test_tier_constants(self):
+        from tools.namespaces import TIER_FILE, TIER_CHROMADB
+        assert TIER_FILE == "file"
+        assert TIER_CHROMADB == "chromadb"
+    
+    def test_tier_prefixes(self):
+        from tools.namespaces import TIER_1_PREFIXES, TIER_2_PREFIXES
+        assert "vault::" in TIER_1_PREFIXES
+        assert "memory::" in TIER_1_PREFIXES
+        assert "obs::" in TIER_2_PREFIXES
+        assert "pattern::" in TIER_2_PREFIXES
+        assert "summary::" in TIER_2_PREFIXES
+
+
+class TestNewNamespaceConstants:
+    """Tests for new namespace constants (rel, hint, plan)."""
+    
+    def test_new_namespace_values(self):
+        from tools.namespaces import NAMESPACE_REL, NAMESPACE_HINT, NAMESPACE_PLAN
+        assert NAMESPACE_REL == "rel::"
+        assert NAMESPACE_HINT == "hint::"
+        assert NAMESPACE_PLAN == "plan::"
+    
+    def test_new_type_values(self):
+        from tools.namespaces import TYPE_RELATIONSHIP, TYPE_HINT, TYPE_PLAN
+        assert TYPE_RELATIONSHIP == "relationship"
+        assert TYPE_HINT == "hint"
+        assert TYPE_PLAN == "plan"
+    
+    def test_all_types_has_nine(self):
+        from tools.namespaces import ALL_TYPES
+        assert len(ALL_TYPES) == 9
+        assert "relationship" in ALL_TYPES
+        assert "hint" in ALL_TYPES
+        assert "plan" in ALL_TYPES
+
+
+class TestGetTier:
+    """Tests for get_tier function."""
+    
+    def test_tier1_vault(self):
+        from tools.namespaces import get_tier, TIER_FILE
+        assert get_tier("vault::notes/test.md") == TIER_FILE
+    
+    def test_tier1_memory(self):
+        from tools.namespaces import get_tier, TIER_FILE
+        assert get_tier("memory::global::test") == TIER_FILE
+    
+    def test_tier2_observation(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("obs::12345") == TIER_CHROMADB
+    
+    def test_tier2_pattern(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("pattern::test-pattern") == TIER_CHROMADB
+    
+    def test_tier2_new_namespaces(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("rel::a::b") == TIER_CHROMADB
+        assert get_tier("hint::topic::0") == TIER_CHROMADB
+        assert get_tier("plan::test-plan") == TIER_CHROMADB
+    
+    def test_bare_path_defaults_to_tier1(self):
+        from tools.namespaces import get_tier, TIER_FILE
+        assert get_tier("notes/test.md") == TIER_FILE
+
+
+class TestNewIdGenerators:
+    """Tests for new ID generators (relationship, hint, plan)."""
+    
+    def test_relationship_id(self):
+        from tools.namespaces import relationship_id
+        # Entities sorted alphabetically
+        assert relationship_id("alice", "bob") == "rel::alice::bob"
+        assert relationship_id("bob", "alice") == "rel::alice::bob"  # Same result
+    
+    def test_relationship_id_slugify(self):
+        from tools.namespaces import relationship_id
+        result = relationship_id("Alice Smith", "Bob Jones")
+        assert result.startswith("rel::")
+        assert "alice" in result.lower()
+        assert "bob" in result.lower()
+    
+    def test_hint_id(self):
+        from tools.namespaces import hint_id
+        assert hint_id("git-workflow", 0) == "hint::git-workflow::0"
+        assert hint_id("git-workflow", 5) == "hint::git-workflow::5"
+    
+    def test_hint_id_default_seq(self):
+        from tools.namespaces import hint_id
+        assert hint_id("test") == "hint::test::0"
+    
+    def test_plan_id(self):
+        from tools.namespaces import plan_id
+        assert plan_id("phase-1-implementation") == "plan::phase-1-implementation"
+    
+    def test_plan_id_slugify(self):
+        from tools.namespaces import plan_id
+        assert plan_id("Phase 1 Implementation") == "plan::phase-1-implementation"
+
+
+class TestParsedIdTier:
+    """Tests for tier field in ParsedId."""
+    
+    def test_vault_id_has_tier_file(self):
+        from tools.namespaces import parse_id, TIER_FILE
+        parsed = parse_id("vault::notes/test.md")
+        assert parsed.tier == TIER_FILE
+    
+    def test_observation_id_has_tier_chromadb(self):
+        from tools.namespaces import parse_id, TIER_CHROMADB
+        parsed = parse_id("obs::12345")
+        assert parsed.tier == TIER_CHROMADB
+    
+    def test_bare_path_has_tier_file(self):
+        from tools.namespaces import parse_id, TIER_FILE
+        parsed = parse_id("notes/test.md")
+        assert parsed.tier == TIER_FILE
+
+
+class TestParseIdNewNamespaces:
+    """Tests for parsing new namespace IDs."""
+    
+    def test_parse_relationship_id(self):
+        from tools.namespaces import parse_id
+        parsed = parse_id("rel::alice::bob")
+        assert parsed.namespace == "rel"
+        assert parsed.full_prefix == "rel::"
+        assert parsed.content_id == "alice::bob"
+    
+    def test_parse_hint_id(self):
+        from tools.namespaces import parse_id
+        parsed = parse_id("hint::git-workflow::0")
+        assert parsed.namespace == "hint"
+        assert parsed.full_prefix == "hint::"
+        assert parsed.content_id == "git-workflow::0"
+    
+    def test_parse_plan_id(self):
+        from tools.namespaces import parse_id
+        parsed = parse_id("plan::phase-1")
+        assert parsed.namespace == "plan"
+        assert parsed.full_prefix == "plan::"
+        assert parsed.content_id == "phase-1"

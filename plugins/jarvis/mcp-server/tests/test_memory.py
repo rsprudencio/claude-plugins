@@ -222,3 +222,26 @@ class TestCollectionCreation:
         assert collection.name == "jarvis"
 
         mem._chroma_client = None
+
+
+
+class TestTierMetadata:
+    """Tests for tier field in metadata."""
+    
+    def test_build_metadata_includes_tier(self, mock_config):
+        """Test that _build_metadata includes tier field."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_tier_metadata_db")})
+        
+        # Index a file
+        test_file = mock_config.vault_path / "notes" / "test-tier.md"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("# Test Tier\nTesting tier metadata")
+        
+        result = index_file("notes/test-tier.md")
+        assert result["success"]
+        assert "tier" in result["metadata"]
+        assert result["metadata"]["tier"] == "file"
+        
+        mem._chroma_client = None

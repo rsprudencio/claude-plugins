@@ -187,6 +187,34 @@ Paths are configurable via `~/.jarvis/config.json` under `paths`. Use `jarvis_re
 
 Jarvis has a ChromaDB-backed semantic memory that indexes vault .md files for meaning-based search.
 
+### Two-Tier Architecture
+
+Jarvis uses a two-tier memory architecture for different durability requirements:
+
+**Tier 1: File-Backed (Durable)**
+- User-created content (vault files, strategic memories)
+- Git-tracked, Obsidian-visible, permanent
+- Namespace prefixes: `vault::`, `memory::`
+- Tier field in metadata: `"tier": "file"`
+
+**Tier 2: ChromaDB-First (Ephemeral)**
+- Auto-generated content (observations, patterns, summaries)
+- ChromaDB-only, invisible to Obsidian, disposable
+- Namespace prefixes: `obs::`, `pattern::`, `summary::`, `code::`, `rel::`, `hint::`, `plan::`
+- Tier field in metadata: `"tier": "chromadb"`
+- Can be promoted to Tier 1 when important
+
+**Tier 2 Content Types:**
+- `observation` - Captured insights, notes from conversations
+- `pattern` - Detected behavioral patterns
+- `summary` - Session or period summaries
+- `code` - Code snippets and analysis
+- `relationship` - Entity relationship mappings
+- `hint` - Contextual hints and suggestions
+- `plan` - Task plans and strategies
+
+**Promotion**: Tier 2 content meeting importance/retrieval thresholds can be promoted to Tier 1 (file-backed) via `jarvis_promote` tool.
+
 ### Skills
 | Skill | Description |
 |-------|-------------|
@@ -197,9 +225,17 @@ Jarvis has a ChromaDB-backed semantic memory that indexes vault .md files for me
 ### How It Works
 - Vault .md files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
 - Stored at the path configured in `memory.db_path` (default: `~/.jarvis/memory_db/`, outside the vault to avoid Obsidian Sync pollution)
-- `/recall` finds related content by meaning, not just keywords
+- `/recall` finds related content by meaning, not just keywords (returns both Tier 1 and Tier 2)
 - Journal entries are auto-indexed after creation (via `jarvis_index_file`)
 - Explorer agent uses semantic pre-search before keyword search
+- Query results include `tier` and `source` fields to distinguish file-backed from ephemeral content
+
+### Tier 2 Tools
+- `jarvis_tier2_write` - Write ephemeral content to ChromaDB
+- `jarvis_tier2_read` - Read and increment retrieval count
+- `jarvis_tier2_list` - List ephemeral content with filtering
+- `jarvis_tier2_delete` - Delete ephemeral content
+- `jarvis_promote` - Promote important ephemeral content to files
 
 ### First-Time Setup
 If user has never run `/memory-index`, the memory system will be empty. Suggest:

@@ -29,6 +29,8 @@ _VAULT_RELATIVE_DEFAULTS = {
     "documents": "documents",
     "strategic": ".jarvis/strategic",
     "observations_promoted": "journal/jarvis/observations",
+    "patterns_promoted": "journal/jarvis/patterns",
+    "summaries_promoted": "journal/jarvis/summaries",
 }
 
 _ABSOLUTE_DEFAULTS = {

@@ -407,3 +407,116 @@ class TestCollectionStats:
     def test_backward_compat_alias(self):
         """memory_stats should still work as alias for collection_stats."""
         assert memory_stats is collection_stats
+
+
+
+class TestTierAwareQuery:
+    """Tests for tier-aware query results."""
+    
+    def test_query_includes_tier_field(self, mock_config):
+        """Test that query results include tier field."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_tier_query_db")})
+        
+        # Index a file
+        from tools.memory import index_file
+        test_file = mock_config.vault_path / "notes" / "test.md"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("# Test\nTest content")
+        index_file("notes/test.md")
+        
+        # Query
+        result = query_vault("test")
+        assert result["success"]
+        assert len(result["results"]) > 0
+        
+        # Check tier field
+        for res in result["results"]:
+            assert "tier" in res
+            assert res["tier"] == "file"  # Vault files are Tier 1
+        
+        mem._chroma_client = None
+    
+    def test_query_includes_source_field(self, mock_config):
+        """Test that query results include source field."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_source_query_db")})
+        
+        # Index a file
+        from tools.memory import index_file
+        test_file = mock_config.vault_path / "notes" / "test.md"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("# Test\nTest content")
+        index_file("notes/test.md")
+        
+        # Query
+        result = query_vault("test")
+        assert result["success"]
+        
+        # Check source field
+        for res in result["results"]:
+            assert "source" in res
+            assert res["source"] == "file"  # Tier 1 files have source="file"
+        
+        mem._chroma_client = None
+    
+    def test_query_mixed_tier_results(self, mock_config):
+        """Test query with both Tier 1 and Tier 2 results."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_mixed_tier_db")})
+        
+        # Index a Tier 1 file
+        from tools.memory import index_file
+        test_file = mock_config.vault_path / "notes" / "test.md"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("# Test\nTest content for tier testing")
+        index_file("notes/test.md")
+        
+        # Add a Tier 2 observation
+        from tools.tier2 import tier2_write
+        tier2_write(
+            content="Tier 2 test content for tier testing",
+            content_type="observation",
+            importance_score=0.8
+        )
+        
+        # Query
+        result = query_vault("tier testing")
+        assert result["success"]
+        assert len(result["results"]) >= 2
+        
+        # Should have both tiers
+        tiers = {res["tier"] for res in result["results"]}
+        assert "file" in tiers or "chromadb" in tiers
+        
+        mem._chroma_client = None
+    
+    def test_query_increments_tier2_retrieval_count(self, mock_config):
+        """Test that querying increments Tier 2 retrieval counts."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_retrieval_db")})
+        
+        # Add Tier 2 observation
+        from tools.tier2 import tier2_write, tier2_read
+        write_result = tier2_write(
+            content="Test observation for retrieval count",
+            content_type="observation"
+        )
+        doc_id = write_result["id"]
+        
+        # Initial count should be 0
+        read_result = tier2_read(doc_id)
+        assert read_result["metadata"]["retrieval_count"] == "1"  # Read increments it
+        
+        # Query (should increment)
+        query_vault("retrieval count")
+        
+        # Check count increased (read again increments, so should be 3)
+        read_result2 = tier2_read(doc_id)
+        assert int(read_result2["metadata"]["retrieval_count"]) >= 2
+        
+        mem._chroma_client = None

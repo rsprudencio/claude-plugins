@@ -37,6 +37,13 @@ Tools - Memory CRUD (file-backed with ChromaDB index):
 Tools - Path Configuration:
 - jarvis_resolve_path: Resolve a named path to absolute location
 - jarvis_list_paths: List all configured paths with resolved values
+
+Tools - Tier 2 Operations (ChromaDB-first ephemeral content):
+- jarvis_tier2_write: Write Tier 2 content (observation, pattern, summary, etc.)
+- jarvis_tier2_read: Read Tier 2 content and increment retrieval count
+- jarvis_tier2_list: List Tier 2 documents with filtering
+- jarvis_tier2_delete: Delete Tier 2 content
+- jarvis_promote: Promote Tier 2 content to Tier 1 (file-backed)
 """
 import asyncio
 import json
@@ -74,6 +81,8 @@ from tools.memory_crud import (
     memory_list as mem_list,
     memory_delete as mem_delete,
 )
+from tools.tier2 import tier2_write, tier2_read, tier2_list, tier2_delete
+from tools.promotion import promote, check_promotion_criteria
 
 logging.basicConfig(
     level=logging.INFO,
@@ -541,6 +550,127 @@ TOOLS = [
         description="List all configured paths with their resolved values. Diagnostic tool.",
         inputSchema={"type": "object", "properties": {}}
     ),
+    # Tier 2 operations (ChromaDB-first ephemeral content)
+    Tool(
+        name="jarvis_tier2_write",
+        description="Write Tier 2 (ChromaDB-first) ephemeral content. Types: observation, pattern, summary, code, relationship, hint, plan.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Document content (markdown)"
+                },
+                "content_type": {
+                    "type": "string",
+                    "enum": ["observation", "pattern", "summary", "code", "relationship", "hint", "plan"],
+                    "description": "Type of content"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Required for pattern/plan, optional for others (used in ID generation)"
+                },
+                "importance_score": {
+                    "type": "number",
+                    "description": "Importance score 0.0-1.0 (default 0.5)",
+                    "default": 0.5,
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Source of content (default 'auto-extract')",
+                    "default": "auto-extract"
+                },
+                "topics": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of topic tags"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Optional session identifier"
+                },
+                "skip_secret_scan": {
+                    "type": "boolean",
+                    "description": "Skip secret detection (default false)",
+                    "default": False
+                }
+            },
+            "required": ["content", "content_type"]
+        }
+    ),
+    Tool(
+        name="jarvis_tier2_read",
+        description="Read Tier 2 content from ChromaDB and increment retrieval count.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "doc_id": {
+                    "type": "string",
+                    "description": "Document ID to read"
+                }
+            },
+            "required": ["doc_id"]
+        }
+    ),
+    Tool(
+        name="jarvis_tier2_list",
+        description="List Tier 2 documents with optional filtering.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "content_type": {
+                    "type": "string",
+                    "enum": ["observation", "pattern", "summary", "code", "relationship", "hint", "plan"],
+                    "description": "Filter by content type"
+                },
+                "min_importance": {
+                    "type": "number",
+                    "description": "Minimum importance score (0.0-1.0)",
+                    "minimum": 0.0,
+                    "maximum": 1.0
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Filter by source (e.g., 'auto-extract')"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results (default 20)",
+                    "default": 20
+                }
+            }
+        }
+    ),
+    Tool(
+        name="jarvis_tier2_delete",
+        description="Delete Tier 2 content from ChromaDB.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "doc_id": {
+                    "type": "string",
+                    "description": "Document ID to delete"
+                }
+            },
+            "required": ["doc_id"]
+        }
+    ),
+    Tool(
+        name="jarvis_promote",
+        description="Promote Tier 2 content to Tier 1 (file-backed) storage. Checks importance/retrieval thresholds and writes to vault.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "doc_id": {
+                    "type": "string",
+                    "description": "Tier 2 document ID to promote"
+                }
+            },
+            "required": ["doc_id"]
+        }
+    ),
 ]
 
 
@@ -643,6 +773,32 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # Path configuration
         "jarvis_resolve_path": lambda args: handle_resolve_path(args),
         "jarvis_list_paths": lambda args: handle_list_paths(),
+        # Tier 2 operations
+        "jarvis_tier2_write": lambda args: tier2_write(
+            content=args.get("content", ""),
+            content_type=args.get("content_type", ""),
+            name=args.get("name"),
+            importance_score=args.get("importance_score", 0.5),
+            source=args.get("source", "auto-extract"),
+            topics=args.get("topics"),
+            session_id=args.get("session_id"),
+            skip_secret_scan=args.get("skip_secret_scan", False),
+        ),
+        "jarvis_tier2_read": lambda args: tier2_read(
+            doc_id=args.get("doc_id", "")
+        ),
+        "jarvis_tier2_list": lambda args: tier2_list(
+            content_type=args.get("content_type"),
+            min_importance=args.get("min_importance"),
+            source=args.get("source"),
+            limit=args.get("limit", 20),
+        ),
+        "jarvis_tier2_delete": lambda args: tier2_delete(
+            doc_id=args.get("doc_id", "")
+        ),
+        "jarvis_promote": lambda args: promote(
+            doc_id=args.get("doc_id", "")
+        ),
     }
 
     try:

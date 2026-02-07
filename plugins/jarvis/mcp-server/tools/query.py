@@ -12,7 +12,7 @@ from typing import Optional
 
 from .memory import _get_collection
 from .paths import get_path
-from .namespaces import parse_id, ALL_TYPES
+from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 
 
 def _compute_relevance(distance: float, importance: str = "medium",
@@ -117,6 +117,55 @@ def _display_path(doc_id: str) -> str:
     return parsed.content_id
 
 
+def _increment_retrieval_counts(collection, doc_ids: list) -> None:
+    """Batch increment retrieval counts for Tier 2 documents.
+    
+    Best-effort operation: errors are logged but don't block query response.
+    Only updates Tier 2 documents (Tier 1 doesn't track retrieval counts).
+    """
+    if not doc_ids:
+        return
+    
+    try:
+        # Filter to only Tier 2 IDs
+        tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
+        if not tier2_ids:
+            return
+        
+        # Batch get current data
+        result = collection.get(ids=tier2_ids, include=["documents", "metadatas"])
+        
+        # Increment counts
+        updated_ids = []
+        updated_docs = []
+        updated_metas = []
+        
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        for i, doc_id in enumerate(result["ids"]):
+            metadata = result["metadatas"][i]
+            retrieval_count = int(metadata.get("retrieval_count", "0"))
+            retrieval_count += 1
+            
+            updated_metadata = {**metadata}
+            updated_metadata["retrieval_count"] = str(retrieval_count)
+            updated_metadata["updated_at"] = now_iso
+            
+            updated_ids.append(doc_id)
+            updated_docs.append(result["documents"][i])
+            updated_metas.append(updated_metadata)
+        
+        # Batch upsert
+        if updated_ids:
+            collection.upsert(ids=updated_ids, documents=updated_docs, metadatas=updated_metas)
+    
+    except Exception as e:
+        # Log but don't fail query
+        import logging
+        logger = logging.getLogger("jarvis-tools")
+        logger.warning(f"Failed to increment retrieval counts: {e}")
+
+
 def query_vault(query: str, n_results: int = 5,
                 filter: Optional[dict] = None) -> dict:
     """Semantic search across vault memory.
@@ -177,7 +226,15 @@ def query_vault(query: str, n_results: int = 5,
         doc_type = (metadata or {}).get("vault_type") or (metadata or {}).get("type", "unknown")
         doc_importance = (metadata or {}).get("importance", "medium")
         tags = (metadata or {}).get("tags", "")
-
+        
+        # Add tier and source fields
+        tier = get_tier(doc_id)
+        if tier == TIER_FILE:
+            source = "file"
+        else:
+            # For Tier 2, use the content type as source
+            source = (metadata or {}).get("type", "chromadb")
+        
         results.append({
             "rank": rank,
             "path": _display_path(doc_id),
@@ -187,7 +244,12 @@ def query_vault(query: str, n_results: int = 5,
             "relevance": round(relevance, 3),
             "preview": preview,
             "tags": tags,
+            "tier": tier,
+            "source": source,
         })
+    
+    # Increment retrieval counts for Tier 2 results (best-effort, non-blocking)
+    _increment_retrieval_counts(collection, ids)
 
     return {
         "success": True,
