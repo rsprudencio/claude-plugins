@@ -274,6 +274,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.5.0** - Unified collection & namespaces: ChromaDB `jarvis` collection with namespaced IDs (vault:: prefix), enriched metadata schema (universal type/namespace/timestamps + vault_type), tools/namespaces.py module
 - **1.4.0** - Chroma-MCP consolidation: absorb 3 chroma-mcp tools into jarvis-tools (jarvis_query, jarvis_memory_read, jarvis_memory_stats), remove chroma-mcp dependency, rename MCP server tools→core
 - **1.3.0** - ChromaDB semantic memory: /recall, /memory-index, /memory-stats skills, vault-wide indexing, explorer semantic pre-search, config migration to ~/.jarvis/
 - **1.2.0** - Scheduling: SCHEDULED mode, schedule management skill, session-start checks, 6-option inbox routing, focus check

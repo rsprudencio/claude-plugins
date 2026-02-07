@@ -3,7 +3,8 @@ import os
 import pytest
 from tools.query import (
     query_vault, memory_read, memory_stats,
-    _compute_relevance, _extract_preview, _translate_filter
+    _compute_relevance, _extract_preview, _translate_filter,
+    _display_path
 )
 
 
@@ -87,15 +88,26 @@ class TestTranslateFilter:
         result = _translate_filter({"directory": "journal"})
         assert result == {"directory": "journal"}
 
-    def test_single_type_filter(self):
+    def test_vault_entry_type_maps_to_vault_type(self):
+        """Entry-type values like 'note' should map to vault_type field."""
         result = _translate_filter({"type": "note"})
-        assert result == {"type": "note"}
+        assert result == {"vault_type": "note"}
+
+    def test_content_type_maps_to_type(self):
+        """Content-type values like 'vault' should map to universal type field."""
+        result = _translate_filter({"type": "vault"})
+        assert result == {"type": "vault"}
+
+    def test_memory_type_maps_to_type(self):
+        """Content-type 'memory' should map to universal type field."""
+        result = _translate_filter({"type": "memory"})
+        assert result == {"type": "memory"}
 
     def test_multiple_filters_use_and(self):
         result = _translate_filter({"directory": "journal", "type": "note"})
         assert "$and" in result
         assert {"directory": "journal"} in result["$and"]
-        assert {"type": "note"} in result["$and"]
+        assert {"vault_type": "note"} in result["$and"]
 
     def test_tags_filter_uses_contains(self):
         result = _translate_filter({"tags": "work,python"})
@@ -108,6 +120,22 @@ class TestTranslateFilter:
     def test_empty_values_ignored(self):
         result = _translate_filter({"directory": "", "type": ""})
         assert result is None
+
+
+class TestDisplayPath:
+    """Tests for namespace stripping in display paths."""
+
+    def test_vault_prefix_stripped(self):
+        assert _display_path("vault::notes/test.md") == "notes/test.md"
+
+    def test_bare_id_unchanged(self):
+        assert _display_path("notes/test.md") == "notes/test.md"
+
+    def test_memory_prefix_stripped(self):
+        assert _display_path("memory::global::jarvis-trajectory") == "jarvis-trajectory"
+
+    def test_obs_prefix_stripped(self):
+        assert _display_path("obs::1738857000000") == "1738857000000"
 
 
 class TestQueryVault:
@@ -162,6 +190,10 @@ class TestQueryVault:
         assert "importance" in first
         assert "relevance" in first
         assert "preview" in first
+
+        # Paths should NOT have vault:: prefix (stripped for display)
+        for r in result["results"]:
+            assert not r["path"].startswith("vault::")
 
         import tools.memory as mem
         mem._chroma_client = None
@@ -223,12 +255,26 @@ class TestMemoryRead:
     def test_memory_read_basic(self, mock_config):
         self._reset_and_index(mock_config)
 
+        # Read using bare path (backward compatible)
         result = memory_read(["notes/read-test.md"])
         assert result["success"] is True
         assert len(result["documents"]) == 1
         assert result["documents"][0]["id"] == "notes/read-test.md"
         assert "Content for reading" in result["documents"][0]["document"]
         assert "metadata" in result["documents"][0]
+
+        import tools.memory as mem
+        mem._chroma_client = None
+
+    def test_memory_read_with_namespace(self, mock_config):
+        """Should also work when called with full namespaced ID."""
+        self._reset_and_index(mock_config)
+
+        result = memory_read(["vault::notes/read-test.md"])
+        assert result["success"] is True
+        assert len(result["documents"]) == 1
+        # Display path should have prefix stripped
+        assert result["documents"][0]["id"] == "notes/read-test.md"
 
         import tools.memory as mem
         mem._chroma_client = None
@@ -282,6 +328,8 @@ class TestMemoryStats:
         assert "path" in sample
         assert "title" in sample
         assert "type" in sample
+        # Paths should not have vault:: prefix
+        assert not sample["path"].startswith("vault::")
 
         import tools.memory as mem
         mem._chroma_client = None

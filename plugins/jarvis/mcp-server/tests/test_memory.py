@@ -3,7 +3,7 @@ import os
 import pytest
 from tools.memory import (
     _parse_frontmatter, _extract_title, _build_metadata,
-    _should_skip, index_vault, index_file
+    _should_skip, index_vault, index_file,
 )
 
 
@@ -57,26 +57,46 @@ class TestExtractTitle:
 class TestBuildMetadata:
     """Tests for ChromaDB metadata construction."""
 
-    def test_with_frontmatter(self):
+    def test_universal_fields_present(self):
+        meta = _build_metadata({}, "notes/test.md")
+        assert meta["type"] == "vault"
+        assert meta["namespace"] == "vault::"
+        assert meta["source"] == "vault-index"
+        assert "created_at" in meta
+        assert "updated_at" in meta
+        assert meta["chunk_index"] == 0
+        assert meta["chunk_total"] == 1
+
+    def test_vault_type_from_frontmatter(self):
         fm = {"type": "incident-log", "tags": "jarvis,work", "importance": "high"}
         meta = _build_metadata(fm, "journal/jarvis/2026/01/entry.md")
-        assert meta["type"] == "incident-log"
+        # Universal type is always "vault" for vault content
+        assert meta["type"] == "vault"
+        # Old frontmatter type is preserved as vault_type
+        assert meta["vault_type"] == "incident-log"
         assert meta["tags"] == "jarvis,work"
         assert meta["importance"] == "high"
         assert meta["directory"] == "journal"
         assert meta["has_frontmatter"] == "true"
 
-    def test_without_frontmatter(self):
+    def test_vault_type_inferred_from_directory(self):
         meta = _build_metadata({}, "notes/my-note.md")
-        assert meta["type"] == "note"  # inferred from directory
-        assert meta["importance"] == "medium"  # default
+        assert meta["vault_type"] == "note"
+        assert meta["importance"] == "medium"
         assert meta["has_frontmatter"] == "false"
 
     def test_directory_inference(self):
-        assert _build_metadata({}, "journal/test.md")["type"] == "journal"
-        assert _build_metadata({}, "work/test.md")["type"] == "work"
-        assert _build_metadata({}, "inbox/test.md")["type"] == "inbox"
-        assert _build_metadata({}, "random/test.md")["type"] == "unknown"
+        assert _build_metadata({}, "journal/test.md")["vault_type"] == "journal"
+        assert _build_metadata({}, "work/test.md")["vault_type"] == "work"
+        assert _build_metadata({}, "inbox/test.md")["vault_type"] == "inbox"
+        assert _build_metadata({}, "random/test.md")["vault_type"] == "unknown"
+
+    def test_all_inferred_have_vault_type(self):
+        """All vault metadata must have type=vault and a vault_type."""
+        for path in ("notes/a.md", "journal/b.md", "work/c.md"):
+            meta = _build_metadata({}, path)
+            assert meta["type"] == "vault"
+            assert "vault_type" in meta
 
 
 class TestShouldSkip:
@@ -113,8 +133,7 @@ class TestIndexVault:
         assert "no vault_path" in result["error"].lower()
 
     def test_index_vault_with_files(self, mock_config):
-        """Should index .md files in the vault."""
-        # Reset ChromaDB singleton for test isolation
+        """Should index .md files with namespaced IDs."""
         import tools.memory as mem
         mem._chroma_client = None
         mem._DB_DIR = str(mock_config.vault_path / ".test_memory_db")
@@ -130,7 +149,19 @@ class TestIndexVault:
         assert result["files_indexed"] >= 2
         assert result["collection_total"] >= 2
 
-        # Cleanup
+        # Verify IDs have vault:: prefix
+        collection = mem._get_collection()
+        all_data = collection.get()
+        for doc_id in all_data["ids"]:
+            assert doc_id.startswith("vault::"), f"ID {doc_id} missing vault:: prefix"
+
+        # Verify metadata has universal fields
+        for meta in all_data["metadatas"]:
+            assert meta["type"] == "vault"
+            assert meta["namespace"] == "vault::"
+            assert "vault_type" in meta
+            assert "created_at" in meta
+
         mem._chroma_client = None
 
     def test_index_vault_skips_templates(self, mock_config):
@@ -145,7 +176,6 @@ class TestIndexVault:
 
         result = index_vault()
         assert result["success"] is True
-        # Template file should be skipped
         assert result["files_skipped"] >= 1
 
         mem._chroma_client = None
@@ -155,7 +185,7 @@ class TestIndexFile:
     """Tests for single file indexing."""
 
     def test_index_single_file(self, mock_config):
-        """Should index a single file."""
+        """Should index a single file with namespaced ID."""
         import tools.memory as mem
         mem._chroma_client = None
         mem._DB_DIR = str(mock_config.vault_path / ".test_memory_db3")
@@ -166,9 +196,10 @@ class TestIndexFile:
 
         result = index_file("notes/single.md")
         assert result["success"] is True
-        assert result["id"] == "notes/single.md"
+        assert result["id"] == "vault::notes/single.md"
         assert result["title"] == "Single File"
-        assert "metadata" in result
+        assert result["metadata"]["type"] == "vault"
+        assert result["metadata"]["vault_type"] == "note"
 
         mem._chroma_client = None
 
@@ -176,3 +207,18 @@ class TestIndexFile:
         result = index_file("notes/does-not-exist.md")
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+
+
+class TestCollectionCreation:
+    """Tests for ChromaDB collection creation."""
+
+    def test_fresh_install_creates_jarvis(self, mock_config):
+        """If no collection exists, _get_collection() creates 'jarvis'."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mem._DB_DIR = str(mock_config.vault_path / ".test_fresh_install_db")
+
+        collection = mem._get_collection()
+        assert collection.name == "jarvis"
+
+        mem._chroma_client = None

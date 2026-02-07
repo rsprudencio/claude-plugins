@@ -2,21 +2,29 @@
 
 Provides bulk and incremental indexing of vault .md files into ChromaDB.
 ChromaDB auto-embeds content using sentence-transformers (all-MiniLM-L6-v2).
+
+All documents are stored in the unified 'jarvis' collection with namespaced
+IDs (vault:: prefix) and enriched metadata.
 """
 import glob
+import logging
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import chromadb
 
 from .config import get_verified_vault_path
+from .namespaces import vault_id, NAMESPACE_VAULT, TYPE_VAULT
+
+logger = logging.getLogger("jarvis-tools")
 
 # Singleton client
 _chroma_client = None
-_COLLECTION_NAME = "vault"
+_COLLECTION_NAME = "jarvis"
 _BATCH_SIZE = 50
 _DB_DIR = os.path.join(str(Path.home()), ".jarvis", "memory_db")
 
@@ -35,7 +43,7 @@ def _get_client() -> chromadb.ClientAPI:
 
 
 def _get_collection() -> chromadb.Collection:
-    """Get or create the vault collection."""
+    """Get or create the unified jarvis collection."""
     client = _get_client()
     return client.get_or_create_collection(
         name=_COLLECTION_NAME,
@@ -70,23 +78,44 @@ def _extract_title(content: str, filename: str) -> str:
 
 
 def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
-    """Build ChromaDB metadata dict from frontmatter and path."""
+    """Build ChromaDB metadata dict with universal + vault-specific fields.
+
+    Universal fields: type, namespace, created_at, updated_at, source
+    Vault-specific: directory, vault_type, title, tags, importance, has_frontmatter
+    """
     directory = relative_path.split('/')[0] if '/' in relative_path else ''
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Universal fields
     meta = {
+        "type": TYPE_VAULT,
+        "namespace": NAMESPACE_VAULT,
+        "source": "vault-index",
+        "created_at": frontmatter.get("created", now_iso),
+        "updated_at": frontmatter.get("modified", now_iso),
+        # Vault-specific
         "directory": directory,
         "has_frontmatter": "true" if frontmatter else "false",
+        "chunk_index": 0,
+        "chunk_total": 1,
     }
-    # Map frontmatter fields (ChromaDB only accepts str, int, float, bool)
-    for key in ('type', 'tags', 'created', 'modified', 'importance', 'sentiment'):
+
+    # Vault type: from frontmatter 'type' or inferred from directory
+    vault_type = frontmatter.get("type")
+    if not vault_type:
+        type_map = {'journal': 'journal', 'notes': 'note', 'work': 'work', 'inbox': 'inbox'}
+        vault_type = type_map.get(directory, 'unknown')
+    meta["vault_type"] = vault_type
+
+    # Optional fields from frontmatter
+    for key in ('tags', 'sentiment'):
         if key in frontmatter:
             meta[key] = str(frontmatter[key])
-    # Defaults
-    if 'type' not in meta:
-        # Infer from directory
-        type_map = {'journal': 'journal', 'notes': 'note', 'work': 'work', 'inbox': 'inbox'}
-        meta['type'] = type_map.get(directory, 'unknown')
-    if 'importance' not in meta:
+    if 'importance' in frontmatter:
+        meta['importance'] = str(frontmatter['importance'])
+    else:
         meta['importance'] = 'medium'
+
     return meta
 
 
@@ -153,7 +182,8 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             skipped += 1
             continue
 
-        if relative in existing_ids and not force:
+        doc_id = vault_id(relative)
+        if doc_id in existing_ids and not force:
             skipped += 1
             continue
 
@@ -170,7 +200,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             metadata = _build_metadata(frontmatter, relative)
             metadata['title'] = title
 
-            batch_ids.append(relative)
+            batch_ids.append(doc_id)
             batch_docs.append(content)
             batch_meta.append(metadata)
 
@@ -225,12 +255,13 @@ def index_file(relative_path: str) -> dict:
         metadata = _build_metadata(frontmatter, relative_path)
         metadata['title'] = title
 
+        doc_id = vault_id(relative_path)
         collection = _get_collection()
-        collection.upsert(ids=[relative_path], documents=[content], metadatas=[metadata])
+        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
 
         return {
             "success": True,
-            "id": relative_path,
+            "id": doc_id,
             "title": title,
             "metadata": metadata
         }

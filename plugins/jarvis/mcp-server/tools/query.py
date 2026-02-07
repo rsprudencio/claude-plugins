@@ -1,12 +1,15 @@
 """Vault memory querying for semantic search.
 
-Provides query, read, and stats operations against the ChromaDB vault collection.
+Provides query, read, and stats operations against the ChromaDB jarvis collection.
 Uses the shared ChromaDB client from tools.memory.
+
+All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
 import re
 from typing import Optional
 
 from .memory import _get_collection
+from .namespaces import parse_id, ALL_TYPES
 
 
 def _compute_relevance(distance: float, importance: str = "medium") -> float:
@@ -46,16 +49,36 @@ def _extract_preview(content: str, max_len: int = 150) -> str:
 def _translate_filter(filter_dict: Optional[dict]) -> Optional[dict]:
     """Translate clean filter dict to ChromaDB where syntax.
 
-    Input: {"directory": "journal", "type": "note", "importance": "high", "tags": "work,python"}
-    Output: {"$and": [{"directory": "journal"}, {"type": "note"}, ...]}
+    Handles the metadata schema where:
+    - 'type' is the universal content type (vault, memory, observation, etc.)
+    - 'vault_type' is the vault-entry type (note, journal, work, etc.)
+
+    When users filter by type with a vault-entry value (note, journal, etc.),
+    we transparently map to vault_type. When they use a content type value
+    (vault, memory, etc.), we use the universal type field.
+
+    Input: {"directory": "journal", "type": "note", "importance": "high", "tags": "work"}
+    Output: {"$and": [{"directory": "journal"}, {"vault_type": "note"}, ...]}
     """
     if not filter_dict:
         return None
 
     conditions = []
-    for key in ("directory", "type", "importance"):
-        if key in filter_dict and filter_dict[key]:
-            conditions.append({key: filter_dict[key]})
+
+    if "directory" in filter_dict and filter_dict["directory"]:
+        conditions.append({"directory": filter_dict["directory"]})
+
+    if "type" in filter_dict and filter_dict["type"]:
+        type_val = filter_dict["type"]
+        if type_val in ALL_TYPES:
+            # Universal content type (vault, memory, observation, etc.)
+            conditions.append({"type": type_val})
+        else:
+            # Vault-entry type (note, journal, work, etc.)
+            conditions.append({"vault_type": type_val})
+
+    if "importance" in filter_dict and filter_dict["importance"]:
+        conditions.append({"importance": filter_dict["importance"]})
 
     if "tags" in filter_dict and filter_dict["tags"]:
         # Tags stored as comma-separated string in metadata
@@ -67,6 +90,12 @@ def _translate_filter(filter_dict: Optional[dict]) -> Optional[dict]:
     if len(conditions) == 1:
         return conditions[0]
     return {"$and": conditions}
+
+
+def _display_path(doc_id: str) -> str:
+    """Strip namespace prefix from ID for display purposes."""
+    parsed = parse_id(doc_id)
+    return parsed.content_id
 
 
 def query_vault(query: str, n_results: int = 5,
@@ -124,13 +153,14 @@ def query_vault(query: str, n_results: int = 5,
         relevance = _compute_relevance(distance, importance)
         preview = _extract_preview(document) if document else ""
         title = (metadata or {}).get("title", doc_id)
-        doc_type = (metadata or {}).get("type", "unknown")
+        # Use vault_type if available, fall back to type
+        doc_type = (metadata or {}).get("vault_type") or (metadata or {}).get("type", "unknown")
         doc_importance = (metadata or {}).get("importance", "medium")
         tags = (metadata or {}).get("tags", "")
 
         results.append({
             "rank": rank,
-            "path": doc_id,
+            "path": _display_path(doc_id),
             "title": title,
             "type": doc_type,
             "importance": doc_importance,
@@ -148,10 +178,13 @@ def query_vault(query: str, n_results: int = 5,
 
 
 def memory_read(ids: list, include_metadata: bool = True) -> dict:
-    """Read specific documents from vault memory by ID (path).
+    """Read specific documents from vault memory by ID.
+
+    Accepts both namespaced IDs (vault::notes/my-note.md) and bare paths
+    (notes/my-note.md). Bare paths are automatically prefixed with vault::.
 
     Args:
-        ids: Document IDs (vault-relative paths)
+        ids: Document IDs (vault-relative paths or namespaced IDs)
         include_metadata: Whether to include metadata in response
 
     Returns:
@@ -165,22 +198,38 @@ def memory_read(ids: list, include_metadata: bool = True) -> dict:
     except Exception as e:
         return {"success": False, "error": f"ChromaDB unavailable: {e}"}
 
+    # Normalize IDs: bare paths get vault:: prefix
+    lookup_ids = []
+    id_map = {}  # lookup_id -> original_id (for display)
+    for doc_id in ids:
+        if "::" in doc_id:
+            lookup_ids.append(doc_id)
+            id_map[doc_id] = doc_id
+        else:
+            namespaced = f"vault::{doc_id}"
+            lookup_ids.append(namespaced)
+            id_map[namespaced] = doc_id
+
     include = ["documents"]
     if include_metadata:
         include.append("metadatas")
 
     try:
-        raw = collection.get(ids=ids, include=include)
+        raw = collection.get(ids=lookup_ids, include=include)
     except Exception as e:
         return {"success": False, "error": f"Read failed: {e}"}
 
     found = []
     found_ids = set(raw.get("ids", []))
-    not_found = [doc_id for doc_id in ids if doc_id not in found_ids]
+
+    not_found = []
+    for lid in lookup_ids:
+        if lid not in found_ids:
+            not_found.append(id_map.get(lid, lid))
 
     for i, doc_id in enumerate(raw.get("ids", [])):
         entry = {
-            "id": doc_id,
+            "id": _display_path(doc_id),
             "document": raw["documents"][i] if raw.get("documents") else None,
         }
         if include_metadata and raw.get("metadatas"):
@@ -228,10 +277,12 @@ def memory_stats(sample_size: int = 5) -> dict:
     samples = []
     for i, doc_id in enumerate(peek.get("ids", [])):
         meta = peek["metadatas"][i] if peek.get("metadatas") else {}
+        # Use vault_type for vault entries, fall back to type
+        entry_type = (meta or {}).get("vault_type") or (meta or {}).get("type", "unknown")
         samples.append({
-            "path": doc_id,
+            "path": _display_path(doc_id),
             "title": (meta or {}).get("title", doc_id),
-            "type": (meta or {}).get("type", "unknown"),
+            "type": entry_type,
         })
 
     return {

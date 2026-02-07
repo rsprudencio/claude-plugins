@@ -67,3 +67,4 @@ For a full re-index later: /memory-index --force
 - **Idempotent** — running twice without --force skips already-indexed files
 - **No sensitive by default** — documents/ and people/ are excluded unless --sensitive
 - **Templates excluded** — always skips templates/ and .obsidian/
+- **Unified collection** — all content stored in the `jarvis` collection with namespaced IDs (vault:: prefix)

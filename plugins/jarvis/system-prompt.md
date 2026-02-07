@@ -188,7 +188,7 @@ Jarvis has a ChromaDB-backed semantic memory that indexes vault .md files for me
 | `/memory-stats` | Show memory system health and stats |
 
 ### How It Works
-- Vault .md files are indexed into ChromaDB (auto-embedded with sentence-transformers)
+- Vault .md files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
 - Stored at `~/.jarvis/memory_db/` (outside the vault, no Obsidian Sync pollution)
 - `/recall` finds related content by meaning, not just keywords
 - Journal entries are auto-indexed after creation (via `jarvis_index_file`)
