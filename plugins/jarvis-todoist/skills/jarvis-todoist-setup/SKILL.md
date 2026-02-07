@@ -225,7 +225,7 @@ Use `mcp__todoist__add-projects` to create approved projects.
 
 ## Step 7: Generate Rules Memory
 
-Build the `todoist-routing-rules` memory from approved recommendations.
+Build the `todoist-routing-rules` strategic memory file from approved recommendations. Write to `.jarvis/strategic/todoist-routing-rules.md` via `jarvis_memory_write("todoist-routing-rules", content)`.
 
 **Format**: YAML for reliable parsing + human editability.
 
@@ -365,7 +365,7 @@ Same as Step 7-8.
 
 | Error | Action |
 |-------|--------|
-| Serena MCP unavailable | Warn: "Memory sync won't work without Serena. Continue anyway?" |
+| Strategic memory dir missing | Warn: ".jarvis/strategic/ not found. Run /jarvis-setup to initialize. Continue anyway?" |
 | Todoist MCP unavailable | Cannot proceed - required for analysis |
 | No inbox tasks | "Your inbox is empty! Add some tasks first, or define rules manually." |
 | Project creation fails | Report error, offer to route to Inbox instead |

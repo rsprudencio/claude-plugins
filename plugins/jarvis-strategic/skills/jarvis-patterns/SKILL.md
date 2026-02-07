@@ -32,11 +32,13 @@ Default: 30 days (meaningful pattern detection requires time)
 
 ### Step 2: Load All Strategic Context
 
-Load ALL Serena memories:
+Load ALL strategic memories from `.jarvis/strategic/`:
 - `jarvis-trajectory` - Goals to check progress against
 - `jarvis-values` - Principles to check alignment
 - `jarvis-focus-areas` - Priorities to compare activity
 - `jarvis-patterns` - Previous patterns to compare/update
+
+Use `jarvis_memory_read(name)` for each.
 
 ### Step 3: Deep Journal Analysis
 
@@ -246,7 +248,7 @@ Based on this analysis, I recommend updating `jarvis-patterns`:
 Present the suggested updates to `jarvis-patterns` memory.
 Ask user: "Would you like me to update the patterns memory with these findings?"
 
-If approved, use `serena_edit_memory` to update jarvis-patterns.
+If approved, read the current `jarvis-patterns` memory with `jarvis_memory_read("jarvis-patterns")`, merge the new findings into the content, then write back with `jarvis_memory_write("jarvis-patterns", updated_content, overwrite=true)`.
 
 ### Step 7: Discuss Findings
 

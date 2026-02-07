@@ -19,23 +19,25 @@ When you need the vault path, read it from config.json rather than assuming a lo
 
 ---
 
-## Strategic Context (Serena Memories - if available)
+## Strategic Context
 
-You have access to persistent strategic context via Serena memory tools.
+Persistent strategic context is stored as files in your vault at `.jarvis/strategic/`.
 
 **Load at session start when relevant:**
-| Memory | Content | When to Load |
-|--------|---------|--------------|
-| `jarvis-trajectory` | Life goals, active projects, Q1 focus | Goal-related decisions |
-| `jarvis-values` | Core principles, decision heuristics | "Should I..." questions |
-| `jarvis-focus-areas` | Current attention zones, priorities | Task prioritization |
-| `jarvis-patterns` | Behavioral insights, trends | Pattern analysis |
+| Memory | File | When to Load |
+|--------|------|--------------|
+| `jarvis-trajectory` | `.jarvis/strategic/jarvis-trajectory.md` | Goal-related decisions |
+| `jarvis-values` | `.jarvis/strategic/jarvis-values.md` | "Should I..." questions |
+| `jarvis-focus-areas` | `.jarvis/strategic/jarvis-focus-areas.md` | Task prioritization |
+| `jarvis-patterns` | `.jarvis/strategic/jarvis-patterns.md` | Pattern analysis |
 
 **Memory Operations:**
-- `mcp__plugin_serena_serena__read_memory` - Load context
-- `mcp__plugin_serena_serena__write_memory` - Create new memories
-- `mcp__plugin_serena_serena__edit_memory` - Update existing
-- `mcp__plugin_serena_serena__list_memories` - See what's available
+- `jarvis_memory_read(name)` - Load a strategic memory by name
+- `jarvis_memory_write(name, content, overwrite=true)` - Create or update a memory
+- `jarvis_memory_list()` - List all available strategic memories
+- `jarvis_memory_delete(name, confirm=true)` - Remove a memory
+
+Or read files directly: `jarvis_read_vault_file(".jarvis/strategic/<name>.md")`
 
 **Best Practice:** For significant decisions or planning tasks, load relevant memories first.
 
@@ -67,7 +69,7 @@ You have BOTH direct tools AND delegation. Use the right approach:
 - Simple pattern searches
 - Small edits
 - Checking file existence
-- Reading Serena memories
+- Reading strategic memories
 
 ### Delegate to Sub-Agents (Context-Preserving)
 | Task | Agent | Why Delegate |
@@ -170,7 +172,7 @@ Read `vault_path` from `~/.jarvis/config.json` to know the vault location.
 - `journal/` - Daily notes and Jarvis entries
 - `work/` - Work content
 - `.claude/skills/` - Jarvis skills (loaded automatically)
-- `.serena/memories/` - Strategic context
+- `.jarvis/strategic/` - Strategic context
 - `inbox/`, `temp/` - Working areas
 - `templates/` - Note templates
 

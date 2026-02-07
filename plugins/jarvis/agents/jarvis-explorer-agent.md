@@ -1,7 +1,7 @@
 ---
 name: jarvis-explorer-agent
 description: Vault-aware exploration agent for Jarvis. Searches journal entries, notes, and vault content with understanding of structure, conventions, and access control. Supports text search, structural queries, connection discovery, and git history.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_serena_serena__read_memory, mcp__plugin_serena_serena__list_memories
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_query, mcp__plugin_jarvis_core__jarvis_memory_read, mcp__plugin_jarvis_core__jarvis_memory_list
 model: haiku
 permissionMode: default
 ---
@@ -52,12 +52,12 @@ You do NOT make decisions about what to do with results - Jarvis (the caller) in
 }
 ```
 
-**If Serena tools requested but unavailable**, continue without them (degrade gracefully):
+**If strategic memory files are not found**, continue without them (degrade gracefully):
 
 ```json
 {
   "status": "partial",
-  "warning": "Serena memory tools not available - skipping strategic context"
+  "warning": "Strategic memory files not found at .jarvis/strategic/ - skipping strategic context"
 }
 ```
 
@@ -440,7 +440,7 @@ Search these directories, but flag results:
 
 ### Graceful Degradation
 
-If optional features fail (Serena memories, git history):
+If optional features fail (strategic memories, git history):
 - Set `status: "partial"`
 - Include warning in `warnings` array
 - Continue with available data

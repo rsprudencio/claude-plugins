@@ -20,10 +20,12 @@ This workflow provides a quick strategic orientation by:
 
 ### Step 1: Load Strategic Context
 
-Load these Serena memories:
+Load these strategic memories from `.jarvis/strategic/`:
 - `jarvis-trajectory` - Current goals and direction
 - `jarvis-focus-areas` - Active priorities and metrics
 - `jarvis-patterns` - Known patterns and alerts
+
+Use `jarvis_memory_read(name)` for each.
 
 ### Step 2: Gather Recent Activity
 

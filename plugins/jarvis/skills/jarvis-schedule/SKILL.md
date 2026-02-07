@@ -24,7 +24,7 @@ Todoist recurring tasks serve as the scheduling engine:
 | Action Label | Triggers | Description |
 |-------------|----------|-------------|
 | `jarvis-action:refine-journal` | Journal refinement | Scan `#status/refine` entries, extract evergreen knowledge |
-| `jarvis-action:clean-memories` | Memory maintenance | Review and prune stale Serena memories |
+| `jarvis-action:clean-memories` | Memory maintenance | Review and prune stale strategic memories |
 | `jarvis-action:todoist-sync` | Todoist sync | Full inbox sync via `/jarvis-todoist` |
 | `jarvis-action:pattern-check` | Pattern analysis | Run `/jarvis-patterns` (quick depth) |
 | `jarvis-action:orient` | Orientation briefing | Run `/jarvis-orient` |

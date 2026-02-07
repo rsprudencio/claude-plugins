@@ -26,9 +26,8 @@ This plugin requires:
    claude plugin install jarvis@raph-claude-plugins
    ```
 
-2. **Serena MCP Server** (optional but recommended)
-   - Provides persistent strategic memories
-   - Enhances context awareness
+2. **Strategic memories** stored in vault at `.jarvis/strategic/`
+   - No additional MCP servers required
 
 ---
 

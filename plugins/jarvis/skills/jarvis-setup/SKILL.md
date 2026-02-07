@@ -11,7 +11,7 @@ Run this wizard to configure Jarvis. It's idempotent - re-running updates existi
 ## CRITICAL: No Auto-Activation
 
 **DO NOT** automatically:
-- Activate Serena or any MCP
+- Activate any external MCP
 - Load any project
 - Call any MCP tools before user confirms
 
@@ -77,16 +77,15 @@ List which agents are available based on detected MCPs:
 ```
 Available agents:
 - jarvis-audit-agent (git commits) - Always available
-- jarvis-journal-agent (vault journals) - Requires Serena MCP [✓ detected | ✗ not found]
+- jarvis-journal-agent (vault journals) - Always available
 - jarvis-todoist-agent (task sync) - Requires Todoist MCP [✓ detected | ✗ not found]
 
 Note: All agents are always loaded. They will fail gracefully if their required MCP is not configured.
 ```
 
-If MCPs are missing, suggest how to install:
+If Todoist MCP is missing, suggest:
 ```
 To enable full functionality:
-- Serena: claude plugin install serena
 - Todoist: Configure Todoist MCP in settings
 ```
 
@@ -108,7 +107,7 @@ Run /jarvis:jarvis-memory-index to index your vault for /recall searches.
 ### 6. Mention strategic context
 
 ```
-Jarvis can use your values, goals, and trajectory for personalized assistance.
+Jarvis stores strategic context (values, goals, trajectory) in your vault at .jarvis/strategic/.
 Run /jarvis:jarvis-interview anytime to set or update these.
 ```
 
@@ -187,7 +186,7 @@ Quick Start:
 
 ## Key Rules
 
-- **NO AUTO-LOADING** - Don't activate Serena, don't call MCP tools before confirmation
+- **NO AUTO-LOADING** - Don't call MCP tools before confirmation
 - **ASK FIRST** - Always get user confirmation before any action
 - **Write config ONCE** at the end
 - **All agents always available** - No enable/disable, they fail gracefully if MCP missing

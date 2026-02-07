@@ -32,9 +32,11 @@ Default: last 7 days if unspecified
 
 ### Step 2: Load Context
 
-Load Serena memories for comparison:
+Load strategic memories for comparison:
 - `jarvis-patterns` - Previous patterns to compare against
 - `jarvis-focus-areas` - Goals to track progress
+
+Use `jarvis_memory_read(name)` for each.
 
 ### Step 3: Gather and Analyze Entries
 

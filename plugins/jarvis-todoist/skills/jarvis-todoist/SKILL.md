@@ -36,7 +36,8 @@ Check if any recurring Jarvis actions are due (these are pre-configured by the u
 
 **Before delegating SYNC**, check for custom routing rules:
 
-1. Use `mcp__plugin_serena_serena__read_memory` to read `todoist-routing-rules`
+1. Use `jarvis_memory_read("todoist-routing-rules")` to read routing rules
+   (stored at `.jarvis/strategic/todoist-routing-rules.md`)
 2. If found: Include the rules in the delegation prompt
 3. If not found: Use default classification (TASK vs INBOX CAPTURE)
 
@@ -99,7 +100,7 @@ Agent returns grouped summary:
 
 **Captured to inbox/** (for review): 3
 - "I realized morning routines help focus" → inbox/todoist/20260203-morning-routines.md
-- "What if we made Jarvis use Serena..." → inbox/todoist/20260203-jarvis-architecture.md
+- "What if we made Jarvis modular..." → inbox/todoist/20260203-jarvis-architecture.md
 - "Just had meeting with DefectDojo..." → inbox/todoist/20260203-defectdojo-meeting.md
 
 **Skipped** (already ingested): 2
@@ -112,7 +113,7 @@ Present this summary to user.
 If routing rules specified **Memory Sync** for any classification (e.g., SIDE_PROJECT → `side-project-ideas`):
 
 1. Ask user: "3 items matched SIDE_PROJECT. Add to your ideas memory?"
-2. If approved: Use `mcp__plugin_serena_serena__edit_memory` to append items to specified memory
+2. If approved: Read the target memory with `jarvis_memory_read(memory_name)`, append the new items to the appropriate section, then write back with `jarvis_memory_write(memory_name, updated_content, overwrite=true)`
 3. Format: Add to section specified in rules (e.g., "Backlog" or "Ideas")
 
 This keeps strategic memories up-to-date automatically. For example:

@@ -34,11 +34,13 @@ Parse natural language:
 
 ### Step 2: Load Strategic Context
 
-Load ALL Serena memories for full context:
+Load ALL strategic memories for full context:
 - `jarvis-trajectory` - Goals and direction
 - `jarvis-values` - Principles for prioritization
 - `jarvis-focus-areas` - What was important before leaving
 - `jarvis-patterns` - Known patterns and alerts
+
+Use `jarvis_memory_read(name)` for each.
 
 ### Step 3: Deep Scan Journal Entries
 

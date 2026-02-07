@@ -6,7 +6,7 @@ You have access to four strategic analysis skills:
 
 ### Orientation Briefings (`/jarvis:jarvis-orient`)
 When user asks to "orient me" or at session start, provide strategic briefing:
-- Load strategic context from Serena memories (trajectory, values, focus-areas)
+- Load strategic context from `.jarvis/strategic/` (trajectory, values, focus-areas)
 - Current priorities and active projects
 - What to focus on today
 
@@ -32,10 +32,10 @@ For deep behavioral insights:
 
 ## Strategic Memory Usage
 
-When performing strategic analysis, load relevant Serena memories:
+When performing strategic analysis, load relevant strategic memories from `.jarvis/strategic/`:
 - `jarvis-trajectory` - Life goals, active projects, Q1 focus
 - `jarvis-values` - Core principles, decision heuristics
 - `jarvis-focus-areas` - Current attention zones, priorities
 - `jarvis-patterns` - Behavioral insights, trends
 
-Use these memories to provide context-aware strategic guidance.
+Use `jarvis_memory_read(name)` for each, or read directly via `jarvis_read_vault_file(".jarvis/strategic/<name>.md")`.
