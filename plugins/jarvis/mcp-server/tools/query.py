@@ -5,22 +5,40 @@ Uses the shared ChromaDB client from tools.memory.
 
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
+import os
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
-from .memory import _get_collection
+from .memory import _get_collection, _DB_DIR
 from .namespaces import parse_id, ALL_TYPES
 
 
-def _compute_relevance(distance: float, importance: str = "medium") -> float:
-    """Convert ChromaDB cosine distance to relevance score with importance boost.
+def _compute_relevance(distance: float, importance: str = "medium",
+                       updated_at: Optional[str] = None) -> float:
+    """Convert ChromaDB cosine distance to relevance score with boosts.
 
     ChromaDB cosine distance ranges from 0 (identical) to 2 (opposite).
-    We convert to a 0-1 relevance score and apply importance adjustments.
+    We convert to a 0-1 relevance score and apply importance + recency adjustments.
     """
     base = 1.0 - (distance / 2.0)
-    boost = {"high": 0.10, "medium": 0.0, "low": -0.05}.get(importance, 0.0)
-    return max(0.0, min(1.0, base + boost))
+    boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(importance, 0.0)
+
+    # Recency boost: recent updates get a small relevance bump
+    recency_boost = 0.0
+    if updated_at:
+        try:
+            updated = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            days_ago = (now - updated).total_seconds() / 86400
+            if days_ago <= 1:
+                recency_boost = 0.08
+            elif days_ago <= 7:
+                recency_boost = 0.05
+        except (ValueError, TypeError):
+            pass
+
+    return max(0.0, min(1.0, base + boost + recency_boost))
 
 
 def _extract_preview(content: str, max_len: int = 150) -> str:
@@ -150,7 +168,8 @@ def query_vault(query: str, n_results: int = 5,
         zip(ids, distances, documents, metadatas), start=1
     ):
         importance = (metadata or {}).get("importance", "medium")
-        relevance = _compute_relevance(distance, importance)
+        updated_at = (metadata or {}).get("updated_at")
+        relevance = _compute_relevance(distance, importance, updated_at)
         preview = _extract_preview(document) if document else ""
         title = (metadata or {}).get("title", doc_id)
         # Use vault_type if available, fall back to type
@@ -177,8 +196,8 @@ def query_vault(query: str, n_results: int = 5,
     }
 
 
-def memory_read(ids: list, include_metadata: bool = True) -> dict:
-    """Read specific documents from vault memory by ID.
+def doc_read(ids: list, include_metadata: bool = True) -> dict:
+    """Read specific documents from ChromaDB by ID.
 
     Accepts both namespaced IDs (vault::notes/my-note.md) and bare paths
     (notes/my-note.md). Bare paths are automatically prefixed with vault::.
@@ -243,11 +262,12 @@ def memory_read(ids: list, include_metadata: bool = True) -> dict:
     }
 
 
-def memory_stats(sample_size: int = 5) -> dict:
+def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     """Get memory system health and statistics.
 
     Args:
         sample_size: Number of sample entries to peek
+        detailed: Include per-type/namespace breakdowns and storage size
 
     Returns:
         Stats dict with count, samples, type distribution
@@ -285,8 +305,47 @@ def memory_stats(sample_size: int = 5) -> dict:
             "type": entry_type,
         })
 
-    return {
+    result = {
         "success": True,
         "total_documents": total,
         "samples": samples,
     }
+
+    # Detailed breakdown
+    if detailed:
+        try:
+            all_meta = collection.get(include=["metadatas"])
+            type_counts = {}
+            namespace_counts = {}
+
+            for meta in all_meta.get("metadatas", []):
+                if not meta:
+                    continue
+                # Count by type
+                content_type = meta.get("type", "unknown")
+                type_counts[content_type] = type_counts.get(content_type, 0) + 1
+                # Count by namespace
+                ns = meta.get("namespace", "unknown")
+                namespace_counts[ns] = namespace_counts.get(ns, 0) + 1
+
+            result["type_breakdown"] = type_counts
+            result["namespace_breakdown"] = namespace_counts
+
+            # Storage size
+            storage_bytes = 0
+            if os.path.isdir(_DB_DIR):
+                for dirpath, _, filenames in os.walk(_DB_DIR):
+                    for f in filenames:
+                        storage_bytes += os.path.getsize(os.path.join(dirpath, f))
+            result["storage_bytes"] = storage_bytes
+            result["storage_mb"] = round(storage_bytes / (1024 * 1024), 2)
+
+        except Exception as e:
+            result["detailed_error"] = str(e)
+
+    return result
+
+
+# Backward-compatible aliases (will be removed in future version)
+memory_read = doc_read
+memory_stats = collection_stats

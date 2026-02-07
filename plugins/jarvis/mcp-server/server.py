@@ -25,8 +25,14 @@ Tools - Memory Operations (ChromaDB semantic indexing):
 - jarvis_index_vault: Bulk index all vault .md files
 - jarvis_index_file: Index a single file (incremental)
 - jarvis_query: Semantic search across vault memory
-- jarvis_memory_read: Read specific documents by ID
-- jarvis_memory_stats: Get memory system health and statistics
+- jarvis_doc_read: Read specific documents by ID (any namespace)
+- jarvis_collection_stats: Get collection health with breakdowns
+
+Tools - Memory CRUD (file-backed with ChromaDB index):
+- jarvis_memory_write: Write a named memory file + index
+- jarvis_memory_read: Read a named memory by name
+- jarvis_memory_list: List memory files with metadata
+- jarvis_memory_delete: Delete memory file + index entry
 """
 import asyncio
 import json
@@ -56,7 +62,13 @@ from tools.git_ops import (
     query_history, rollback_commit, file_history, rewrite_commit_messages
 )
 from tools.memory import index_vault, index_file
-from tools.query import query_vault, memory_read, memory_stats
+from tools.query import query_vault, doc_read, collection_stats
+from tools.memory_crud import (
+    memory_write as mem_write,
+    memory_read as mem_read,
+    memory_list as mem_list,
+    memory_delete as mem_delete,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -327,7 +339,7 @@ TOOLS = [
         }
     ),
     Tool(
-        name="jarvis_memory_read",
+        name="jarvis_doc_read",
         description="Read specific documents from vault memory by ID (path).",
         inputSchema={
             "type": "object",
@@ -347,7 +359,7 @@ TOOLS = [
         }
     ),
     Tool(
-        name="jarvis_memory_stats",
+        name="jarvis_collection_stats",
         description="Get memory system health: document count, sample entries, and index status.",
         inputSchema={
             "type": "object",
@@ -356,10 +368,146 @@ TOOLS = [
                     "type": "integer",
                     "description": "Number of sample entries to include (default: 5)",
                     "default": 5
+                },
+                "detailed": {
+                    "type": "boolean",
+                    "description": "Include per-type/namespace breakdowns and storage size (default: false)",
+                    "default": False
                 }
             }
         }
-    )
+    ),
+    # Memory CRUD operations (file-backed with ChromaDB index)
+    Tool(
+        name="jarvis_memory_write",
+        description="Write a named memory file (with frontmatter) and index in ChromaDB. Use for strategic memories, project context, etc.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Memory name slug (lowercase, hyphens, e.g., 'jarvis-trajectory')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content (body only — frontmatter is auto-generated)"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Memory scope: 'global' (strategic) or 'project' (project-scoped)",
+                    "default": "global"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name (required when scope='project')"
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional tags for categorization"
+                },
+                "importance": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Importance level (default: 'medium')",
+                    "default": "medium"
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Allow overwriting existing memory (default: false)",
+                    "default": False
+                },
+                "skip_secret_scan": {
+                    "type": "boolean",
+                    "description": "Bypass secret detection (default: false)",
+                    "default": False
+                }
+            },
+            "required": ["name", "content"]
+        }
+    ),
+    Tool(
+        name="jarvis_memory_read",
+        description="Read a named memory by name. Tries ChromaDB first (fast), falls back to file.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Memory name slug (e.g., 'jarvis-trajectory')"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Memory scope (default: 'global')",
+                    "default": "global"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name (required when scope='project')"
+                }
+            },
+            "required": ["name"]
+        }
+    ),
+    Tool(
+        name="jarvis_memory_list",
+        description="List memory files with metadata and index status.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project", "all"],
+                    "description": "Which memories to list (default: 'all')",
+                    "default": "all"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Filter by project (for scope='project')"
+                },
+                "tag": {
+                    "type": "string",
+                    "description": "Filter by tag"
+                },
+                "importance": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by importance level"
+                }
+            }
+        }
+    ),
+    Tool(
+        name="jarvis_memory_delete",
+        description="Delete a memory file and its ChromaDB index entry.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Memory name slug"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "description": "Memory scope (default: 'global')",
+                    "default": "global"
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name (required when scope='project')"
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true for global memory deletion (safety gate)",
+                    "default": False
+                }
+            },
+            "required": ["name"]
+        }
+    ),
 ]
 
 
@@ -408,7 +556,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "jarvis_file_exists": lambda args: file_exists_in_vault(
             args.get("relative_path", "")
         ),
-        # Memory operations
+        # Memory indexing operations
         "jarvis_index_vault": lambda args: index_vault(
             force=args.get("force", False),
             directory=args.get("directory"),
@@ -423,13 +571,42 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             n_results=args.get("n_results", 5),
             filter=args.get("filter")
         ),
-        "jarvis_memory_read": lambda args: memory_read(
+        "jarvis_doc_read": lambda args: doc_read(
             ids=args.get("ids", []),
             include_metadata=args.get("include_metadata", True)
         ),
-        "jarvis_memory_stats": lambda args: memory_stats(
-            sample_size=args.get("sample_size", 5)
-        )
+        "jarvis_collection_stats": lambda args: collection_stats(
+            sample_size=args.get("sample_size", 5),
+            detailed=args.get("detailed", False)
+        ),
+        # Memory CRUD operations
+        "jarvis_memory_write": lambda args: mem_write(
+            name=args.get("name", ""),
+            content=args.get("content", ""),
+            scope=args.get("scope", "global"),
+            project=args.get("project"),
+            tags=args.get("tags"),
+            importance=args.get("importance", "medium"),
+            overwrite=args.get("overwrite", False),
+            skip_secret_scan=args.get("skip_secret_scan", False),
+        ),
+        "jarvis_memory_read": lambda args: mem_read(
+            name=args.get("name", ""),
+            scope=args.get("scope", "global"),
+            project=args.get("project"),
+        ),
+        "jarvis_memory_list": lambda args: mem_list(
+            scope=args.get("scope", "all"),
+            project=args.get("project"),
+            tag=args.get("tag"),
+            importance=args.get("importance"),
+        ),
+        "jarvis_memory_delete": lambda args: mem_delete(
+            name=args.get("name", ""),
+            scope=args.get("scope", "global"),
+            project=args.get("project"),
+            confirm=args.get("confirm", False),
+        ),
     }
 
     try:

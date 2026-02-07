@@ -2,7 +2,8 @@
 import os
 import pytest
 from tools.query import (
-    query_vault, memory_read, memory_stats,
+    query_vault, doc_read, collection_stats,
+    memory_read, memory_stats,  # backward-compatible aliases
     _compute_relevance, _extract_preview, _translate_filter,
     _display_path
 )
@@ -25,6 +26,11 @@ class TestComputeRelevance:
         boosted = _compute_relevance(0.5, "high")
         assert boosted == base + 0.10
 
+    def test_critical_importance_boost(self):
+        base = _compute_relevance(0.5, "medium")
+        boosted = _compute_relevance(0.5, "critical")
+        assert boosted == base + 0.12
+
     def test_low_importance_penalty(self):
         base = _compute_relevance(0.5, "medium")
         penalized = _compute_relevance(0.5, "low")
@@ -39,6 +45,35 @@ class TestComputeRelevance:
         # Zero distance + high importance should not exceed 1
         result = _compute_relevance(0.0, "high")
         assert result == 1.0
+
+    def test_recency_boost_within_day(self):
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        base = _compute_relevance(0.5, "medium")
+        boosted = _compute_relevance(0.5, "medium", updated_at=recent)
+        assert boosted == base + 0.08
+
+    def test_recency_boost_within_week(self):
+        from datetime import datetime, timezone, timedelta
+        few_days = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        base = _compute_relevance(0.5, "medium")
+        boosted = _compute_relevance(0.5, "medium", updated_at=few_days)
+        assert boosted == base + 0.05
+
+    def test_no_recency_boost_old(self):
+        old = "2020-01-01T00:00:00Z"
+        base = _compute_relevance(0.5, "medium")
+        same = _compute_relevance(0.5, "medium", updated_at=old)
+        assert same == base
+
+    def test_no_recency_boost_none(self):
+        base = _compute_relevance(0.5, "medium")
+        same = _compute_relevance(0.5, "medium", updated_at=None)
+        assert same == base
+
+    def test_invalid_date_no_crash(self):
+        result = _compute_relevance(0.5, "medium", updated_at="not-a-date")
+        assert isinstance(result, float)
 
 
 class TestExtractPreview:
@@ -237,8 +272,8 @@ class TestQueryVault:
         mem._chroma_client = None
 
 
-class TestMemoryRead:
-    """Tests for document read by ID."""
+class TestDocRead:
+    """Tests for document read by ID (renamed from memory_read)."""
 
     def _reset_and_index(self, mock_config):
         import tools.memory as mem
@@ -252,11 +287,11 @@ class TestMemoryRead:
         from tools.memory import index_file
         index_file("notes/read-test.md")
 
-    def test_memory_read_basic(self, mock_config):
+    def test_doc_read_basic(self, mock_config):
         self._reset_and_index(mock_config)
 
         # Read using bare path (backward compatible)
-        result = memory_read(["notes/read-test.md"])
+        result = doc_read(["notes/read-test.md"])
         assert result["success"] is True
         assert len(result["documents"]) == 1
         assert result["documents"][0]["id"] == "notes/read-test.md"
@@ -266,11 +301,11 @@ class TestMemoryRead:
         import tools.memory as mem
         mem._chroma_client = None
 
-    def test_memory_read_with_namespace(self, mock_config):
+    def test_doc_read_with_namespace(self, mock_config):
         """Should also work when called with full namespaced ID."""
         self._reset_and_index(mock_config)
 
-        result = memory_read(["vault::notes/read-test.md"])
+        result = doc_read(["vault::notes/read-test.md"])
         assert result["success"] is True
         assert len(result["documents"]) == 1
         # Display path should have prefix stripped
@@ -279,10 +314,10 @@ class TestMemoryRead:
         import tools.memory as mem
         mem._chroma_client = None
 
-    def test_memory_read_missing(self, mock_config):
+    def test_doc_read_missing(self, mock_config):
         self._reset_and_index(mock_config)
 
-        result = memory_read(["notes/read-test.md", "notes/nonexistent.md"])
+        result = doc_read(["notes/read-test.md", "notes/nonexistent.md"])
         assert result["success"] is True
         assert len(result["documents"]) == 1
         assert "notes/nonexistent.md" in result["not_found"]
@@ -290,14 +325,18 @@ class TestMemoryRead:
         import tools.memory as mem
         mem._chroma_client = None
 
-    def test_memory_read_no_ids(self):
-        result = memory_read([])
+    def test_doc_read_no_ids(self):
+        result = doc_read([])
         assert result["success"] is False
         assert "No IDs" in result["error"]
 
+    def test_backward_compat_alias(self):
+        """memory_read should still work as alias for doc_read."""
+        assert memory_read is doc_read
 
-class TestMemoryStats:
-    """Tests for memory statistics."""
+
+class TestCollectionStats:
+    """Tests for collection statistics (renamed from memory_stats)."""
 
     def _reset_and_index(self, mock_config):
         import tools.memory as mem
@@ -316,10 +355,10 @@ class TestMemoryStats:
         from tools.memory import index_vault
         index_vault()
 
-    def test_memory_stats(self, mock_config):
+    def test_collection_stats_basic(self, mock_config):
         self._reset_and_index(mock_config)
 
-        result = memory_stats()
+        result = collection_stats()
         assert result["success"] is True
         assert result["total_documents"] >= 2
         assert len(result["samples"]) > 0
@@ -334,15 +373,36 @@ class TestMemoryStats:
         import tools.memory as mem
         mem._chroma_client = None
 
-    def test_memory_stats_empty(self, mock_config):
+    def test_collection_stats_detailed(self, mock_config):
+        self._reset_and_index(mock_config)
+
+        result = collection_stats(detailed=True)
+        assert result["success"] is True
+        assert "type_breakdown" in result
+        assert "namespace_breakdown" in result
+        assert "storage_bytes" in result
+        assert "storage_mb" in result
+
+        # All indexed docs should be vault type
+        assert result["type_breakdown"].get("vault", 0) >= 2
+        assert result["namespace_breakdown"].get("vault::", 0) >= 2
+
+        import tools.memory as mem
+        mem._chroma_client = None
+
+    def test_collection_stats_empty(self, mock_config):
         import tools.memory as mem
         mem._chroma_client = None
         mem._DB_DIR = str(mock_config.vault_path / ".test_stats_empty_db")
 
-        result = memory_stats()
+        result = collection_stats()
         assert result["success"] is True
         assert result["total_documents"] == 0
         assert result["samples"] == []
         assert "No documents indexed" in result.get("message", "")
 
         mem._chroma_client = None
+
+    def test_backward_compat_alias(self):
+        """memory_stats should still work as alias for collection_stats."""
+        assert memory_stats is collection_stats

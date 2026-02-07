@@ -78,6 +78,23 @@ def get_verified_vault_path() -> Tuple[str, str]:
     return os.path.expanduser(get_config()["vault_path"]), ""
 
 
+def get_memory_config() -> dict:
+    """Get memory subsystem configuration with defaults.
+
+    Returns config dict with keys: secret_detection, importance_scoring,
+    recency_boost_days, default_importance.
+    Backward-compatible: configs without 'memory' section get defaults.
+    """
+    config = get_config()
+    defaults = {
+        "secret_detection": True,
+        "importance_scoring": True,
+        "recency_boost_days": 7,
+        "default_importance": "medium",
+    }
+    return {**defaults, **config.get("memory", {})}
+
+
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     config_path = Path.home() / ".jarvis" / "config.json"
