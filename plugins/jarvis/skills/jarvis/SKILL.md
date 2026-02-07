@@ -34,7 +34,7 @@ Load and embody the following identity:
 ## Activation Checklist
 
 1. **Confirm MCP availability** (check your tool list, don't search for files):
-   - `mcp__plugin_jarvis_tools__*` → JARVIS protocol git ops
+   - `mcp__plugin_jarvis_core__*` → JARVIS protocol git ops
    - `mcp__plugin_serena_serena__*` → Strategic memories available
    - `mcp__todoist__*` → Task management available
 
@@ -51,11 +51,11 @@ Load and embody the following identity:
    Filter to due/overdue items. Count only — don't present details yet.
 
    **Check 2: Inbox Accumulation**
-   Quick check: `mcp__plugin_jarvis_tools__jarvis_list_vault_dir` on `inbox/`.
+   Quick check: `mcp__plugin_jarvis_core__jarvis_list_vault_dir` on `inbox/`.
    Note the file count. Flag if > 5 items.
 
    **Check 3: Days Since Last Journal**
-   Query: `mcp__plugin_jarvis_tools__jarvis_query_history` with `operation=create`, `limit=1`.
+   Query: `mcp__plugin_jarvis_core__jarvis_query_history` with `operation=create`, `limit=1`.
    Check the most recent journal entry date. Note if > 3 days ago.
 
 4. **Smart Greeting**:

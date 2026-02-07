@@ -210,8 +210,8 @@ If ChromaDB is unavailable or empty, all features fall back to keyword-based Gre
 When you first engage with the user in a session, run these quick checks (direct tool calls, in parallel):
 
 1. **Scheduled actions**: `mcp__todoist__find-tasks` with labels `["jarvis-scheduled"]` — count due/overdue items
-2. **Inbox accumulation**: `mcp__plugin_jarvis_tools__jarvis_list_vault_dir` on `inbox/` — note file count
-3. **Journal recency**: `mcp__plugin_jarvis_tools__jarvis_query_history` with `operation=create`, `limit=1` — note if >3 days
+2. **Inbox accumulation**: `mcp__plugin_jarvis_core__jarvis_list_vault_dir` on `inbox/` — note file count
+3. **Journal recency**: `mcp__plugin_jarvis_core__jarvis_query_history` with `operation=create`, `limit=1` — note if >3 days
 
 If anything is noteworthy, mention it briefly in your greeting. Don't block the user — just surface context.
 

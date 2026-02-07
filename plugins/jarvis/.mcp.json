@@ -1,14 +1,6 @@
 {
-  "tools": {
+  "core": {
     "command": "uvx",
     "args": ["--from", "${CLAUDE_PLUGIN_ROOT}/mcp-server", "jarvis-tools"]
-  },
-  "chroma": {
-    "command": "uvx",
-    "args": [
-      "chroma-mcp",
-      "--client-type", "persistent",
-      "--data-dir", "${HOME}/.jarvis/memory_db"
-    ]
   }
 }

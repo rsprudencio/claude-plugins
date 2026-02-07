@@ -19,7 +19,7 @@ Detect flags from natural language:
 
 ### 2. Run indexing
 
-Call `mcp__plugin_jarvis_tools__jarvis_index_vault` with detected options:
+Call `mcp__plugin_jarvis_core__jarvis_index_vault` with detected options:
 
 ```json
 {

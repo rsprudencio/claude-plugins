@@ -10,28 +10,17 @@ Shows the health and statistics of Jarvis's semantic memory system.
 
 ## Execution Flow
 
-### 1. Get collection count
+### 1. Get stats
 
-Call `mcp__plugin_jarvis_chroma__chroma_get_collection_count` with:
-
-```json
-{
-  "collection_name": "vault"
-}
-```
-
-### 2. Peek at sample entries
-
-Call `mcp__plugin_jarvis_chroma__chroma_peek_collection` with:
+Call `mcp__plugin_jarvis_core__jarvis_memory_stats` with:
 
 ```json
 {
-  "collection_name": "vault",
-  "limit": 5
+  "sample_size": 5
 }
 ```
 
-### 3. Present status
+### 2. Present status
 
 ```
 Memory System Status
@@ -53,9 +42,9 @@ Commands:
   /memory-index --force - Full re-index (rebuilds everything)
 ```
 
-### 4. Handle empty state
+### 3. Handle empty state
 
-If collection doesn't exist or count is 0:
+If total_documents is 0:
 
 ```
 Memory System Status
@@ -68,4 +57,4 @@ Run /memory-index to index your vault for semantic search.
 ## Key Rules
 
 - **Read-only** — only queries ChromaDB, never modifies
-- **Quick** — two fast API calls, no heavy processing
+- **Quick** — single API call, no heavy processing

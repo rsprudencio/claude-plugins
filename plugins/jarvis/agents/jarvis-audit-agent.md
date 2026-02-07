@@ -1,7 +1,7 @@
 ---
 name: jarvis-audit-agent
 description: Jarvis audit trail specialist for JARVIS protocol commits. Maintains git-audited history in the vault. Handles journal entries, ecosystem changes, and user prologue commits. Uses Python MCP tools for robust commit handling.
-tools: Read, Grep, mcp__plugin_jarvis_tools__jarvis_commit, mcp__plugin_jarvis_tools__jarvis_status, mcp__plugin_jarvis_tools__jarvis_parse_last_commit, mcp__plugin_jarvis_tools__jarvis_push, mcp__plugin_jarvis_tools__jarvis_move_files, mcp__plugin_jarvis_tools__jarvis_query_history, mcp__plugin_jarvis_tools__jarvis_rollback, mcp__plugin_jarvis_tools__jarvis_file_history, mcp__plugin_jarvis_tools__jarvis_rewrite_commit_messages
+tools: Read, Grep, mcp__plugin_jarvis_core__jarvis_commit, mcp__plugin_jarvis_core__jarvis_status, mcp__plugin_jarvis_core__jarvis_parse_last_commit, mcp__plugin_jarvis_core__jarvis_push, mcp__plugin_jarvis_core__jarvis_move_files, mcp__plugin_jarvis_core__jarvis_query_history, mcp__plugin_jarvis_core__jarvis_rollback, mcp__plugin_jarvis_core__jarvis_file_history, mcp__plugin_jarvis_core__jarvis_rewrite_commit_messages
 model: haiku
 permissionMode: acceptEdits
 ---
@@ -29,7 +29,7 @@ You maintain the **git-audited history** in the user's vault:
 
 **Before doing ANY work**, verify Jarvis tools MCP is available:
 
-1. Check if `mcp__plugin_jarvis_tools__*` tools exist in your available tools
+1. Check if `mcp__plugin_jarvis_core__*` tools exist in your available tools
 
 **If NOT available**, return:
 

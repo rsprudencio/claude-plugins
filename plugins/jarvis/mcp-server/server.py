@@ -24,6 +24,9 @@ Tools - Vault File Operations (require setup confirmation):
 Tools - Memory Operations (ChromaDB semantic indexing):
 - jarvis_index_vault: Bulk index all vault .md files
 - jarvis_index_file: Index a single file (incremental)
+- jarvis_query: Semantic search across vault memory
+- jarvis_memory_read: Read specific documents by ID
+- jarvis_memory_stats: Get memory system health and statistics
 """
 import asyncio
 import json
@@ -53,6 +56,7 @@ from tools.git_ops import (
     query_history, rollback_commit, file_history, rewrite_commit_messages
 )
 from tools.memory import index_vault, index_file
+from tools.query import query_vault, memory_read, memory_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -61,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis-tools")
 
-server = Server("tools")
+server = Server("core")
 
 # Tool definitions
 TOOLS = [
@@ -291,6 +295,70 @@ TOOLS = [
             },
             "required": ["relative_path"]
         }
+    ),
+    # Memory query operations (ChromaDB semantic search)
+    Tool(
+        name="jarvis_query",
+        description="Semantic search across vault memory. Returns formatted results with relevance scores.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query"
+                },
+                "n_results": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 5, max: 20)",
+                    "default": 5
+                },
+                "filter": {
+                    "type": "object",
+                    "description": "Optional metadata filters",
+                    "properties": {
+                        "directory": {"type": "string", "description": "Filter by directory (e.g., 'journal', 'notes', 'work')"},
+                        "type": {"type": "string", "description": "Filter by entry type (e.g., 'journal', 'note', 'idea')"},
+                        "importance": {"type": "string", "description": "Filter by importance (low, medium, high)"},
+                        "tags": {"type": "string", "description": "Filter by tag (comma-separated)"}
+                    }
+                }
+            },
+            "required": ["query"]
+        }
+    ),
+    Tool(
+        name="jarvis_memory_read",
+        description="Read specific documents from vault memory by ID (path).",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Document IDs (vault-relative paths, e.g., ['notes/my-note.md'])"
+                },
+                "include_metadata": {
+                    "type": "boolean",
+                    "description": "Include parsed metadata in response (default: true)",
+                    "default": True
+                }
+            },
+            "required": ["ids"]
+        }
+    ),
+    Tool(
+        name="jarvis_memory_stats",
+        description="Get memory system health: document count, sample entries, and index status.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "sample_size": {
+                    "type": "integer",
+                    "description": "Number of sample entries to include (default: 5)",
+                    "default": 5
+                }
+            }
+        }
     )
 ]
 
@@ -348,6 +416,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         ),
         "jarvis_index_file": lambda args: index_file(
             args.get("relative_path", "")
+        ),
+        # Memory query operations
+        "jarvis_query": lambda args: query_vault(
+            query=args.get("query", ""),
+            n_results=args.get("n_results", 5),
+            filter=args.get("filter")
+        ),
+        "jarvis_memory_read": lambda args: memory_read(
+            ids=args.get("ids", []),
+            include_metadata=args.get("include_metadata", True)
+        ),
+        "jarvis_memory_stats": lambda args: memory_stats(
+            sample_size=args.get("sample_size", 5)
         )
     }
 
