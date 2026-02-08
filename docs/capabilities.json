@@ -1,0 +1,630 @@
+{
+  "$schema": "jarvis-capabilities/v2",
+  "description": "AI-first reference for Jarvis plugin capabilities. Designed for Jarvis to self-reference when answering user questions about features, workflows, and best practices.",
+  "last_updated": "2026-02-08",
+
+  "identity": {
+    "name": "Jarvis",
+    "type": "context-aware AI assistant",
+    "core_principles": [
+      "Git-audited trail for all vault operations",
+      "Aggressive delegation to preserve context",
+      "Clarify before acting",
+      "Progressive disclosure — load only what's needed"
+    ],
+    "architecture": "modular plugin system with 3 composable plugins"
+  },
+
+  "plugins": {
+    "jarvis": {
+      "version": "1.14.0",
+      "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
+      "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
+      "required": true
+    },
+    "jarvis-todoist": {
+      "version": "1.3.0",
+      "description": "Todoist integration with smart task routing and inbox capture",
+      "provides": ["agents/todoist", "skills/todoist"],
+      "requires": ["jarvis", "todoist-mcp"]
+    },
+    "jarvis-strategic": {
+      "version": "1.1.0",
+      "description": "Strategic analysis, briefings, pattern detection, summaries",
+      "provides": ["skills/strategic"],
+      "requires": ["jarvis"]
+    }
+  },
+
+  "skills": {
+    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 15 user-invocable skills across 3 plugins (plus jarvis-audit, a background reference skill).",
+
+    "jarvis": {
+      "command": "/jarvis:jarvis",
+      "triggers": ["jarvis", "activate jarvis"],
+      "description": "Activate Jarvis identity and load strategic context",
+      "what_it_does": "Checks MCP availability, loads strategic context from .jarvis/strategic/, greets user with capabilities summary",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-journal": {
+      "command": "/jarvis:jarvis-journal",
+      "triggers": ["jarvis, journal this", "jarvis, log this", "capture this", "log this incident"],
+      "description": "Create a journal entry with intelligent vault linking",
+      "what_it_does": "Delegates to journal agent to create a timestamped entry with YAML frontmatter, wiki links to related vault notes, and proper categorization. Returns draft for approval before committing.",
+      "entry_types": ["thought", "incident-log", "decision", "learning", "idea"],
+      "storage": "journal/jarvis/YYYY/MM/YYYYMMDDHHMMSS-topic-slug.md",
+      "workflow": ["clarify context", "delegate to journal agent", "present draft", "user approves/edits/cancels", "commit via audit agent"],
+      "plugin": "jarvis"
+    },
+
+    "jarvis-inbox": {
+      "command": "/jarvis:jarvis-inbox",
+      "triggers": ["jarvis, organize my inbox", "process my inbox"],
+      "description": "Process and organize items in vault inbox/",
+      "what_it_does": "Scans inbox/ for unprocessed items, classifies each (journal entry, work note, personal note, contact, Todoist task, discard), presents plan, executes with user approval",
+      "classification_targets": ["journal entry", "work note (work/)", "personal note (notes/)", "contact (people/)", "Todoist task", "discard", "skip"],
+      "review_modes": {
+        "individual": "Review each item one by one (< 5 items)",
+        "batch": "Batch approve classification plan (>= 5 items)"
+      },
+      "plugin": "jarvis"
+    },
+
+    "jarvis-setup": {
+      "command": "/jarvis:jarvis-setup",
+      "triggers": ["setup jarvis", "configure jarvis"],
+      "description": "Interactive setup wizard for first-time configuration",
+      "what_it_does": "Configures vault path, writes ~/.jarvis/config.json, optionally configures auto-extract settings, installs shell integration (jarvis command)",
+      "outputs": "~/.jarvis/config.json with vault_path, vault_confirmed, memory, and auto_extract settings",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-recall": {
+      "command": "/jarvis:jarvis-recall",
+      "triggers": ["recall", "search vault", "find in vault"],
+      "description": "Semantic search across vault content using ChromaDB",
+      "what_it_does": "Finds related content by meaning, not just keywords. Searches all indexed vault files and Tier 2 content. Returns ranked results with relevance scoring.",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-memory-index": {
+      "command": "/jarvis:jarvis-memory-index",
+      "triggers": ["index vault", "reindex memory"],
+      "description": "Bulk index vault .md files into ChromaDB for semantic search",
+      "what_it_does": "Scans vault for .md files and indexes them into ChromaDB. Supports --force (reindex all), --dir (specific directory), --sensitive (include documents/ and people/).",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-memory-stats": {
+      "command": "/jarvis:jarvis-memory-stats",
+      "triggers": ["memory stats", "memory health"],
+      "description": "Show memory system health and statistics",
+      "what_it_does": "Displays ChromaDB document count, sample entries, per-type breakdowns, and index status.",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-promote": {
+      "command": "/jarvis:jarvis-promote",
+      "triggers": ["promote", "promote observations"],
+      "description": "Browse and promote Tier 2 ephemeral content to permanent vault files",
+      "what_it_does": "Interactive Tier 2 content management with 4 modes: browse (list), preview (inspect), promote (write to vault with YAML frontmatter), auto-promote (batch promote by criteria).",
+      "modes": ["browse", "preview", "promote", "auto-promote"],
+      "plugin": "jarvis"
+    },
+
+    "jarvis-schedule": {
+      "command": "/jarvis:jarvis-schedule",
+      "triggers": ["schedule", "scheduled actions"],
+      "description": "Create, list, or cancel scheduled Jarvis actions",
+      "what_it_does": "Manages recurring Jarvis actions via Todoist. Scheduled actions are recurring tasks with jarvis-scheduled and jarvis-action labels that Jarvis detects during sync.",
+      "plugin": "jarvis"
+    },
+
+    "jarvis-todoist": {
+      "command": "/jarvis:jarvis-todoist",
+      "triggers": ["jarvis, check todoist", "process todoist inbox", "sync todoist"],
+      "description": "Sync Todoist inbox with smart routing to vault",
+      "what_it_does": "Checks scheduled actions, loads custom routing rules, classifies inbox items (TASK stays in Todoist with labels, CAPTURE goes to vault inbox), presents summary, commits captures",
+      "classification": {
+        "CLEAR_TASK": "Action verbs (buy, call, send, fix) → label and keep in Todoist",
+        "INBOX_CAPTURE": "Reflection verbs (realized, learned, noticed) → capture to vault inbox/"
+      },
+      "idempotency": "Uses jarvis-ingested label to avoid reprocessing",
+      "plugin": "jarvis-todoist"
+    },
+
+    "jarvis-todoist-setup": {
+      "command": "/jarvis:jarvis-todoist-setup",
+      "triggers": ["setup todoist routing", "configure todoist"],
+      "description": "Configure Todoist routing rules and project mapping",
+      "what_it_does": "Analyzes Todoist projects and tasks, recommends routing rules, creates missing projects (respecting plan limits), saves rules to strategic memory",
+      "plugin": "jarvis-todoist"
+    },
+
+    "jarvis-orient": {
+      "command": "/jarvis-strategic:jarvis-orient",
+      "triggers": ["jarvis, orient me", "orient me", "what should I focus on"],
+      "description": "Strategic briefing for starting a work session",
+      "what_it_does": "Loads strategic context (trajectory, focus-areas, patterns), scans last 7 days of journal activity, synthesizes goal progress and open loops, recommends today's focus",
+      "output_format": {
+        "sections": ["current focus", "this week's activity", "goal progress (emoji indicators)", "open loops", "alerts", "recommended focus today"]
+      },
+      "plugin": "jarvis-strategic"
+    },
+
+    "jarvis-catchup": {
+      "command": "/jarvis-strategic:jarvis-catchup",
+      "triggers": ["jarvis, catch me up", "catch me up", "what did I miss"],
+      "description": "Cold start briefing after time away",
+      "what_it_does": "Determines absence period, deep scans all journal entries chronologically, categorizes by work/personal/system, identifies what needs attention, recommends first actions",
+      "output_format": {
+        "sections": ["TL;DR", "timeline by date", "by category", "needs attention (urgent/important/inbox)", "goal progress table", "recommended first actions", "questions to consider"]
+      },
+      "plugin": "jarvis-strategic"
+    },
+
+    "jarvis-summarize": {
+      "command": "/jarvis-strategic:jarvis-summarize",
+      "triggers": ["jarvis, summarize my week", "summarize last month", "weekly summary"],
+      "description": "Periodic summary and reflection on journal activity",
+      "what_it_does": "Parses timeframe (week/month/quarter/year), gathers entries, analyzes themes and patterns, generates structured summary with metrics and reflection prompts",
+      "timeframes": {
+        "this_week": "last 7 days",
+        "last_week": "previous Monday-Sunday",
+        "this_month": "current calendar month",
+        "last_month": "previous calendar month",
+        "quarter": "Q1/Q2/Q3/Q4 boundaries",
+        "year": "calendar year"
+      },
+      "storage": "journal/jarvis/YYYY/summaries/weekly-WW.md or monthly-MM.md",
+      "plugin": "jarvis-strategic"
+    },
+
+    "jarvis-patterns": {
+      "command": "/jarvis-strategic:jarvis-patterns",
+      "triggers": ["jarvis, analyze patterns", "what patterns do you see", "pattern analysis"],
+      "description": "Deep behavioral analysis and strategic memory maintenance",
+      "what_it_does": "Analyzes journal entries over configurable period, detects recurring patterns (behavioral, work, energy), checks values alignment, identifies ADHD patterns (dropped threads, hyperfocus), offers to update strategic memories",
+      "depth_levels": {
+        "quick": "7 days, basic stats, top 3 findings",
+        "standard": "30 days, full analysis (default)",
+        "deep": "all history, trend comparisons, predictive insights"
+      },
+      "analysis_dimensions": ["activity patterns", "type distribution", "theme clusters", "goal progress", "values alignment", "ADHD patterns", "behavioral insights"],
+      "plugin": "jarvis-strategic"
+    }
+  },
+
+  "agents": {
+    "_note": "Agents are autonomous sub-processes delegated to by Jarvis. Users don't invoke them directly — Jarvis delegates internally.",
+
+    "jarvis-journal-agent": {
+      "model": "haiku",
+      "purpose": "Create and edit journal entries with vault linking",
+      "capabilities": [
+        "Generate 14-digit timestamp entry IDs",
+        "Search vault for related notes and create wiki links",
+        "YAML frontmatter generation (tags, sentiment, importance)",
+        "CREATE and EDIT modes",
+        "Entry type classification",
+        "Writes via unified API (jarvis_store)"
+      ],
+      "does_not": ["commit to git — returns draft for approval"]
+    },
+
+    "jarvis-audit-agent": {
+      "model": "haiku",
+      "purpose": "Maintain git-audited history using JARVIS protocol",
+      "capabilities": [
+        "JARVIS protocol commits with structured tags",
+        "Git status, push, rollback",
+        "File moves preserving history",
+        "History querying by operation/date/file",
+        "Commit message rewriting (remove Co-Authored-By)"
+      ],
+      "protocol_format": "[JARVIS:OT:ENTRY_ID] Description"
+    },
+
+    "jarvis-explorer-agent": {
+      "model": "haiku",
+      "purpose": "Vault-aware search and exploration",
+      "capabilities": [
+        "Full-text regex search across vault",
+        "Date range and tag filtering",
+        "Wiki link following with configurable depth",
+        "Git history search (deleted files, previous versions)",
+        "Semantic search via ChromaDB (jarvis_retrieve)",
+        "Structured JSON results with relevance scoring"
+      ],
+      "respects": "File access control policy (asks before documents/, people/)"
+    },
+
+    "jarvis-todoist-agent": {
+      "model": "sonnet",
+      "purpose": "Task management analysis and routing",
+      "operating_modes": ["SYNC", "ANALYZE", "ORGANIZE", "CORRECT", "SCHEDULED"],
+      "capabilities": [
+        "Classify inbox items (TASK vs CAPTURE)",
+        "Confidence-based routing with heuristics",
+        "Custom routing rule application",
+        "Scheduled action detection",
+        "Deep task analysis and optimization proposals"
+      ]
+    }
+  },
+
+  "mcp_tools": {
+    "_note": "Provided by jarvis-tools MCP server. 21 tools across 6 categories.",
+
+    "unified_content_api": {
+      "_note": "Single entry points for all content operations. Routes automatically by parameter.",
+      "jarvis_store": {
+        "purpose": "Write any content — vault files, strategic memories, or Tier 2 ephemeral content",
+        "routing": "Provide ONE of: id (update existing), relative_path (new vault file), type (new memory/tier2)",
+        "params": ["content", "id", "relative_path", "type", "name", "mode (write/append/edit)", "old_string", "new_string", "importance", "tags", "scope", "extra_metadata"],
+        "features": ["Auto-indexes .md files to ChromaDB", "Secret detection on writes", "Namespace-based ID routing"]
+      },
+      "jarvis_retrieve": {
+        "purpose": "Read or search any content — semantic search, ID lookup, memory read, or listing",
+        "routing": "Provide ONE of: query (semantic search), id (read by ID), name (memory by name), list_type (tier2/memory)",
+        "params": ["query", "id", "name", "list_type", "n_results", "type_filter", "min_importance", "scope", "filter"],
+        "features": ["Semantic search across all indexed content", "Auto-routes by ID prefix", "Increments retrieval_count for Tier 2"]
+      },
+      "jarvis_remove": {
+        "purpose": "Delete content — Tier 2 by ID or strategic memory by name",
+        "params": ["id", "name", "scope", "confirm"],
+        "safety": ["confirm=true required for global memory deletion"]
+      }
+    },
+
+    "vault_filesystem": {
+      "_note": "Raw filesystem operations within vault boundary.",
+      "jarvis_read_vault_file": {
+        "purpose": "Read file from vault",
+        "params": ["relative_path (required)"]
+      },
+      "jarvis_list_vault_dir": {
+        "purpose": "List directory contents in vault",
+        "params": ["relative_path"]
+      },
+      "jarvis_file_exists": {
+        "purpose": "Check if file/directory exists in vault",
+        "params": ["relative_path (required)"],
+        "returns": ["exists", "is_file", "is_dir"]
+      }
+    },
+
+    "memory_maintenance": {
+      "_note": "Index management and health monitoring for ChromaDB.",
+      "jarvis_index_vault": {
+        "purpose": "Bulk index all .md files in vault into ChromaDB",
+        "params": ["force", "directory", "include_sensitive"]
+      },
+      "jarvis_index_file": {
+        "purpose": "Index a single vault file into ChromaDB (incremental)",
+        "params": ["relative_path (required)"]
+      },
+      "jarvis_collection_stats": {
+        "purpose": "Memory system health: document count, sample entries, index status",
+        "params": ["sample_size", "detailed"]
+      }
+    },
+
+    "promotion": {
+      "jarvis_promote": {
+        "purpose": "Promote Tier 2 content to Tier 1 (file-backed) vault storage",
+        "params": ["doc_id (required)"],
+        "checks": ["importance threshold", "retrieval count threshold", "age + importance combo"]
+      }
+    },
+
+    "path_configuration": {
+      "jarvis_resolve_path": {
+        "purpose": "Resolve a named path to absolute filesystem location",
+        "params": ["name (required)", "substitutions", "ensure_exists"]
+      },
+      "jarvis_list_paths": {
+        "purpose": "List all configured paths with resolved values (diagnostic)",
+        "params": []
+      }
+    },
+
+    "git_operations": {
+      "jarvis_commit": {
+        "purpose": "Create JARVIS protocol git commit",
+        "params": ["operation (required)", "description (required)", "entry_id", "trigger_mode", "files"],
+        "returns": ["commit_hash", "protocol_tag", "files_changed"]
+      },
+      "jarvis_status": {
+        "purpose": "Get current git status (staged, unstaged, untracked)",
+        "params": [],
+        "returns": ["staged", "unstaged", "untracked"]
+      },
+      "jarvis_push": {
+        "purpose": "Push commits to remote",
+        "params": ["branch"],
+        "returns": ["pushed_to", "message"]
+      },
+      "jarvis_move_files": {
+        "purpose": "Git mv preserving history",
+        "params": ["moves: [{source, destination}]"],
+        "returns": ["moved", "errors"]
+      },
+      "jarvis_query_history": {
+        "purpose": "Query JARVIS operations from git log",
+        "params": ["operation", "since", "limit", "file"],
+        "returns": ["operations", "count"]
+      },
+      "jarvis_rollback": {
+        "purpose": "Revert a specific commit",
+        "params": ["commit_hash"],
+        "returns": ["revert_hash", "reverted_commit"]
+      },
+      "jarvis_file_history": {
+        "purpose": "Get operation history for a specific file",
+        "params": ["file_path", "limit"],
+        "returns": ["history", "count"]
+      },
+      "jarvis_parse_last_commit": {
+        "purpose": "Parse the most recent commit",
+        "params": [],
+        "returns": ["commit_hash", "subject", "protocol_tag"]
+      },
+      "jarvis_rewrite_commit_messages": {
+        "purpose": "Remove unwanted text from recent commits (REWRITES HISTORY)",
+        "params": ["count", "patterns"],
+        "returns": ["commits_rewritten", "old_hashes", "new_hashes"]
+      }
+    }
+  },
+
+  "memory_system": {
+    "_note": "ChromaDB-backed semantic memory with two-tier architecture.",
+
+    "architecture": {
+      "tier1_file_backed": {
+        "description": "Durable, git-tracked content visible in Obsidian",
+        "storage": "Vault .md files + strategic memory files at .jarvis/strategic/",
+        "namespace_prefixes": ["vault::", "memory::"],
+        "persistence": "Git-tracked, permanent"
+      },
+      "tier2_chromadb_first": {
+        "description": "Ephemeral auto-generated content (observations, patterns, summaries)",
+        "storage": "ChromaDB only (at ~/.jarvis/memory_db/)",
+        "namespace_prefixes": ["obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::"],
+        "persistence": "ChromaDB-only, disposable, promotable to Tier 1"
+      }
+    },
+
+    "content_types": {
+      "_count": 11,
+      "types": ["vault", "memory", "observation", "pattern", "learning", "decision", "summary", "code", "relationship", "hint", "plan"]
+    },
+
+    "unified_api": {
+      "description": "Three routing tools for all content operations",
+      "write": "jarvis_store(id | relative_path | type)",
+      "read": "jarvis_retrieve(query | id | name | list_type)",
+      "delete": "jarvis_remove(id | name)",
+      "closed_loop": "jarvis_retrieve → get namespaced ID → jarvis_store(id=...) → auto-reindexes"
+    },
+
+    "features": {
+      "semantic_search": "Vector similarity search across all indexed content",
+      "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to ChromaDB",
+      "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
+      "promotion": "Tier 2 content meeting importance/retrieval thresholds can be promoted to vault files via jarvis_promote",
+      "recency_boost": "Recent content (within configurable days) gets boosted in search ranking"
+    }
+  },
+
+  "hooks": {
+    "_note": "Claude Code hooks for passive behavior. Only the core jarvis plugin has hooks.",
+
+    "auto_extract": {
+      "hook_type": "Stop",
+      "description": "Passively observes conversation turns and extracts behavioral observations into Tier 2 memory",
+      "handler": "stop-extract.sh → extract_observation.py (background)",
+      "modes": {
+        "disabled": "No extraction, zero overhead",
+        "background": "Smart fallback: tries Anthropic API first, falls back to Claude CLI",
+        "background-api": "Force Anthropic SDK (requires ANTHROPIC_API_KEY)",
+        "background-cli": "Force Claude CLI via OAuth"
+      },
+      "thresholds": {
+        "min_turn_chars": "200 — minimum total text in a turn to trigger extraction",
+        "cooldown_seconds": "120 — minimum seconds between extractions"
+      },
+      "extraction": {
+        "model": "Haiku (fast, ~$0.001-0.01 per extraction)",
+        "focus": "User preferences, architectural decisions, workflow patterns, project context, behavioral insights",
+        "output": "Tier 2 observation with importance score, tags, and project context metadata (project_dir, git_branch)"
+      }
+    }
+  },
+
+  "vault_structure": {
+    "_note": "Standard vault layout managed by Jarvis. Paths are configurable via ~/.jarvis/config.json paths section.",
+    "directories": {
+      "journal/jarvis/YYYY/MM/": "Jarvis-created journal entries (timestamped)",
+      "journal/jarvis/YYYY/summaries/": "Weekly, monthly, quarterly, yearly summaries",
+      "journal/jarvis/observations/": "Promoted observations from Tier 2",
+      "journal/jarvis/patterns/": "Promoted patterns from Tier 2",
+      "journal/jarvis/learnings/": "Promoted learnings from Tier 2",
+      "journal/jarvis/decisions/": "Promoted decisions from Tier 2",
+      "journal/daily/": "User's daily notes",
+      "notes/": "Main knowledge base (open access)",
+      "work/": "Work-related content (open access)",
+      "inbox/": "Unprocessed items for triage",
+      "inbox/todoist/": "Todoist inbox captures",
+      "templates/": "Note templates",
+      ".jarvis/strategic/": "Strategic memory files (trajectory, values, focus-areas, patterns)",
+      "documents/": "Identity docs, medical, financial (ASK FIRST)",
+      "people/": "Contact profiles with personal info (ASK FIRST)"
+    }
+  },
+
+  "configuration": {
+    "config_file": "~/.jarvis/config.json",
+
+    "core_fields": {
+      "vault_path": "Absolute path to Obsidian vault (required)",
+      "vault_confirmed": "Boolean — must be true for vault operations (required)"
+    },
+
+    "memory": {
+      "secret_detection": { "type": "boolean", "default": true, "description": "Enable secret scanning before memory writes" },
+      "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
+      "recency_boost_days": { "type": "integer", "default": 7, "description": "Days within which recency boost is applied" },
+      "default_importance": { "type": "string", "default": "medium", "description": "Default importance level for new memories" },
+      "db_path": { "type": "string", "default": "~/.jarvis/memory_db", "description": "ChromaDB database directory" }
+    },
+
+    "memory_auto_extract": {
+      "mode": { "type": "string", "default": "background", "options": ["disabled", "background", "background-api", "background-cli"] },
+      "min_turn_chars": { "type": "integer", "default": 200, "description": "Minimum text in a turn to trigger extraction" },
+      "cooldown_seconds": { "type": "integer", "default": 120, "description": "Minimum seconds between extractions" },
+      "max_transcript_lines": { "type": "integer", "default": 100, "description": "Lines to tail from conversation transcript" },
+      "debug": { "type": "boolean", "default": false, "description": "Enable debug logging to ~/.jarvis/debug.auto-extraction.log" }
+    },
+
+    "promotion": {
+      "importance_threshold": { "type": "float", "default": 0.85, "description": "Min importance score for auto-promote" },
+      "retrieval_count_threshold": { "type": "integer", "default": 3, "description": "Min retrieval count for promotion" },
+      "age_importance_days": { "type": "integer", "default": 30, "description": "Days after which age+importance combo triggers" },
+      "age_importance_score": { "type": "float", "default": 0.7, "description": "Importance threshold for aged content" }
+    },
+
+    "paths": {
+      "_note": "All vault-relative paths are configurable. Use jarvis_resolve_path to resolve at runtime.",
+      "vault_relative": {
+        "journal_jarvis": "journal/jarvis",
+        "journal_daily": "journal/daily",
+        "journal_summaries": "journal/jarvis/{YYYY}/summaries",
+        "notes": "notes",
+        "work": "work",
+        "inbox": "inbox",
+        "inbox_todoist": "inbox/todoist",
+        "templates": "templates",
+        "people": "people",
+        "documents": "documents",
+        "strategic": ".jarvis/strategic",
+        "observations_promoted": "journal/jarvis/observations",
+        "patterns_promoted": "journal/jarvis/patterns",
+        "summaries_promoted": "journal/jarvis/summaries",
+        "learnings_promoted": "journal/jarvis/learnings",
+        "decisions_promoted": "journal/jarvis/decisions"
+      },
+      "absolute": {
+        "db_path": "~/.jarvis/memory_db",
+        "project_memories_path": "~/.jarvis/memories"
+      },
+      "template_variables": ["{YYYY}", "{MM}", "{WW}"],
+      "sensitive_paths": ["people", "documents"]
+    },
+
+    "shell_integration": {
+      "bash": "Source jarvis.bash function for `jarvis` command",
+      "zsh": "Source jarvis.zsh function for `jarvis` command",
+      "env_var": "__JARVIS_CLAUDE_STATUSLINE__=1 enables gold JARVIS indicator in statusline"
+    }
+  },
+
+  "external_integrations": {
+    "strategic_memories": {
+      "purpose": "Persistent strategic context — file-backed at .jarvis/strategic/ in the vault",
+      "storage": "Markdown files managed via jarvis_store/jarvis_retrieve",
+      "memories": {
+        "jarvis-trajectory": "Life goals, active projects, quarterly focus",
+        "jarvis-values": "Core principles, decision heuristics",
+        "jarvis-focus-areas": "Current attention zones and priorities",
+        "jarvis-patterns": "Behavioral insights and trends",
+        "todoist-routing-rules": "Custom task classification rules (YAML)"
+      }
+    },
+    "chromadb": {
+      "purpose": "Embedded vector database for semantic search and Tier 2 ephemeral storage",
+      "storage": "~/.jarvis/memory_db/ (outside vault to avoid Obsidian Sync pollution)",
+      "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md files"]
+    },
+    "todoist_mcp": {
+      "purpose": "Todoist API access for task management",
+      "endpoint": "HTTP MCP at ai.todoist.net/mcp",
+      "tools": ["find-tasks", "find-tasks-by-date", "complete-tasks", "update-tasks", "add-tasks", "user-info", "find-projects", "add-projects", "find-sections", "add-sections", "find-comments", "add-comments", "manage-assignments", "find-activity", "get-overview", "search", "fetch"]
+    }
+  },
+
+  "common_workflows": {
+    "daily_start": {
+      "description": "Begin a work session with context",
+      "steps": ["Say 'orient me'", "Review briefing", "Check Todoist ('check todoist')", "Start working"]
+    },
+    "capture_thought": {
+      "description": "Quickly log an idea or observation",
+      "steps": ["Say 'jarvis, journal this: [thought]'", "Review draft", "Approve"]
+    },
+    "return_from_absence": {
+      "description": "Get caught up after time away",
+      "steps": ["Say 'catch me up'", "Review timeline and priorities", "Drill into anything that needs attention"]
+    },
+    "weekly_reflection": {
+      "description": "End-of-week review and summary",
+      "steps": ["Say 'summarize my week'", "Review themes and patterns", "Note reflection prompts"]
+    },
+    "deep_analysis": {
+      "description": "Understand behavioral patterns over time",
+      "steps": ["Say 'analyze patterns'", "Choose depth (quick/standard/deep)", "Review findings", "Approve memory updates if suggested"]
+    },
+    "process_todoist": {
+      "description": "Sync and route Todoist inbox items",
+      "steps": ["Say 'check todoist'", "Review classification (task vs capture)", "Approve routing", "Captures auto-committed to vault"]
+    },
+    "organize_inbox": {
+      "description": "Process vault inbox items into proper locations",
+      "steps": ["Say 'organize my inbox'", "Review classifications", "Approve or adjust", "Items moved and committed"]
+    },
+    "semantic_search": {
+      "description": "Find related content by meaning across the vault",
+      "steps": ["Say '/recall [topic]'", "Review semantic matches with relevance scores", "Drill into relevant results"]
+    },
+    "memory_management": {
+      "description": "Review and promote auto-captured observations",
+      "steps": ["Say '/promote' to browse Tier 2 content", "Preview items of interest", "Promote valuable observations to permanent vault files", "Check health with '/memory-stats'"]
+    },
+    "ad_hoc_research": {
+      "description": "Search vault for information on a topic",
+      "steps": ["Ask Jarvis to find information", "Explorer agent searches vault (keyword + semantic)", "Results presented with sources"]
+    }
+  },
+
+  "tips": {
+    "maximize_value": [
+      "Journal frequently — the more entries, the better patterns/summaries become",
+      "Use orient at session start to stay aligned with goals",
+      "Let Todoist be the quick capture tool, vault be the knowledge base",
+      "Run pattern analysis monthly to spot behavioral trends",
+      "Keep strategic memories updated — they're Jarvis's long-term context at .jarvis/strategic/",
+      "Use specific entry types (incident-log, learning, idea) for better categorization",
+      "Use /recall for semantic search — finds related content by meaning, not just keywords",
+      "Auto-extract passively captures observations from your conversations — review with /promote"
+    ],
+    "performance": [
+      "Jarvis delegates to sub-agents to preserve main context window",
+      "Journal and audit agents use Haiku (fast, cheap) — Todoist uses Sonnet (needs reasoning)",
+      "Explorer agent handles vault searches so main context stays clean",
+      "Shell integration (jarvis command) auto-loads identity without /jarvis skill",
+      "Run /memory-index after manually adding vault files to keep semantic search current",
+      "Auto-extract runs in background with 120s cooldown — zero impact on conversation speed"
+    ],
+    "gotchas": [
+      "vault_confirmed must be true in config or vault writes will fail",
+      "Shell integration needs restart after install (source ~/.zshrc or new terminal)",
+      "JARVIS protocol commits don't use Co-Authored-By — they use protocol tags",
+      "Sensitive dirs (documents/, people/) require explicit user permission per access",
+      "Todoist uses jarvis-ingested label for idempotency — don't remove it manually",
+      "ChromaDB upsert merges metadata — to fully replace, delete then re-add",
+      "Observations get project context (dir, branch) automatically via the Stop hook"
+    ]
+  }
+}

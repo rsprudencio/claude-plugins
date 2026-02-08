@@ -13,20 +13,20 @@
     {
       "name": "jarvis",
       "source": "./plugins/jarvis",
-      "version": "1.2.0",
-      "description": "Core Jarvis - vault management, journal entries, git audit trail, scheduling, JARVIS protocol (REQUIRED for extensions)"
+      "version": "1.14.0",
+      "description": "Core Jarvis - vault management, journal entries, git audit trail, semantic memory, auto-extract, JARVIS protocol (REQUIRED for extensions)"
     },
     {
       "name": "jarvis-todoist",
       "source": "./plugins/jarvis-todoist",
-      "version": "1.2.0",
-      "description": "Todoist integration - task management analyst with 6-option routing (requires: jarvis + Todoist MCP)"
+      "version": "1.3.0",
+      "description": "Todoist integration - task management analyst with smart routing (requires: jarvis + Todoist MCP)"
     },
     {
       "name": "jarvis-strategic",
       "source": "./plugins/jarvis-strategic",
-      "version": "1.0.1",
-      "description": "Strategic analysis & briefings - orient, catchup, summarize, patterns (requires: jarvis + Serena MCP)"
+      "version": "1.1.0",
+      "description": "Strategic analysis & briefings - orient, catchup, summarize, patterns (requires: jarvis)"
     }
   ]
 }
