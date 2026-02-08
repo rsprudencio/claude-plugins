@@ -3,7 +3,6 @@
   "hooks": {
     "PostToolUse": [
       {
-        "matcher": "*",
         "hooks": [
           {
             "type": "command",
