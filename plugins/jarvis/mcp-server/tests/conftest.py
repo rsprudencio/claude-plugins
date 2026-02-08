@@ -101,6 +101,22 @@ def no_config(mock_config):
     return mock_config
 
 
+@pytest.fixture(autouse=True)
+def cleanup_chroma_client():
+    """Clean up ChromaDB client after each test to prevent file handle leaks."""
+    yield
+    # After test completes, reset the global client
+    import tools.memory as memory_module
+    if hasattr(memory_module, '_chroma_client') and memory_module._chroma_client is not None:
+        try:
+            # Close any open connections
+            del memory_module._chroma_client
+        except Exception:
+            pass
+        finally:
+            memory_module._chroma_client = None
+
+
 @pytest.fixture
 def git_repo(temp_vault: Path) -> Path:
     """Vault with initialized git repo and sample commits."""
