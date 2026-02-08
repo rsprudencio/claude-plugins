@@ -38,4 +38,4 @@ When performing strategic analysis, load relevant strategic memories from `.jarv
 - `jarvis-focus-areas` - Current attention zones, priorities
 - `jarvis-patterns` - Behavioral insights, trends
 
-Use `jarvis_memory_read(name)` for each, or read directly via `jarvis_read_vault_file(".jarvis/strategic/<name>.md")`.
+Use `jarvis_retrieve(name=...)` for each, or read directly via `jarvis_read_vault_file(".jarvis/strategic/<name>.md")`.

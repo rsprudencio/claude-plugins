@@ -132,6 +132,12 @@ def promote(doc_id: str) -> dict:
         elif content_type == "summary":
             path_name = "summaries_promoted"
             filename_prefix = "summary"
+        elif content_type == "learning":
+            path_name = "learnings_promoted"
+            filename_prefix = "learning"
+        elif content_type == "decision":
+            path_name = "decisions_promoted"
+            filename_prefix = "decision"
         else:
             return {
                 "success": False,
@@ -166,7 +172,7 @@ def promote(doc_id: str) -> dict:
         
         # Build YAML frontmatter
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        tags = metadata.get("topics", "").split(",") if metadata.get("topics") else []
+        tags = metadata.get("tags", "").split(",") if metadata.get("tags") else []
         tags_yaml = "\n".join(f"  - {tag.strip()}" for tag in tags if tag.strip())
         
         frontmatter = f"""---

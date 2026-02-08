@@ -19,7 +19,7 @@ The user provides a search topic. Examples:
 
 ### 2. Query vault memory
 
-Call `mcp__plugin_jarvis_core__jarvis_query` with:
+Call `mcp__plugin_jarvis_core__jarvis_retrieve` with:
 
 ```json
 {
@@ -75,11 +75,13 @@ If the user specifies a scope, add `filter`:
 - "recall high importance" → `{"importance": "high"}`
 - "recall ideas" → `{"type": "idea"}`
 
-Pass as `filter` parameter to `jarvis_query`.
+Pass as `filter` parameter to `jarvis_retrieve(query=...)`.
+
+
 
 ## Graceful Degradation
 
-If `jarvis_query` is unavailable or returns an error:
+If `jarvis_retrieve` is unavailable or returns an error:
 1. Fall back to `Grep` search across the vault
 2. Note: "Semantic search unavailable. Falling back to keyword search."
 3. Use `mcp__plugin_jarvis_core__jarvis_read_vault_file` for results
@@ -89,4 +91,4 @@ If `jarvis_query` is unavailable or returns an error:
 - **Read-only** — never modify vault content
 - **Respect access control** — don't surface documents/ or people/ results unless user explicitly asks
 - **Show relevance scores** — helps user gauge result quality (higher = more relevant)
-- **Keep previews short** — 150 chars max, frontmatter already stripped by jarvis_query
+- **Keep previews short** — 150 chars max, frontmatter already stripped by jarvis_retrieve

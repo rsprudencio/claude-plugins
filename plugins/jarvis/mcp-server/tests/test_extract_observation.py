@@ -502,7 +502,7 @@ class TestCallHaikuAPI:
 
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(text='{"has_observation": true, "content": "Test", "importance_score": 0.6, "topics": ["test"]}')
+            MagicMock(text='{"has_observation": true, "content": "Test", "importance_score": 0.6, "tags": ["test"]}')
         ]
         mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
         mock_client.messages.create.return_value = mock_response
@@ -573,7 +573,7 @@ class TestCallHaikuCLI:
 
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = '{"has_observation": true, "content": "CLI test", "importance_score": 0.5, "topics": []}'
+        mock_result.stdout = '{"has_observation": true, "content": "CLI test", "importance_score": 0.5, "tags": []}'
         mock_run.return_value = mock_result
 
         result = call_haiku_cli("Test prompt")
@@ -716,7 +716,7 @@ class TestStoreObservation:
         result = store_observation(
             content="Test observation",
             importance_score=0.7,
-            topics=["test", "pattern"],
+            tags=["test", "pattern"],
             source_label="auto-extract:stop-hook",
         )
 
@@ -725,7 +725,8 @@ class TestStoreObservation:
             content_type="observation",
             importance_score=0.7,
             source="auto-extract:stop-hook",
-            topics=["test", "pattern"],
+            tags=["test", "pattern"],
+            extra_metadata=None,
             skip_secret_scan=False,
         )
         assert result["success"] is True
@@ -740,3 +741,33 @@ class TestStoreObservation:
 
         call_args = mock_tier2_write.call_args[1]
         assert call_args["source"] == "auto-extract:stop-hook"
+
+    @patch("tools.tier2.tier2_write")
+    def test_project_context_passthrough(self, mock_tier2_write):
+        """Project context is passed as extra_metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test observation",
+            importance_score=0.7,
+            tags=["test"],
+            source_label="auto-extract:stop-hook",
+            project_dir="jarvis-plugin",
+            project_path="/Users/test/jarvis-plugin",
+            git_branch="master",
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"]["project_dir"] == "jarvis-plugin"
+        assert call_args["extra_metadata"]["project_path"] == "/Users/test/jarvis-plugin"
+        assert call_args["extra_metadata"]["git_branch"] == "master"
+
+    @patch("tools.tier2.tier2_write")
+    def test_no_project_context_sends_none(self, mock_tier2_write):
+        """Without project context, extra_metadata is None."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation("Test", 0.5, [], "auto-extract:stop-hook")
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"] is None

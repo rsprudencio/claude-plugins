@@ -265,7 +265,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 | `plugins/jarvis/.claude-plugin/plugin.json` | Core plugin manifest (version, name) |
 | `plugins/jarvis/system-prompt.md` | Jarvis core identity and constraints |
 | `plugins/jarvis/.mcp.json` | MCP server registration |
-| `plugins/jarvis/mcp-server/` | Python MCP server (14 tools) |
+| `plugins/jarvis/mcp-server/` | Python MCP server (21 tools) |
 | `plugins/jarvis/agents/*.md` | Core agent definitions |
 | `plugins/jarvis/skills/*/SKILL.md` | Core skill workflows |
 | `plugins/jarvis-todoist/agents/*.md` | Todoist agent definition |
@@ -274,6 +274,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.14.0** - Unified Content API: consolidate 14 write/read/delete tools into 3 (`jarvis_store`, `jarvis_retrieve`, `jarvis_remove`) with namespace-based routing, retrieve-mutate-reindex closed loop, auto-index on vault writes, `topics`→`tags` taxonomy cleanup, `learning`/`decision` content types, observation project context enrichment (project_dir, git_branch), remove TYPE_* aliases (21 total tools)
 - **1.13.0** - `/promote` skill for Tier 2 content management (browse/preview/promote/auto-promote), auto-extract configuration in setup wizard with progressive disclosure (3 presets + custom), system prompt updates for discoverability
 - **1.12.0** - Stop hook redesign: PostToolUse → Stop hook for conversation-turn-level observation, transcript JSONL parsing, substance/cooldown thresholds, drop inline mode, debug logging support
 - **1.11.0** - Multi-mode background extraction: smart fallback (API → CLI), `background-api` (Anthropic SDK, needs API key), `background-cli` (Claude CLI via OAuth), refactored extraction into `call_haiku_api`/`call_haiku_cli`/`_parse_haiku_text` helpers, 30s timeout for CLI, mode-aware prerequisites health check, 35 new tests (577 total)

@@ -25,7 +25,7 @@ Load these strategic memories from `.jarvis/strategic/`:
 - `jarvis-focus-areas` - Active priorities and metrics
 - `jarvis-patterns` - Known patterns and alerts
 
-Use `jarvis_memory_read(name)` for each.
+Use `jarvis_retrieve(name=...)` for each.
 
 ### Step 2: Gather Recent Activity
 

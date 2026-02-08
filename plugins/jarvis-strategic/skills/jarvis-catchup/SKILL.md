@@ -40,7 +40,7 @@ Load ALL strategic memories for full context:
 - `jarvis-focus-areas` - What was important before leaving
 - `jarvis-patterns` - Known patterns and alerts
 
-Use `jarvis_memory_read(name)` for each.
+Use `jarvis_retrieve(name=...)` for each.
 
 ### Step 3: Deep Scan Journal Entries
 

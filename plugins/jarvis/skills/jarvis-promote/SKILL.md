@@ -39,12 +39,12 @@ AskUserQuestion:
       multiSelect: false
 ```
 
-Call `mcp__plugin_jarvis_core__jarvis_tier2_list` with appropriate filters:
+Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `list_type="tier2"` and appropriate filters:
 
-- "Show all" → `{"limit": 20}`
-- "Observations only" → `{"content_type": "observation", "limit": 20}`
-- "Patterns only" → `{"content_type": "pattern", "limit": 20}`
-- "High importance" → `{"min_importance": 0.7, "limit": 20}`
+- "Show all" → `{"list_type": "tier2", "limit": 20}`
+- "Observations only" → `{"list_type": "tier2", "type_filter": "observation", "limit": 20}`
+- "Patterns only" → `{"list_type": "tier2", "type_filter": "pattern", "limit": 20}`
+- "High importance" → `{"list_type": "tier2", "min_importance": 0.7, "limit": 20}`
 
 Present results as a numbered table:
 
@@ -93,11 +93,11 @@ Any ONE criterion met = eligible.
 
 ### 3. Preview mode
 
-When user picks a number or provides an ID, call `mcp__plugin_jarvis_core__jarvis_tier2_read`:
+When user picks a number or provides an ID, call `mcp__plugin_jarvis_core__jarvis_retrieve`:
 
 ```json
 {
-  "doc_id": "<tier2-id>"
+  "id": "<tier2-id>"
 }
 ```
 
@@ -141,6 +141,8 @@ AskUserQuestion:
 - `observation` → resolves via `observations_promoted` path name
 - `pattern` → resolves via `patterns_promoted` path name
 - `summary` → resolves via `summaries_promoted` path name
+- `learning` → resolves via `learnings_promoted` path name
+- `decision` → resolves via `decisions_promoted` path name
 
 Read `~/.jarvis/config.json` to get promotion thresholds for display. If no `promotion` section exists, show defaults: importance 0.85, retrievals 3, age 30d + importance 0.7.
 
@@ -182,9 +184,9 @@ If user confirms commit, delegate to `jarvis-audit-agent`:
 
 When user says `/promote auto`:
 
-1. Call `mcp__plugin_jarvis_core__jarvis_tier2_list` with `{"limit": 100}` to get all Tier 2 content
+1. Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `{"list_type": "tier2", "limit": 100}` to get all Tier 2 content
 2. Evaluate each item against promotion criteria (same logic as browse `*` marker)
-3. Filter to only promotable types: observation, pattern, summary
+3. Filter to only promotable types: observation, pattern, summary, learning, decision
 4. Show eligible items:
 
 ```
@@ -237,7 +239,7 @@ Delegate batch commit to `jarvis-audit-agent` with all promoted paths.
 ## Key Rules
 
 - **Preview before action** — always show what will happen before promoting
-- **Respect supported types** — only observation, pattern, summary can be promoted. For other types (code, relationship, hint, plan), show: "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary."
+- **Respect supported types** — only observation, pattern, summary can be promoted. For other types (code, relationship, hint, plan), show: "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary, learning, decision."
 - **Show config thresholds** — in preview mode, display the actual threshold values from config so users understand the criteria and know they can tune them
 - **Batch commits** — for auto-promote, offer one commit for all promotions, not per-item
 - **Idempotent** — if an item is already promoted, show "Already promoted to [path]" — not an error
@@ -246,8 +248,8 @@ Delegate batch commit to `jarvis-audit-agent` with all promoted paths.
 
 ## Graceful Degradation
 
-- If `jarvis_tier2_list` returns empty → "No Tier 2 content found. Auto-Extract captures observations automatically during sessions. Check mode with /memory-stats."
-- If `jarvis_promote` fails for unsupported type → "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary."
+- If `jarvis_retrieve(list_type="tier2")` returns empty → "No Tier 2 content found. Auto-Extract captures observations automatically during sessions. Check mode with /memory-stats."
+- If `jarvis_promote` fails for unsupported type → "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary, learning, decision."
 - If `jarvis_promote` returns error → Show error message, suggest checking `/memory-stats` for system health
 - If ChromaDB unavailable → "Memory system unavailable. Try /memory-index to initialize."
 - If config has no `promotion` section → Use defaults (importance 0.85, retrievals 3, age 30d)

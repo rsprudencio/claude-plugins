@@ -12,6 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 # --- Namespace Constants ---
@@ -25,26 +26,37 @@ NAMESPACE_CODE = "code::"
 NAMESPACE_REL = "rel::"
 NAMESPACE_HINT = "hint::"
 NAMESPACE_PLAN = "plan::"
+NAMESPACE_LEARNING = "learning::"
+NAMESPACE_DECISION = "decision::"
 
-# Content type values (for metadata 'type' field)
-TYPE_VAULT = "vault"
-TYPE_MEMORY = "memory"
-TYPE_OBSERVATION = "observation"
-TYPE_PATTERN = "pattern"
-TYPE_SUMMARY = "summary"
-TYPE_CODE = "code"
-TYPE_RELATIONSHIP = "relationship"
-TYPE_HINT = "hint"
-TYPE_PLAN = "plan"
+# Content type enum (for metadata 'type' field)
+# Using (str, Enum) so values work as plain strings in ChromaDB metadata,
+# JSON serialization, and == comparisons with raw strings.
+class ContentType(str, Enum):
+    # Tier 1 (file-backed)
+    VAULT = "vault"
+    MEMORY = "memory"
+    # Tier 2 (ephemeral)
+    OBSERVATION = "observation"    # Short captured insight (auto-extract default)
+    PATTERN = "pattern"            # Recurring behavior or preference
+    LEARNING = "learning"          # Problem/solution pair, technique, debugging case study
+    DECISION = "decision"          # Architectural/strategic choice with rationale
+    SUMMARY = "summary"            # Time-period or session aggregation
+    CODE = "code"                  # Code snippet or technique reference
+    RELATIONSHIP = "relationship"  # Entity relationship mapping
+    HINT = "hint"                  # Contextual suggestion
+    PLAN = "plan"                  # Strategy or task plan
 
-ALL_TYPES = [TYPE_VAULT, TYPE_MEMORY, TYPE_OBSERVATION, TYPE_PATTERN, TYPE_SUMMARY, TYPE_CODE, TYPE_RELATIONSHIP, TYPE_HINT, TYPE_PLAN]
+
+ALL_TYPES = [t.value for t in ContentType]
+TIER2_TYPES = [t.value for t in ContentType if t not in (ContentType.VAULT, ContentType.MEMORY)]
 
 # --- Tier Constants ---
 
 TIER_FILE = "file"
 TIER_CHROMADB = "chromadb"
 TIER_1_PREFIXES = frozenset({"vault::", "memory::"})
-TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::"})
+TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::"})
 
 
 # --- ID Generators ---
@@ -116,6 +128,18 @@ def plan_id(name: str) -> str:
     return f"plan::{_slugify(name)}"
 
 
+def learning_id(timestamp_ms: Optional[int] = None) -> str:
+    """Generate a learning ID from epoch milliseconds."""
+    if timestamp_ms is None:
+        timestamp_ms = int(time.time() * 1000)
+    return f"learning::{timestamp_ms}"
+
+
+def decision_id(name: str) -> str:
+    """Generate a decision ID from a descriptive name."""
+    return f"decision::{_slugify(name)}"
+
+
 # --- Tier Detection ---
 
 def get_tier(doc_id: str) -> str:
@@ -145,7 +169,7 @@ def get_tier(doc_id: str) -> str:
 @dataclass
 class ParsedId:
     """Decomposed document ID."""
-    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan"
+    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision"
     full_prefix: str     # "vault::", "memory::global::", "obs::", etc.
     content_id: str      # The part after the prefix
     tier: str = TIER_FILE  # "file" or "chromadb"
@@ -197,6 +221,12 @@ def parse_id(doc_id: str) -> ParsedId:
 
     if doc_id.startswith("plan::"):
         return ParsedId("plan", "plan::", doc_id[6:], tier)
+
+    if doc_id.startswith("learning::"):
+        return ParsedId("learning", "learning::", doc_id[10:], tier)
+
+    if doc_id.startswith("decision::"):
+        return ParsedId("decision", "decision::", doc_id[10:], tier)
 
     # Bare path without namespace prefix — default to vault
     return ParsedId("vault", "vault::", doc_id, tier)

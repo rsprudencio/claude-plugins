@@ -18,7 +18,7 @@ from typing import Optional
 import chromadb
 
 from .config import get_verified_vault_path
-from .namespaces import vault_id, NAMESPACE_VAULT, TYPE_VAULT
+from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 
 logger = logging.getLogger("jarvis-tools")
@@ -86,7 +86,7 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
 
     # Universal fields
     meta = {
-        "type": TYPE_VAULT,
+        "type": ContentType.VAULT,
         "namespace": NAMESPACE_VAULT,
         "tier": "file",
         "source": "vault-index",

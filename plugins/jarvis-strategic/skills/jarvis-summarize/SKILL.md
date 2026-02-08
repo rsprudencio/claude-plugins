@@ -36,7 +36,7 @@ Load strategic memories for comparison:
 - `jarvis-patterns` - Previous patterns to compare against
 - `jarvis-focus-areas` - Goals to track progress
 
-Use `jarvis_memory_read(name)` for each.
+Use `jarvis_retrieve(name=...)` for each.
 
 ### Step 3: Gather and Analyze Entries
 

@@ -87,7 +87,7 @@ class TestPromote:
             content="Important observation to promote",
             content_type="observation",
             importance_score=0.9,
-            topics=["test", "promotion"]
+            tags=["test", "promotion"]
         )
         doc_id = write_result["id"]
         
@@ -205,7 +205,7 @@ class TestPromote:
             content_type="observation",
             name="test-obs",
             importance_score=0.85,
-            topics=["tag1", "tag2"],
+            tags=["tag1", "tag2"],
             source="manual"
         )
         
@@ -263,7 +263,44 @@ class TestPromote:
             name="test.py::func",
             importance_score=0.9
         )
-        
+
         result = promote(write_result["id"])
         assert not result["success"]
         assert "does not support promotion" in result["error"]
+
+    def test_promote_learning(self, mock_config):
+        """Test promoting a learning."""
+        write_result = tier2_write(
+            content="PostToolUse hooks have empty tool_result",
+            content_type="learning",
+            importance_score=0.9
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+        assert "learning" in result["promoted_path"]
+
+        # Verify file content
+        full_path = os.path.join(mock_config.vault_path, result["promoted_path"])
+        with open(full_path) as f:
+            content = f.read()
+        assert "type: learning" in content
+
+    def test_promote_decision(self, mock_config):
+        """Test promoting a decision."""
+        write_result = tier2_write(
+            content="Use Python MCP server over TypeScript",
+            content_type="decision",
+            name="python-mcp-decision",
+            importance_score=0.9
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+        assert "decision" in result["promoted_path"]
+
+        # Verify file content
+        full_path = os.path.join(mock_config.vault_path, result["promoted_path"])
+        with open(full_path) as f:
+            content = f.read()
+        assert "type: decision" in content

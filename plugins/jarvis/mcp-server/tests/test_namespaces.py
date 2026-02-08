@@ -3,10 +3,12 @@ import pytest
 from tools.namespaces import (
     vault_id, global_memory_id, project_memory_id, memory_namespace,
     observation_id, pattern_id, summary_id, code_id,
-    parse_id, ParsedId, _slugify,
+    learning_id, decision_id,
+    parse_id, ParsedId, _slugify, ContentType,
     NAMESPACE_VAULT, NAMESPACE_MEMORY_GLOBAL, NAMESPACE_OBS,
     NAMESPACE_PATTERN, NAMESPACE_SUMMARY, NAMESPACE_CODE,
-    TYPE_VAULT, TYPE_MEMORY, ALL_TYPES,
+    NAMESPACE_LEARNING, NAMESPACE_DECISION,
+    ALL_TYPES, TIER2_TYPES,
 )
 
 
@@ -240,6 +242,44 @@ class TestRoundTrip:
         parsed = parse_id(doc_id)
         assert parsed.content_id == "tools/memory.py::index_vault"
 
+    def test_learning_roundtrip(self):
+        doc_id = learning_id(1738857000000)
+        parsed = parse_id(doc_id)
+        assert parsed.namespace == "learning"
+        assert parsed.content_id == "1738857000000"
+
+    def test_decision_roundtrip(self):
+        doc_id = decision_id("use-python")
+        parsed = parse_id(doc_id)
+        assert parsed.namespace == "decision"
+        assert parsed.content_id == "use-python"
+
+
+class TestLearningId:
+    """Tests for learning ID generation."""
+
+    def test_explicit_timestamp(self):
+        assert learning_id(1738857000000) == "learning::1738857000000"
+
+    def test_auto_timestamp(self):
+        lid = learning_id()
+        assert lid.startswith("learning::")
+        ts = int(lid.split("::")[1])
+        assert ts > 0
+
+
+class TestDecisionId:
+    """Tests for decision ID generation."""
+
+    def test_basic(self):
+        assert decision_id("use-python") == "decision::use-python"
+
+    def test_with_spaces(self):
+        assert decision_id("Use Python MCP") == "decision::use-python-mcp"
+
+    def test_special_chars(self):
+        assert decision_id("python_over (typescript)") == "decision::pythonover-typescript"
+
 
 class TestConstants:
     """Test namespace constants and type values."""
@@ -253,11 +293,13 @@ class TestConstants:
         assert NAMESPACE_CODE == "code::"
 
     def test_type_values(self):
-        assert TYPE_VAULT == "vault"
-        assert TYPE_MEMORY == "memory"
+        assert ContentType.VAULT == "vault"
+        assert ContentType.MEMORY == "memory"
+        assert ContentType.LEARNING == "learning"
+        assert ContentType.DECISION == "decision"
 
-    def test_all_types_has_nine(self):
-        assert len(ALL_TYPES) == 9
+    def test_all_types_has_eleven(self):
+        assert len(ALL_TYPES) == 11
         assert "vault" in ALL_TYPES
         assert "memory" in ALL_TYPES
         assert "observation" in ALL_TYPES
@@ -267,6 +309,16 @@ class TestConstants:
         assert "relationship" in ALL_TYPES
         assert "hint" in ALL_TYPES
         assert "plan" in ALL_TYPES
+        assert "learning" in ALL_TYPES
+        assert "decision" in ALL_TYPES
+
+    def test_tier2_types(self):
+        assert len(TIER2_TYPES) == 9
+        assert "vault" not in TIER2_TYPES
+        assert "memory" not in TIER2_TYPES
+        assert "observation" in TIER2_TYPES
+        assert "learning" in TIER2_TYPES
+        assert "decision" in TIER2_TYPES
 
 
 
@@ -285,6 +337,8 @@ class TestTierConstants:
         assert "obs::" in TIER_2_PREFIXES
         assert "pattern::" in TIER_2_PREFIXES
         assert "summary::" in TIER_2_PREFIXES
+        assert "learning::" in TIER_2_PREFIXES
+        assert "decision::" in TIER_2_PREFIXES
 
 
 class TestNewNamespaceConstants:
@@ -297,17 +351,19 @@ class TestNewNamespaceConstants:
         assert NAMESPACE_PLAN == "plan::"
     
     def test_new_type_values(self):
-        from tools.namespaces import TYPE_RELATIONSHIP, TYPE_HINT, TYPE_PLAN
-        assert TYPE_RELATIONSHIP == "relationship"
-        assert TYPE_HINT == "hint"
-        assert TYPE_PLAN == "plan"
-    
-    def test_all_types_has_nine(self):
-        from tools.namespaces import ALL_TYPES
-        assert len(ALL_TYPES) == 9
+        assert ContentType.RELATIONSHIP == "relationship"
+        assert ContentType.HINT == "hint"
+        assert ContentType.PLAN == "plan"
+        assert ContentType.LEARNING == "learning"
+        assert ContentType.DECISION == "decision"
+
+    def test_all_types_has_eleven(self):
+        assert len(ALL_TYPES) == 11
         assert "relationship" in ALL_TYPES
         assert "hint" in ALL_TYPES
         assert "plan" in ALL_TYPES
+        assert "learning" in ALL_TYPES
+        assert "decision" in ALL_TYPES
 
 
 class TestGetTier:
@@ -334,6 +390,14 @@ class TestGetTier:
         assert get_tier("rel::a::b") == TIER_CHROMADB
         assert get_tier("hint::topic::0") == TIER_CHROMADB
         assert get_tier("plan::test-plan") == TIER_CHROMADB
+
+    def test_tier2_learning(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("learning::1738857000000") == TIER_CHROMADB
+
+    def test_tier2_decision(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("decision::use-python") == TIER_CHROMADB
     
     def test_bare_path_defaults_to_tier1(self):
         from tools.namespaces import get_tier, TIER_FILE
@@ -416,3 +480,15 @@ class TestParseIdNewNamespaces:
         assert parsed.namespace == "plan"
         assert parsed.full_prefix == "plan::"
         assert parsed.content_id == "phase-1"
+
+    def test_parse_learning_id(self):
+        parsed = parse_id("learning::1738857000000")
+        assert parsed.namespace == "learning"
+        assert parsed.full_prefix == "learning::"
+        assert parsed.content_id == "1738857000000"
+
+    def test_parse_decision_id(self):
+        parsed = parse_id("decision::use-python")
+        assert parsed.namespace == "decision"
+        assert parsed.full_prefix == "decision::"
+        assert parsed.content_id == "use-python"

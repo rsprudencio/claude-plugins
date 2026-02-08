@@ -38,7 +38,7 @@ Load ALL strategic memories from `.jarvis/strategic/`:
 - `jarvis-focus-areas` - Priorities to compare activity
 - `jarvis-patterns` - Previous patterns to compare/update
 
-Use `jarvis_memory_read(name)` for each.
+Use `jarvis_retrieve(name=...)` for each.
 
 ### Step 3: Deep Journal Analysis
 
@@ -248,7 +248,7 @@ Based on this analysis, I recommend updating `jarvis-patterns`:
 Present the suggested updates to `jarvis-patterns` memory.
 Ask user: "Would you like me to update the patterns memory with these findings?"
 
-If approved, read the current `jarvis-patterns` memory with `jarvis_memory_read("jarvis-patterns")`, merge the new findings into the content, then write back with `jarvis_memory_write("jarvis-patterns", updated_content, overwrite=true)`.
+If approved, read the current `jarvis-patterns` memory with `jarvis_retrieve(name="jarvis-patterns")`, merge the new findings into the content, then write back with `jarvis_store(type="memory", name="jarvis-patterns", content=updated_content, overwrite=true)`.
 
 ### Step 7: Discuss Findings
 

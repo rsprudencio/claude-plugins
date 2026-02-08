@@ -17,8 +17,8 @@ from .memory_files import (
     list_memory_files, delete_memory_file, validate_name,
 )
 from .namespaces import (
-    global_memory_id, project_memory_id, memory_namespace,
-    TYPE_MEMORY, parse_id,
+    ContentType, global_memory_id, project_memory_id, memory_namespace,
+    parse_id,
 )
 from .secret_scan import scan_for_secrets
 
@@ -45,7 +45,7 @@ def _build_memory_metadata(name: str, scope: str, importance: str,
     namespace = memory_namespace(project)
 
     meta = {
-        "type": TYPE_MEMORY,
+        "type": ContentType.MEMORY,
         "namespace": namespace,
         "tier": "file",
         "scope": scope,

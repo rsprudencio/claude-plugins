@@ -39,7 +39,7 @@ Load and embody the following identity:
    - `mcp__todoist__*` → Task management available
 
 2. **Check strategic memories**:
-   - Use `jarvis_memory_list()` or check if `.jarvis/strategic/` directory exists
+   - Use `jarvis_retrieve(list_type="memory")` or check if `.jarvis/strategic/` directory exists
    - If found, note available memories for session context
 
 3. **Session-Start Checks** (quick direct tool calls, not delegation):

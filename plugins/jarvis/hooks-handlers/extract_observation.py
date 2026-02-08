@@ -46,7 +46,9 @@ You are analyzing a conversation turn between a user and an AI assistant working
 ## Tools Used
 {tool_names}
 
-## Context
+## Project Context
+Project: {project_dir}
+Branch: {git_branch}
 Token usage: {token_usage}
 
 Extract observations about:
@@ -65,7 +67,7 @@ Respond with JSON only:
   "has_observation": true/false,
   "content": "The observation (1-3 sentences, markdown OK)",
   "importance_score": 0.3-0.8,
-  "topics": ["topic1", "topic2"]
+  "tags": ["tag1", "tag2"]
 }}
 
 If the turn is routine or contains nothing worth remembering, set has_observation to false.
@@ -203,11 +205,13 @@ def truncate(text: str, max_chars: int) -> str:
     return text[:max_chars] + "..."
 
 
-def build_turn_prompt(turn: dict) -> str:
+def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -> str:
     """Build the extraction prompt for Haiku from parsed turn.
 
     Args:
         turn: Parsed turn dict from parse_transcript_turn
+        project_dir: Current project directory name
+        git_branch: Current git branch name
 
     Returns:
         Formatted extraction prompt string
@@ -222,13 +226,15 @@ def build_turn_prompt(turn: dict) -> str:
         user_text=user_text,
         assistant_text=assistant_text,
         tool_names=tool_list,
+        project_dir=project_dir or "unknown",
+        git_branch=git_branch or "unknown",
         token_usage=token_usage,
     )
 
 
 def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
                      observation_stored: bool = False, obs_id: str = None,
-                     importance: float = 0.0, topics: list = None, debug: bool = False):
+                     importance: float = 0.0, tags: list = None, debug: bool = False):
     """Log Haiku token usage with observation metadata for cost tracking.
 
     Haiku pricing (as of 2026):
@@ -242,7 +248,7 @@ def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
         observation_stored: Whether an observation was actually stored
         obs_id: Observation ID if stored (e.g., "obs::1770561133783")
         importance: Importance score if stored
-        topics: List of topics if stored
+        tags: List of tags if stored
         debug: Enable logging (default False)
     """
     if not debug:
@@ -264,8 +270,8 @@ def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
 
         # Add observation metadata
         if observation_stored and obs_id:
-            topics_str = ",".join(topics) if topics else "none"
-            log_entry += f"STORED | {obs_id} | imp:{importance:.2f} | topics:{topics_str}\n"
+            tags_str = ",".join(tags) if tags else "none"
+            log_entry += f"STORED | {obs_id} | imp:{importance:.2f} | tags:{tags_str}\n"
         else:
             log_entry += "SKIPPED | has_observation:false\n"
 
@@ -451,41 +457,57 @@ def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, s
     return (*result, "CLI") if result else None
 
 
-def store_observation(content: str, importance_score: float, topics: list, source_label: str) -> dict:
+def store_observation(content: str, importance_score: float, tags: list, source_label: str,
+                      project_dir: str = "", project_path: str = "", git_branch: str = "") -> dict:
     """Store an observation via tier2_write.
 
     Args:
         content: Observation text
         importance_score: 0.0-1.0
-        topics: List of topic tags
+        tags: List of tags
         source_label: Source identifier (e.g., "auto-extract:stop-hook")
+        project_dir: Current project directory name
+        project_path: Full path to project directory
+        git_branch: Current git branch name
 
     Returns:
         Result dict from tier2_write
     """
     from tools.tier2 import tier2_write
 
+    extra = {}
+    if project_dir:
+        extra["project_dir"] = project_dir
+    if project_path:
+        extra["project_path"] = project_path
+    if git_branch:
+        extra["git_branch"] = git_branch
+
     return tier2_write(
         content=content,
         content_type="observation",
         importance_score=importance_score,
         source=source_label,
-        topics=topics,
+        tags=tags,
+        extra_metadata=extra or None,
         skip_secret_scan=False,  # Always scan for secrets
     )
 
 
 def main():
     """Main entry point: read transcript, extract and store observation."""
-    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]
+    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch]
     if len(sys.argv) < 4:
-        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]", file=sys.stderr)
+        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch]", file=sys.stderr)
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
     mode = sys.argv[2]
     temp_file = Path(sys.argv[3])
     session_id = sys.argv[4] if len(sys.argv) >= 5 else "unknown"
+    project_dir = sys.argv[5] if len(sys.argv) >= 6 else ""
+    project_path = sys.argv[6] if len(sys.argv) >= 7 else ""
+    git_branch = sys.argv[7] if len(sys.argv) >= 8 else ""
     sys.path.insert(0, mcp_server_dir)
 
     try:
@@ -521,7 +543,7 @@ def main():
             sys.exit(0)
 
         # Build prompt and call Haiku
-        prompt = build_turn_prompt(turn)
+        prompt = build_turn_prompt(turn, project_dir=project_dir, git_branch=git_branch)
         extraction_result = call_haiku(prompt, mode=mode)
         if extraction_result is None:
             print("Haiku extraction failed", file=sys.stderr)
@@ -545,18 +567,21 @@ def main():
         importance = float(extraction.get("importance_score", 0.5))
         importance = max(0.0, min(1.0, importance))  # Clamp to valid range
 
-        topics = extraction.get("topics", [])
-        if not isinstance(topics, list):
-            topics = []
+        tags = extraction.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
 
-        result = store_observation(content, importance, topics, "auto-extract:stop-hook")
+        result = store_observation(
+            content, importance, tags, "auto-extract:stop-hook",
+            project_dir=project_dir, project_path=project_path, git_branch=git_branch,
+        )
         if result.get("success"):
             obs_id = result.get('id', 'unknown')
             print(f"Stored observation: {obs_id}", file=sys.stderr)
             # Log successful extraction with full metadata
             _log_token_usage(backend, input_tokens, output_tokens,
                            observation_stored=True, obs_id=obs_id,
-                           importance=importance, topics=topics, debug=debug)
+                           importance=importance, tags=tags, debug=debug)
         else:
             print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
             _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)

@@ -59,17 +59,6 @@ class TestServerIntegration:
         assert result["success"] is False
         assert "validation_errors" in result
 
-    def test_jarvis_debug_config_returns_diagnostics(self, mock_config):
-        """jarvis_debug_config returns config diagnostics."""
-        from tools.config import get_debug_info
-
-        result = get_debug_info()
-
-        assert "config_path" in result
-        assert "config_exists" in result
-        assert "resolved_vault_path" in result
-        assert "cwd" in result
-
     def test_vault_tools_use_relative_paths(self, mock_config, git_repo):
         """Vault file tools accept relative paths."""
         from tools.file_ops import write_vault_file, read_vault_file

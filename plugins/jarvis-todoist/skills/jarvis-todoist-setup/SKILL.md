@@ -225,7 +225,7 @@ Use `mcp__todoist__add-projects` to create approved projects.
 
 ## Step 7: Generate Rules Memory
 
-Build the `todoist-routing-rules` strategic memory file from approved recommendations. Write to `.jarvis/strategic/todoist-routing-rules.md` via `jarvis_memory_write("todoist-routing-rules", content)`.
+Build the `todoist-routing-rules` strategic memory file from approved recommendations. Write to `.jarvis/strategic/todoist-routing-rules.md` via `jarvis_store(type="memory", name="todoist-routing-rules", content=content)`.
 
 **Format**: YAML for reliable parsing + human editability.
 

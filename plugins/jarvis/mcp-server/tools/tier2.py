@@ -12,12 +12,11 @@ from typing import Optional
 
 from .memory import _get_collection
 from .namespaces import (
+    ContentType,
     observation_id, pattern_id, summary_id, code_id,
-    relationship_id, hint_id, plan_id,
-    TYPE_OBSERVATION, TYPE_PATTERN, TYPE_SUMMARY, TYPE_CODE,
-    TYPE_RELATIONSHIP, TYPE_HINT, TYPE_PLAN,
+    relationship_id, hint_id, plan_id, learning_id, decision_id,
     NAMESPACE_OBS, NAMESPACE_PATTERN, NAMESPACE_SUMMARY, NAMESPACE_CODE,
-    NAMESPACE_REL, NAMESPACE_HINT, NAMESPACE_PLAN,
+    NAMESPACE_REL, NAMESPACE_HINT, NAMESPACE_PLAN, NAMESPACE_LEARNING, NAMESPACE_DECISION,
 )
 from .secret_scan import scan_for_secrets
 
@@ -25,18 +24,20 @@ logger = logging.getLogger("jarvis-tools")
 
 VALID_CONTENT_TYPES = (
     "observation", "pattern", "summary", "code",
-    "relationship", "hint", "plan"
+    "relationship", "hint", "plan", "learning", "decision"
 )
 
-# Map content_type string to (TYPE constant, NAMESPACE constant, ID generator)
+# Map content_type string to (ContentType enum, NAMESPACE constant, ID generator)
 _TYPE_MAP = {
-    "observation": (TYPE_OBSERVATION, NAMESPACE_OBS, observation_id),
-    "pattern": (TYPE_PATTERN, NAMESPACE_PATTERN, pattern_id),
-    "summary": (TYPE_SUMMARY, NAMESPACE_SUMMARY, summary_id),
-    "code": (TYPE_CODE, NAMESPACE_CODE, code_id),
-    "relationship": (TYPE_RELATIONSHIP, NAMESPACE_REL, relationship_id),
-    "hint": (TYPE_HINT, NAMESPACE_HINT, hint_id),
-    "plan": (TYPE_PLAN, NAMESPACE_PLAN, plan_id),
+    "observation": (ContentType.OBSERVATION, NAMESPACE_OBS, observation_id),
+    "pattern": (ContentType.PATTERN, NAMESPACE_PATTERN, pattern_id),
+    "summary": (ContentType.SUMMARY, NAMESPACE_SUMMARY, summary_id),
+    "code": (ContentType.CODE, NAMESPACE_CODE, code_id),
+    "relationship": (ContentType.RELATIONSHIP, NAMESPACE_REL, relationship_id),
+    "hint": (ContentType.HINT, NAMESPACE_HINT, hint_id),
+    "plan": (ContentType.PLAN, NAMESPACE_PLAN, plan_id),
+    "learning": (ContentType.LEARNING, NAMESPACE_LEARNING, learning_id),
+    "decision": (ContentType.DECISION, NAMESPACE_DECISION, decision_id),
 }
 
 
@@ -46,22 +47,24 @@ def tier2_write(
     name: Optional[str] = None,
     importance_score: float = 0.5,
     source: str = "auto-extract",
-    topics: Optional[list] = None,
+    tags: Optional[list] = None,
     session_id: Optional[str] = None,
+    extra_metadata: Optional[dict] = None,
     skip_secret_scan: bool = False,
 ) -> dict:
     """Write Tier 2 content to ChromaDB.
-    
+
     Args:
         content: Document content (markdown)
         content_type: Type of content (observation, pattern, summary, etc.)
-        name: Required for pattern/plan, optional for others (used in ID generation)
+        name: Required for pattern/plan/decision, optional for others
         importance_score: Importance score 0.0-1.0 (default 0.5)
         source: Source of content (default "auto-extract")
-        topics: Optional list of topic tags
+        tags: Optional list of tags for categorization
         session_id: Optional session identifier
+        extra_metadata: Optional dict of additional metadata key-value pairs
         skip_secret_scan: Skip secret detection (default False)
-    
+
     Returns:
         Result dict with success, id, content_type, importance_score
     """
@@ -74,7 +77,7 @@ def tier2_write(
         }
     
     # Validate name requirement
-    if content_type in ("pattern", "plan") and not name:
+    if content_type in ("pattern", "plan", "decision") and not name:
         return {
             "success": False,
             "error": f"content_type '{content_type}' requires a name parameter"
@@ -132,6 +135,10 @@ def tier2_write(
             doc_id = id_gen(name or "general", 0)
     elif content_type == "plan":
         doc_id = id_gen(name)
+    elif content_type == "learning":
+        doc_id = id_gen()  # Auto-generates timestamp
+    elif content_type == "decision":
+        doc_id = id_gen(name)
     else:
         return {"success": False, "error": f"Unknown content_type: {content_type}"}
     
@@ -149,12 +156,14 @@ def tier2_write(
         "updated_at": now_iso,
     }
     
-    if topics:
-        metadata["topics"] = ",".join(topics)
+    if tags:
+        metadata["tags"] = ",".join(tags)
     if session_id:
         metadata["session_id"] = session_id
     if name:
         metadata["name"] = name
+    if extra_metadata:
+        metadata.update(extra_metadata)
     
     # Write to ChromaDB
     try:
@@ -333,4 +342,27 @@ def tier2_delete(doc_id: str) -> dict:
         }
     except Exception as e:
         logger.error(f"tier2_delete failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
+    """Update existing tier2 document by ID (ChromaDB upsert).
+
+    Unlike tier2_write which generates new IDs, this updates in-place.
+
+    Args:
+        doc_id: Existing document ID
+        content: Updated content
+        metadata: Updated metadata dict
+
+    Returns:
+        Result dict with success, doc_id, updated
+    """
+    try:
+        collection = _get_collection()
+        metadata["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        return {"success": True, "doc_id": doc_id, "updated": True}
+    except Exception as e:
+        logger.error(f"tier2_upsert failed: {e}")
         return {"success": False, "error": str(e)}

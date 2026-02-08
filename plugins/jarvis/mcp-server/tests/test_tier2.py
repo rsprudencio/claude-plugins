@@ -76,19 +76,19 @@ class TestTier2Write:
         assert not result["success"]
         assert "between 0.0 and 1.0" in result["error"]
     
-    def test_write_with_topics(self, mock_config):
-        """Test writing with topic tags."""
+    def test_write_with_tags(self, mock_config):
+        """Test writing with tags."""
         result = tier2_write(
             content="Test content",
             content_type="observation",
-            topics=["work", "jarvis", "testing"]
+            tags=["work", "jarvis", "testing"]
         )
         assert result["success"]
-        
-        # Verify topics in metadata
+
+        # Verify tags in metadata
         collection = _get_collection()
         doc = collection.get(ids=[result["id"]])
-        assert doc["metadatas"][0]["topics"] == "work,jarvis,testing"
+        assert doc["metadatas"][0]["tags"] == "work,jarvis,testing"
     
     def test_write_invalid_content_type(self, mock_config):
         """Test validation of content type."""
@@ -298,18 +298,18 @@ class TestTier2Lifecycle:
             content="Lifecycle test",
             content_type="observation",
             importance_score=0.75,
-            topics=["test", "lifecycle"]
+            tags=["test", "lifecycle"]
         )
         assert write_result["success"]
         doc_id = write_result["id"]
-        
+
         # Read
         read_result = tier2_read(doc_id)
         assert read_result["success"]
         assert read_result["found"]
         assert read_result["content"] == "Lifecycle test"
         assert read_result["metadata"]["importance_score"] == "0.75"
-        assert read_result["metadata"]["topics"] == "test,lifecycle"
+        assert read_result["metadata"]["tags"] == "test,lifecycle"
         
         # List
         list_result = tier2_list(content_type="observation")
@@ -324,3 +324,103 @@ class TestTier2Lifecycle:
         # Verify not in list
         list_result2 = tier2_list(content_type="observation")
         assert not any(doc["id"] == doc_id for doc in list_result2["documents"])
+
+
+class TestTier2LearningDecision:
+    """Test learning and decision content types."""
+
+    def test_write_learning(self, mock_config):
+        """Test writing a learning."""
+        result = tier2_write(
+            content="PostToolUse hooks have empty tool_result",
+            content_type="learning"
+        )
+        assert result["success"]
+        assert "learning::" in result["id"]
+        assert result["content_type"] == "learning"
+
+    def test_write_decision_requires_name(self, mock_config):
+        """Test that decision type requires a name."""
+        result = tier2_write(
+            content="Use Python",
+            content_type="decision"
+        )
+        assert not result["success"]
+        assert "requires a name" in result["error"]
+
+    def test_write_decision_with_name(self, mock_config):
+        """Test writing a decision with name."""
+        result = tier2_write(
+            content="Use Python MCP server over TypeScript",
+            content_type="decision",
+            name="python-mcp-decision"
+        )
+        assert result["success"]
+        assert "decision::python-mcp-decision" in result["id"]
+
+
+class TestTier2ExtraMetadata:
+    """Test extra_metadata passthrough."""
+
+    def test_extra_metadata_stored(self, mock_config):
+        """Test that extra_metadata is stored in ChromaDB."""
+        result = tier2_write(
+            content="Observation with context",
+            content_type="observation",
+            extra_metadata={"project_dir": "jarvis-plugin", "git_branch": "master"},
+        )
+        assert result["success"]
+
+        read_result = tier2_read(result["id"])
+        assert read_result["metadata"]["project_dir"] == "jarvis-plugin"
+        assert read_result["metadata"]["git_branch"] == "master"
+
+    def test_extra_metadata_none(self, mock_config):
+        """Test that None extra_metadata is fine."""
+        result = tier2_write(
+            content="No extra metadata",
+            content_type="observation",
+            extra_metadata=None,
+        )
+        assert result["success"]
+
+
+class TestTier2Upsert:
+    """Test tier2_upsert function."""
+
+    def test_upsert_updates_content(self, mock_config):
+        """Test that upsert updates existing document content."""
+        from tools.tier2 import tier2_upsert
+
+        # Write original
+        write_result = tier2_write(
+            content="Original content",
+            content_type="observation",
+            importance_score=0.5,
+        )
+        doc_id = write_result["id"]
+
+        # Upsert with new content
+        result = tier2_upsert(doc_id, "Updated content", {"type": "observation", "importance_score": "0.5"})
+        assert result["success"]
+        assert result["updated"]
+
+        # Verify update
+        read_result = tier2_read(doc_id)
+        assert read_result["content"] == "Updated content"
+
+    def test_upsert_updates_metadata(self, mock_config):
+        """Test that upsert updates metadata."""
+        from tools.tier2 import tier2_upsert
+
+        write_result = tier2_write(
+            content="Test",
+            content_type="observation",
+            importance_score=0.5,
+        )
+        doc_id = write_result["id"]
+
+        tier2_upsert(doc_id, "Test", {"type": "observation", "importance_score": "0.9"})
+
+        read_result = tier2_read(doc_id)
+        assert float(read_result["metadata"]["importance_score"]) == 0.9

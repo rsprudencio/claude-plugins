@@ -35,11 +35,11 @@ Persistent strategic context is stored as files in your vault at `.jarvis/strate
 | `jarvis-focus-areas` | `.jarvis/strategic/jarvis-focus-areas.md` | Task prioritization |
 | `jarvis-patterns` | `.jarvis/strategic/jarvis-patterns.md` | Pattern analysis |
 
-**Memory Operations:**
-- `jarvis_memory_read(name)` - Load a strategic memory by name
-- `jarvis_memory_write(name, content, overwrite=true)` - Create or update a memory
-- `jarvis_memory_list()` - List all available strategic memories
-- `jarvis_memory_delete(name, confirm=true)` - Remove a memory
+**Memory Operations (Unified Content API):**
+- `jarvis_retrieve(name="jarvis-trajectory")` - Load a strategic memory by name
+- `jarvis_store(type="memory", name="...", content="...", overwrite=true)` - Create or update a memory
+- `jarvis_retrieve(list_type="memory")` - List all available strategic memories
+- `jarvis_remove(name="...", confirm=true)` - Remove a memory
 
 Or read files directly: `jarvis_read_vault_file(".jarvis/strategic/<name>.md")`
 
@@ -202,7 +202,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 **Tier 2: ChromaDB-First (Ephemeral)**
 - Auto-generated content (observations, patterns, summaries)
 - ChromaDB-only, invisible to Obsidian, disposable
-- Namespace prefixes: `obs::`, `pattern::`, `summary::`, `code::`, `rel::`, `hint::`, `plan::`
+- Namespace prefixes: `obs::`, `pattern::`, `summary::`, `code::`, `rel::`, `hint::`, `plan::`, `learning::`, `decision::`
 - Tier field in metadata: `"tier": "chromadb"`
 - Can be promoted to Tier 1 when important
 
@@ -214,6 +214,8 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - `relationship` - Entity relationship mappings
 - `hint` - Contextual hints and suggestions
 - `plan` - Task plans and strategies
+- `learning` - Lessons learned and key takeaways
+- `decision` - Architectural or strategic decisions made
 
 **Promotion**: Tier 2 content meeting importance/retrieval thresholds can be promoted to Tier 1 (file-backed) via `jarvis_promote` tool.
 
@@ -233,11 +235,10 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - Explorer agent uses semantic pre-search before keyword search
 - Query results include `tier` and `source` fields to distinguish file-backed from ephemeral content
 
-### Tier 2 Tools
-- `jarvis_tier2_write` - Write ephemeral content to ChromaDB
-- `jarvis_tier2_read` - Read and increment retrieval count
-- `jarvis_tier2_list` - List ephemeral content with filtering
-- `jarvis_tier2_delete` - Delete ephemeral content
+### Unified Content API
+- `jarvis_store` - Write any content: vault files (`relative_path=`), memories (`type="memory"`), or ephemeral (`type="observation"`, etc.). Use `id=` from retrieve results to update existing content.
+- `jarvis_retrieve` - Read/search any content: semantic search (`query=`), by ID (`id=`), by name (`name=`), or list (`list_type=`).
+- `jarvis_remove` - Delete content: by ID (`id=` for tier2) or by name (`name=` for memories).
 - `jarvis_promote` - Promote important ephemeral content to files
 
 ### First-Time Setup
