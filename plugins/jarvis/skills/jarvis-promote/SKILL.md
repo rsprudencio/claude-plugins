@@ -59,9 +59,26 @@ Tier 2 Content (N items):
  4* | summary     | 0.72  | 4          | 8d   | Week focused on memory...
 
 * = Meets promotion criteria
-
-Reply with a number to preview, "auto" to promote all eligible, or "done".
 ```
+
+Then ask what to do next:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "What would you like to do?"
+      header: "Action"
+      options:
+        - label: "Preview an item"
+          description: "View full content and promotion criteria"
+        - label: "Auto-promote eligible"
+          description: "Promote all items marked with *"
+        - label: "Done"
+          description: "Exit /promote"
+      multiSelect: false
+```
+
+If "Preview an item", ask user which number. If "Auto-promote eligible", proceed to auto-promote mode (Step 5).
 
 **To determine promotion eligibility for the `*` marker**, evaluate each item against:
 - Importance >= 0.85 (default, from `~/.jarvis/config.json` → `promotion.importance_threshold`)
@@ -103,8 +120,21 @@ Promotion Criteria (from ~/.jarvis/config.json):
     Age 12d < 30d (age criterion not met, but not needed)
 
 Target path: [resolved from content type - see path resolution below]
+```
 
-Promote this item? (y/n)
+Then ask for confirmation:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Promote this item to permanent storage?"
+      header: "Promote"
+      options:
+        - label: "Yes, promote"
+          description: "Write to vault as permanent file"
+        - label: "No, go back"
+          description: "Return to browse list"
+      multiSelect: false
 ```
 
 **Path resolution by type:**
@@ -128,8 +158,19 @@ On success, show result and offer git commit:
 
 ```
 Promoted to: [promoted_path from response]
+```
 
-Commit this change? (y/n)
+```
+AskUserQuestion:
+  questions:
+    - question: "Commit promoted file to vault?"
+      header: "Commit"
+      options:
+        - label: "Yes, commit now"
+          description: "Delegate to jarvis-audit-agent"
+        - label: "No, I'll commit later"
+          description: "File is written but uncommitted"
+      multiSelect: false
 ```
 
 If user confirms commit, delegate to `jarvis-audit-agent`:
@@ -152,8 +193,21 @@ Auto-Promote Scan:
 Found N items meeting promotion criteria:
  1. pattern::user-prefers-kebab-case (importance 0.88, 5 retrievals)
  2. summary::week-2026-w06 (importance 0.72, 4 retrievals)
+```
 
-Promote all N items? (y/n)
+```
+AskUserQuestion:
+  questions:
+    - question: "Promote all N eligible items?"
+      header: "Auto-Promote"
+      options:
+        - label: "Yes, promote all"
+          description: "Promote all eligible items to vault"
+        - label: "Let me pick"
+          description: "Go back to browse and select individually"
+        - label: "Cancel"
+          description: "Don't promote anything"
+      multiSelect: false
 ```
 
 5. If confirmed, promote each sequentially via `jarvis_promote`
@@ -163,8 +217,19 @@ Promote all N items? (y/n)
 Promoted N items:
   - [path1]
   - [path2]
+```
 
-Commit all? (y/n)
+```
+AskUserQuestion:
+  questions:
+    - question: "Commit all promoted files to vault?"
+      header: "Commit"
+      options:
+        - label: "Yes, commit all"
+          description: "Single batch commit via jarvis-audit-agent"
+        - label: "No, I'll commit later"
+          description: "Files are written but uncommitted"
+      multiSelect: false
 ```
 
 Delegate batch commit to `jarvis-audit-agent` with all promoted paths.
