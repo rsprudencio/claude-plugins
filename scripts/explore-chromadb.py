@@ -52,7 +52,7 @@ class ChromaDBExplorer:
             print(f"     Metadata: {coll.metadata}")
             print()
 
-    def show_collection(self, name: str = "jarvis", limit: int = 20):
+    def show_collection(self, name: str = "jarvis", limit: int = 20, full: bool = False):
         """Show documents in a collection."""
         try:
             coll = self.client.get_collection(name)
@@ -94,10 +94,12 @@ class ChromaDBExplorer:
             if created_at:
                 print(f"   Created: {created_at}")
 
-            # Show document preview (first 150 chars)
             if document:
-                preview = document[:150] + "..." if len(document) > 150 else document
-                print(f"   Content: {preview}")
+                if full:
+                    print(f"   Content: {document}")
+                else:
+                    preview = document[:150] + "..." if len(document) > 150 else document
+                    print(f"   Content: {preview}")
 
             print()
 
@@ -214,6 +216,11 @@ def main():
         default=20,
         help="Limit results (default: 20)"
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Show full document content (no truncation)"
+    )
 
     args = parser.parse_args()
 
@@ -222,14 +229,14 @@ def main():
     if args.list:
         explorer.list_collections()
     elif args.show:
-        explorer.show_collection(args.show, limit=args.limit)
+        explorer.show_collection(args.show, limit=args.limit, full=args.full)
     elif args.doc:
         explorer.show_document(args.doc, collection=args.collection)
     elif args.search:
         explorer.search(args.search, collection=args.collection, n_results=args.limit)
     else:
         # Default: show jarvis collection
-        explorer.show_collection("jarvis", limit=args.limit)
+        explorer.show_collection("jarvis", limit=args.limit, full=args.full)
 
 
 if __name__ == "__main__":

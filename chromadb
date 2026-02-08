@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# ChromaDB Explorer wrapper — injects default --db-path
+exec python3 "$(dirname "$0")/scripts/explore-chromadb.py" --db-path "${JARVIS_DB_PATH:-$HOME/.jarvis/memory_db}" "$@"
