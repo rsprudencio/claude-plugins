@@ -274,6 +274,7 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.10.0** - Auto-Extract: passive observation capture from tool calls into Tier 2 memory, PostToolUse hook with 3 modes (disabled/background/inline), filtering module with anti-recursion skip lists and SHA-256 dedup, Haiku-based extraction for background mode, inline systemMessage for session model extraction, user-configurable skip list overrides, 53 new tests (542 total)
 - **1.9.0** - Two-Tier SSoT architecture: Tier 2 (ChromaDB-first) ephemeral content, 5 new MCP tools (tier2_write/read/list/delete, promote), 7 content types (observation, pattern, summary, code, relationship, hint, plan), smart promotion based on importance/retrieval/age, tier-aware query results, 3 new namespaces (rel::, hint::, plan::), 54 new tests (30 total tools)
 - **1.8.0** - Configurable paths: centralized path resolution via `tools/paths.py` replacing all hardcoded vault paths, 2 new MCP tools (jarvis_resolve_path, jarvis_list_paths), template variable substitution ({YYYY}/{MM}/{WW}), sensitive path detection, 45 new tests (25 total tools)
 - **1.7.0** - Remove Serena dependency: replace all Serena MCP references across 14 files in 3 plugins with native jarvis_memory_* tools, strategic memories now file-backed at .jarvis/strategic/, read-modify-write pattern replaces serena_edit_memory (jarvis-strategic 1.1.0, jarvis-todoist 1.3.0)

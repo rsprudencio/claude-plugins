@@ -125,6 +125,28 @@ def get_promotion_config() -> dict:
     return {**defaults, **config.get("promotion", {})}
 
 
+def get_auto_extract_config() -> dict:
+    """Get auto-extract configuration with defaults.
+
+    Returns config dict with:
+    - mode: "disabled", "background", or "inline" (default "background")
+    - max_observations_per_session: Max observations per session (default 100)
+    - skip_tools_add: Additional tools to skip (user-defined)
+    - skip_tools_remove: Tools to un-skip from defaults (user-defined)
+
+    Config lives at memory.auto_extract in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "mode": "background",
+        "max_observations_per_session": 100,
+        "skip_tools_add": [],
+        "skip_tools_remove": [],
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("auto_extract", {})}
+
+
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     config_path = Path.home() / ".jarvis" / "config.json"
