@@ -5,7 +5,9 @@ set -euo pipefail
 #
 # Reads tool call JSON from stdin, filters via Python, then routes:
 # - disabled: exit 0 immediately
-# - background: spawn extract_observation.py in background
+# - background: spawn extract_observation.py (smart: API first, CLI fallback)
+# - background-api: spawn extract_observation.py (Anthropic SDK only)
+# - background-cli: spawn extract_observation.py (Claude CLI only, uses OAuth)
 # - inline: return systemMessage for Claude to call jarvis_tier2_write
 
 # Read all stdin (hook input JSON)
@@ -47,9 +49,10 @@ fi
 
 # Route by mode
 case "$MODE" in
-    background)
+    background|background-api|background-cli)
         # Spawn extraction in background and return immediately
-        nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" <<< "$INPUT" \
+        # Pass mode so extract_observation.py routes to the right backend
+        nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" <<< "$INPUT" \
             >/dev/null 2>&1 & disown
         exit 0
         ;;

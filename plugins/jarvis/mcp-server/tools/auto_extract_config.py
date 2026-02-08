@@ -203,11 +203,9 @@ def check_prerequisites(config: dict) -> dict:
             "details": details,
         }
 
-    if mode == "background":
-        # Check ANTHROPIC_API_KEY
+    if mode in ("background", "background-api", "background-cli"):
+        # Check ANTHROPIC_API_KEY availability
         has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
-        if not has_api_key:
-            issues.append("ANTHROPIC_API_KEY not found in environment — background extraction will silently skip")
 
         # Check anthropic package
         has_anthropic = False
@@ -216,11 +214,36 @@ def check_prerequisites(config: dict) -> dict:
             has_anthropic = importlib.util.find_spec("anthropic") is not None
         except (ImportError, ValueError):
             pass
-        if not has_anthropic:
-            issues.append("'anthropic' package not installed — run: pip install anthropic")
+
+        # Check claude CLI availability
+        import shutil
+        has_claude_cli = shutil.which("claude") is not None
 
         details["has_api_key"] = has_api_key
         details["has_anthropic_package"] = has_anthropic
+        details["has_claude_cli"] = has_claude_cli
+
+        if mode == "background-api":
+            if not has_api_key:
+                issues.append("ANTHROPIC_API_KEY not found in environment — required for background-api mode")
+            if not has_anthropic:
+                issues.append("'anthropic' package not installed — run: pip install anthropic")
+        elif mode == "background-cli":
+            if not has_claude_cli:
+                issues.append("'claude' binary not found on PATH — required for background-cli mode")
+        else:
+            # Smart "background" mode: at least one backend must be available
+            api_ok = has_api_key and has_anthropic
+            cli_ok = has_claude_cli
+            if not api_ok and not cli_ok:
+                issues.append("No extraction backend available — set ANTHROPIC_API_KEY or ensure 'claude' is on PATH")
+            # Informational: note which backends are available
+            backends = []
+            if api_ok:
+                backends.append("API")
+            if cli_ok:
+                backends.append("CLI")
+            details["available_backends"] = backends
 
         if issues:
             return {
@@ -231,16 +254,22 @@ def check_prerequisites(config: dict) -> dict:
                 "details": details,
             }
 
+        status_suffix = {
+            "background": "smart fallback",
+            "background-api": "Anthropic SDK",
+            "background-cli": "Claude CLI",
+        }[mode]
         return {
             "mode": mode,
             "healthy": True,
-            "status": "Auto-Extract is active (background mode — Haiku extraction)",
+            "status": f"Auto-Extract is active ({mode} mode — {status_suffix})",
             "issues": [],
             "details": details,
         }
 
     # Unknown mode
-    issues.append(f"Unknown mode '{mode}' — valid modes: disabled, background, inline")
+    valid_modes = "disabled, background, background-api, background-cli, inline"
+    issues.append(f"Unknown mode '{mode}' — valid modes: {valid_modes}")
     return {
         "mode": mode,
         "healthy": False,

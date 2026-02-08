@@ -7,6 +7,8 @@ from tools.file_ops import (
     list_vault_dir,
     file_exists_in_vault,
     validate_vault_path,
+    append_vault_file,
+    edit_vault_file,
 )
 
 
@@ -282,3 +284,169 @@ class TestEdgeCases:
         except OSError:
             # If symlink creation fails, skip test
             pytest.skip("Symlink creation not supported")
+
+
+class TestAppendVaultFile:
+    """Tests for append_vault_file function."""
+
+    def test_append_to_existing_file(self, mock_config):
+        """Should append content to an existing file."""
+        file_path = mock_config.vault_path / "append.txt"
+        file_path.write_text("line1")
+
+        result = append_vault_file("append.txt", "line2")
+        assert result["success"] is True
+        assert result["path"] == "append.txt"
+        assert result["bytes_appended"] > 0
+
+        assert file_path.read_text() == "line1\nline2"
+
+    def test_append_with_custom_separator(self, mock_config):
+        """Should use custom separator between existing and new content."""
+        file_path = mock_config.vault_path / "custom_sep.txt"
+        file_path.write_text("a")
+
+        result = append_vault_file("custom_sep.txt", "b", separator="\n\n---\n\n")
+        assert result["success"] is True
+        assert file_path.read_text() == "a\n\n---\n\nb"
+
+    def test_append_with_empty_separator(self, mock_config):
+        """Should concatenate directly with empty separator."""
+        file_path = mock_config.vault_path / "no_sep.txt"
+        file_path.write_text("hello")
+
+        result = append_vault_file("no_sep.txt", "world", separator="")
+        assert result["success"] is True
+        assert file_path.read_text() == "helloworld"
+
+    def test_append_requires_existing_file(self, mock_config):
+        """Should fail if file does not exist (prevents accidental creation)."""
+        result = append_vault_file("nonexistent.txt", "content")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_append_fails_without_confirmation(self, unconfirmed_config):
+        """Should fail if vault not confirmed."""
+        result = append_vault_file("test.txt", "content")
+        assert result["success"] is False
+        assert "permission denied" in result["error"].lower()
+
+    def test_append_blocks_path_traversal(self, mock_config):
+        """Should block path traversal attempts."""
+        result = append_vault_file("../outside.txt", "malicious")
+        assert result["success"] is False
+        assert "escapes vault" in result["error"].lower()
+
+    def test_multiple_appends_accumulate(self, mock_config):
+        """Multiple appends should accumulate content correctly."""
+        file_path = mock_config.vault_path / "multi.txt"
+        file_path.write_text("start")
+
+        append_vault_file("multi.txt", "a")
+        append_vault_file("multi.txt", "b")
+        append_vault_file("multi.txt", "c")
+
+        assert file_path.read_text() == "start\na\nb\nc"
+
+    def test_append_unicode_content(self, mock_config):
+        """Should handle unicode content in appends."""
+        file_path = mock_config.vault_path / "unicode_append.txt"
+        file_path.write_text("Hello")
+
+        result = append_vault_file("unicode_append.txt", "世界 🌍 émojis")
+        assert result["success"] is True
+        assert file_path.read_text() == "Hello\n世界 🌍 émojis"
+
+
+class TestEditVaultFile:
+    """Tests for edit_vault_file function."""
+
+    def test_simple_find_and_replace(self, mock_config):
+        """Should replace a unique string occurrence."""
+        file_path = mock_config.vault_path / "edit.txt"
+        file_path.write_text("Hello World")
+
+        result = edit_vault_file("edit.txt", "World", "Universe")
+        assert result["success"] is True
+        assert result["replacements"] == 1
+        assert file_path.read_text() == "Hello Universe"
+
+    def test_non_unique_without_replace_all(self, mock_config):
+        """Should error when old_string appears multiple times and replace_all=False."""
+        file_path = mock_config.vault_path / "dupe.txt"
+        file_path.write_text("foo bar foo baz foo")
+
+        result = edit_vault_file("dupe.txt", "foo", "qux")
+        assert result["success"] is False
+        assert "3 times" in result["error"]
+        assert "replace_all" in result["error"]
+        # File should be unchanged
+        assert file_path.read_text() == "foo bar foo baz foo"
+
+    def test_non_unique_with_replace_all(self, mock_config):
+        """Should replace all occurrences when replace_all=True."""
+        file_path = mock_config.vault_path / "replace_all.txt"
+        file_path.write_text("foo bar foo baz foo")
+
+        result = edit_vault_file("replace_all.txt", "foo", "qux", replace_all=True)
+        assert result["success"] is True
+        assert result["replacements"] == 3
+        assert file_path.read_text() == "qux bar qux baz qux"
+
+    def test_old_string_not_found(self, mock_config):
+        """Should error when old_string is not found."""
+        file_path = mock_config.vault_path / "notfound.txt"
+        file_path.write_text("Hello World")
+
+        result = edit_vault_file("notfound.txt", "Missing", "Replacement")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_old_equals_new_is_noop(self, mock_config):
+        """Should error when old_string equals new_string (no-op)."""
+        file_path = mock_config.vault_path / "noop.txt"
+        file_path.write_text("Hello World")
+
+        result = edit_vault_file("noop.txt", "Hello", "Hello")
+        assert result["success"] is False
+        assert "identical" in result["error"].lower()
+
+    def test_edit_fails_without_confirmation(self, unconfirmed_config):
+        """Should fail if vault not confirmed."""
+        result = edit_vault_file("test.txt", "old", "new")
+        assert result["success"] is False
+        assert "permission denied" in result["error"].lower()
+
+    def test_edit_blocks_path_traversal(self, mock_config):
+        """Should block path traversal attempts."""
+        result = edit_vault_file("../outside.txt", "old", "new")
+        assert result["success"] is False
+        assert "escapes vault" in result["error"].lower()
+
+    def test_edit_requires_existing_file(self, mock_config):
+        """Should fail if file does not exist."""
+        result = edit_vault_file("nonexistent.txt", "old", "new")
+        assert result["success"] is False
+        assert "not found" in result["error"].lower()
+
+    def test_edit_multiline_strings(self, mock_config):
+        """Should handle multi-line old_string and new_string."""
+        file_path = mock_config.vault_path / "multiline.md"
+        file_path.write_text("# Title\n\nOld paragraph\nwith two lines.\n\n## Next")
+
+        result = edit_vault_file(
+            "multiline.md",
+            "Old paragraph\nwith two lines.",
+            "New paragraph\nwith different content\nand three lines."
+        )
+        assert result["success"] is True
+        assert file_path.read_text() == "# Title\n\nNew paragraph\nwith different content\nand three lines.\n\n## Next"
+
+    def test_edit_unicode_content(self, mock_config):
+        """Should handle unicode in both old and new strings."""
+        file_path = mock_config.vault_path / "unicode_edit.txt"
+        file_path.write_text("Hello 世界")
+
+        result = edit_vault_file("unicode_edit.txt", "世界", "🌍 World")
+        assert result["success"] is True
+        assert file_path.read_text() == "Hello 🌍 World"

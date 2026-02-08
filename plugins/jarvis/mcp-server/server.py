@@ -17,6 +17,8 @@ Tools - Git Operations:
 
 Tools - Vault File Operations (require setup confirmation):
 - jarvis_write_vault_file: Write file to vault (from any directory)
+- jarvis_append_vault_file: Append content to existing vault file
+- jarvis_edit_vault_file: Find-and-replace edit within vault file
 - jarvis_read_vault_file: Read file from vault
 - jarvis_list_vault_dir: List vault directory contents
 - jarvis_file_exists: Check if file exists in vault
@@ -66,7 +68,8 @@ from protocol import (
 from tools.commit import stage_files, execute_commit, get_commit_stats
 from tools.config import get_debug_info
 from tools.file_ops import (
-    write_vault_file, read_vault_file, list_vault_dir, file_exists_in_vault
+    write_vault_file, read_vault_file, list_vault_dir, file_exists_in_vault,
+    append_vault_file, edit_vault_file
 )
 from tools.git_ops import (
     parse_last_commit, get_status, push_to_remote, move_files,
@@ -243,6 +246,56 @@ TOOLS = [
                 }
             },
             "required": ["relative_path", "content"]
+        }
+    ),
+    Tool(
+        name="jarvis_append_vault_file",
+        description="Append content to an existing vault file. O(1) append, no read needed. File must already exist.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "relative_path": {
+                    "type": "string",
+                    "description": "Path relative to vault root"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content to append"
+                },
+                "separator": {
+                    "type": "string",
+                    "description": "String prepended before content (default: newline). Use empty string for direct concatenation.",
+                    "default": "\n"
+                }
+            },
+            "required": ["relative_path", "content"]
+        }
+    ),
+    Tool(
+        name="jarvis_edit_vault_file",
+        description="Edit a vault file by exact string find-and-replace. old_string must be unique unless replace_all is true.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "relative_path": {
+                    "type": "string",
+                    "description": "Path relative to vault root"
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact string to find in the file"
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement string (must differ from old_string)"
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences (default: false, requires unique match)",
+                    "default": False
+                }
+            },
+            "required": ["relative_path", "old_string", "new_string"]
         }
     ),
     Tool(
@@ -709,6 +762,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "jarvis_write_vault_file": lambda args: write_vault_file(
             args.get("relative_path", ""),
             args.get("content", "")
+        ),
+        "jarvis_append_vault_file": lambda args: append_vault_file(
+            args.get("relative_path", ""),
+            args.get("content", ""),
+            separator=args.get("separator", "\n")
+        ),
+        "jarvis_edit_vault_file": lambda args: edit_vault_file(
+            args.get("relative_path", ""),
+            args.get("old_string", ""),
+            args.get("new_string", ""),
+            replace_all=args.get("replace_all", False)
         ),
         "jarvis_read_vault_file": lambda args: read_vault_file(
             args.get("relative_path", "")

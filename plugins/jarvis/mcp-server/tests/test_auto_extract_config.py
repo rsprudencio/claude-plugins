@@ -316,6 +316,32 @@ class TestFilterHookInput:
         assert should_skip is False
         assert reason == "background"
 
+    def test_observable_tool_passes_background_api(self):
+        """Observable tool passes in background-api mode."""
+        config = {"mode": "background-api", "skip_tools_add": [], "skip_tools_remove": []}
+        hook_data = {
+            "tool_name": "jarvis_commit",
+            "tool_input": {"operation": "create"},
+            "tool_result": "Committed: journal entry created " + "x" * 100,
+        }
+        with patch("tools.auto_extract_config.DEDUP_DIR", self._test_dir):
+            should_skip, reason = filter_hook_input(hook_data, config)
+        assert should_skip is False
+        assert reason == "background-api"
+
+    def test_observable_tool_passes_background_cli(self):
+        """Observable tool passes in background-cli mode."""
+        config = {"mode": "background-cli", "skip_tools_add": [], "skip_tools_remove": []}
+        hook_data = {
+            "tool_name": "jarvis_commit",
+            "tool_input": {"operation": "create"},
+            "tool_result": "Committed: journal entry created " + "x" * 100,
+        }
+        with patch("tools.auto_extract_config.DEDUP_DIR", self._test_dir):
+            should_skip, reason = filter_hook_input(hook_data, config)
+        assert should_skip is False
+        assert reason == "background-cli"
+
     def test_observable_tool_passes_inline(self):
         """Observable tool passes in inline mode."""
         config = {"mode": "inline", "skip_tools_add": [], "skip_tools_remove": []}
@@ -390,6 +416,20 @@ class TestGetAutoExtractConfig:
         config = get_auto_extract_config()
         assert config["mode"] == "inline"
 
+    def test_background_api_mode(self, mock_config):
+        """User can set background-api mode."""
+        mock_config.set(memory={"auto_extract": {"mode": "background-api"}})
+        from tools.config import get_auto_extract_config
+        config = get_auto_extract_config()
+        assert config["mode"] == "background-api"
+
+    def test_background_cli_mode(self, mock_config):
+        """User can set background-cli mode."""
+        mock_config.set(memory={"auto_extract": {"mode": "background-cli"}})
+        from tools.config import get_auto_extract_config
+        config = get_auto_extract_config()
+        assert config["mode"] == "background-cli"
+
     def test_partial_override(self, mock_config):
         """Partial config merges with defaults."""
         mock_config.set(memory={"auto_extract": {"skip_tools_add": ["Bash"]}})
@@ -420,34 +460,88 @@ class TestCheckPrerequisites:
         assert result["mode"] == "inline"
         assert result["issues"] == []
 
-    def test_background_no_api_key(self):
-        """Background mode without API key reports issue."""
+    def test_background_smart_no_backends(self):
+        """Smart background mode reports issue when no backends available."""
         with patch.dict(os.environ, {}, clear=True):
             env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
             with patch.dict(os.environ, env, clear=True):
-                result = check_prerequisites({"mode": "background"})
-                assert result["healthy"] is False
-                assert any("ANTHROPIC_API_KEY" in issue for issue in result["issues"])
-                assert result["details"]["has_api_key"] is False
+                with patch("shutil.which", return_value=None):
+                    result = check_prerequisites({"mode": "background"})
+                    assert result["healthy"] is False
+                    assert any("No extraction backend" in issue for issue in result["issues"])
 
-    def test_background_with_api_key_and_package(self):
-        """Background mode with all prerequisites is healthy."""
+    def test_background_smart_api_only(self):
+        """Smart background mode is healthy with API backend only."""
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
             with patch("importlib.util.find_spec", return_value=True):
-                result = check_prerequisites({"mode": "background"})
-                assert result["healthy"] is True
-                assert result["issues"] == []
-                assert result["details"]["has_api_key"] is True
-                assert result["details"]["has_anthropic_package"] is True
+                with patch("shutil.which", return_value=None):
+                    result = check_prerequisites({"mode": "background"})
+                    assert result["healthy"] is True
+                    assert "API" in result["details"]["available_backends"]
+                    assert "CLI" not in result["details"]["available_backends"]
 
-    def test_background_no_anthropic_package(self):
-        """Background mode without anthropic package reports issue."""
+    def test_background_smart_cli_only(self):
+        """Smart background mode is healthy with CLI backend only."""
+        with patch.dict(os.environ, {}, clear=True):
+            env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+            with patch.dict(os.environ, env, clear=True):
+                with patch("shutil.which", return_value="/usr/local/bin/claude"):
+                    result = check_prerequisites({"mode": "background"})
+                    assert result["healthy"] is True
+                    assert "CLI" in result["details"]["available_backends"]
+                    assert "API" not in result["details"]["available_backends"]
+
+    def test_background_smart_both_backends(self):
+        """Smart background mode reports both backends when available."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+            with patch("importlib.util.find_spec", return_value=True):
+                with patch("shutil.which", return_value="/usr/local/bin/claude"):
+                    result = check_prerequisites({"mode": "background"})
+                    assert result["healthy"] is True
+                    assert "API" in result["details"]["available_backends"]
+                    assert "CLI" in result["details"]["available_backends"]
+
+    def test_background_api_mode_no_key(self):
+        """background-api mode reports issue when no API key."""
+        with patch.dict(os.environ, {}, clear=True):
+            env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+            with patch.dict(os.environ, env, clear=True):
+                with patch("shutil.which", return_value="/usr/local/bin/claude"):
+                    result = check_prerequisites({"mode": "background-api"})
+                    assert result["healthy"] is False
+                    assert any("ANTHROPIC_API_KEY" in issue for issue in result["issues"])
+
+    def test_background_api_mode_healthy(self):
+        """background-api mode is healthy with API key and package."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+            with patch("importlib.util.find_spec", return_value=True):
+                with patch("shutil.which", return_value=None):
+                    result = check_prerequisites({"mode": "background-api"})
+                    assert result["healthy"] is True
+                    assert "background-api" in result["status"]
+
+    def test_background_api_mode_no_package(self):
+        """background-api mode reports issue when anthropic package missing."""
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
             with patch("importlib.util.find_spec", return_value=None):
-                result = check_prerequisites({"mode": "background"})
-                assert result["healthy"] is False
-                assert any("anthropic" in issue for issue in result["issues"])
-                assert result["details"]["has_anthropic_package"] is False
+                with patch("shutil.which", return_value=None):
+                    result = check_prerequisites({"mode": "background-api"})
+                    assert result["healthy"] is False
+                    assert any("anthropic" in issue for issue in result["issues"])
+
+    def test_background_cli_mode_no_binary(self):
+        """background-cli mode reports issue when claude binary not found."""
+        with patch("shutil.which", return_value=None):
+            result = check_prerequisites({"mode": "background-cli"})
+            assert result["healthy"] is False
+            assert any("claude" in issue for issue in result["issues"])
+
+    def test_background_cli_mode_healthy(self):
+        """background-cli mode is healthy when claude binary found."""
+        with patch("shutil.which", return_value="/usr/local/bin/claude"):
+            result = check_prerequisites({"mode": "background-cli"})
+            assert result["healthy"] is True
+            assert "background-cli" in result["status"]
 
     def test_unknown_mode(self):
         """Unknown mode reports issue."""

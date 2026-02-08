@@ -1,6 +1,7 @@
 """Tests for extract_observation.py — Haiku extraction and storage."""
 import json
 import os
+import subprocess
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -14,7 +15,11 @@ sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
     MAX_OUTPUT_CHARS,
+    _build_prompt,
+    _parse_haiku_text,
     call_haiku,
+    call_haiku_api,
+    call_haiku_cli,
     store_observation,
     summarize_tool_input,
     truncate_for_prompt,
@@ -76,30 +81,91 @@ class TestSummarizeToolInput:
 
 
 # ──────────────────────────────────────────────
-# TestCallHaiku
+# TestParseHaikuText
 # ──────────────────────────────────────────────
 
-class TestCallHaiku:
-    """Tests for call_haiku()."""
+class TestParseHaikuText:
+    """Tests for _parse_haiku_text()."""
+
+    def test_plain_json(self):
+        """Parses plain JSON response."""
+        text = '{"has_observation": true, "content": "test", "importance_score": 0.5, "topics": []}'
+        result = _parse_haiku_text(text)
+        assert result is not None
+        assert result["has_observation"] is True
+
+    def test_json_in_code_block(self):
+        """Handles JSON wrapped in markdown code blocks."""
+        text = '```json\n{"has_observation": true, "content": "test", "importance_score": 0.5, "topics": []}\n```'
+        result = _parse_haiku_text(text)
+        assert result is not None
+        assert result["has_observation"] is True
+
+    def test_json_in_bare_code_block(self):
+        """Handles JSON in bare ``` blocks (no language tag)."""
+        text = '```\n{"has_observation": false}\n```'
+        result = _parse_haiku_text(text)
+        assert result is not None
+        assert result["has_observation"] is False
+
+    def test_invalid_json(self):
+        """Returns None for non-JSON text."""
+        assert _parse_haiku_text("This is not JSON") is None
+
+    def test_empty_string(self):
+        """Returns None for empty string."""
+        assert _parse_haiku_text("") is None
+
+    def test_whitespace_padding(self):
+        """Handles leading/trailing whitespace."""
+        text = '  \n{"has_observation": true, "content": "x", "importance_score": 0.3, "topics": []}\n  '
+        result = _parse_haiku_text(text)
+        assert result is not None
+        assert result["has_observation"] is True
+
+
+# ──────────────────────────────────────────────
+# TestBuildPrompt
+# ──────────────────────────────────────────────
+
+class TestBuildPrompt:
+    """Tests for _build_prompt()."""
+
+    def test_includes_tool_name(self):
+        """Prompt includes the tool name."""
+        prompt = _build_prompt("jarvis_commit", {"op": "create"}, "result")
+        assert "jarvis_commit" in prompt
+
+    def test_includes_truncated_output(self):
+        """Prompt truncates long output."""
+        prompt = _build_prompt("tool", {}, "x" * 5000)
+        assert "truncated" in prompt
+
+
+# ──────────────────────────────────────────────
+# TestCallHaikuApi
+# ──────────────────────────────────────────────
+
+class TestCallHaikuApi:
+    """Tests for call_haiku_api() — Anthropic SDK backend."""
 
     def test_no_api_key(self):
         """Returns None when ANTHROPIC_API_KEY is not set."""
         with patch.dict(os.environ, {}, clear=True):
-            # Also remove from env if present
             env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
             with patch.dict(os.environ, env, clear=True):
-                result = call_haiku("jarvis_commit", {}, "some output")
+                result = call_haiku_api("jarvis_commit", {}, "some output")
                 assert result is None
 
     def test_no_anthropic_package(self):
         """Returns None when anthropic package is not installed."""
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict("sys.modules", {"anthropic": None}):
-                result = call_haiku("jarvis_commit", {}, "some output")
+                result = call_haiku_api("jarvis_commit", {}, "some output")
                 assert result is None
 
     def test_successful_extraction(self):
-        """Successful Haiku call returns parsed observation."""
+        """Successful Haiku API call returns parsed observation."""
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = json.dumps({
@@ -117,35 +183,12 @@ class TestCallHaiku:
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = call_haiku("jarvis_commit", {"op": "create"}, "Committed entry")
+                result = call_haiku_api("jarvis_commit", {"op": "create"}, "Committed entry")
                 assert result is not None
                 assert result["has_observation"] is True
                 assert "JARVIS" in result["content"]
                 assert result["importance_score"] == 0.6
                 assert "architecture" in result["topics"]
-
-    def test_no_observation_found(self):
-        """Returns dict with has_observation=False for routine results."""
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = json.dumps({
-            "has_observation": False,
-            "content": "",
-            "importance_score": 0.0,
-            "topics": [],
-        })
-
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = mock_response
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.Anthropic.return_value = mock_client
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = call_haiku("jarvis_status", {}, "Clean working tree")
-                assert result is not None
-                assert result["has_observation"] is False
 
     def test_invalid_json_response(self):
         """Returns None when Haiku returns non-JSON."""
@@ -161,26 +204,8 @@ class TestCallHaiku:
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = call_haiku("jarvis_commit", {}, "output")
+                result = call_haiku_api("jarvis_commit", {}, "output")
                 assert result is None
-
-    def test_json_in_code_block(self):
-        """Handles Haiku wrapping JSON in markdown code blocks."""
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock()]
-        mock_response.content[0].text = '```json\n{"has_observation": true, "content": "test", "importance_score": 0.5, "topics": []}\n```'
-
-        mock_client = MagicMock()
-        mock_client.messages.create.return_value = mock_response
-
-        mock_anthropic = MagicMock()
-        mock_anthropic.Anthropic.return_value = mock_client
-
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = call_haiku("jarvis_commit", {}, "output here")
-                assert result is not None
-                assert result["has_observation"] is True
 
     def test_api_error_returns_none(self):
         """Returns None when API call raises an exception."""
@@ -189,8 +214,139 @@ class TestCallHaiku:
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = call_haiku("jarvis_commit", {}, "output")
+                result = call_haiku_api("jarvis_commit", {}, "output")
                 assert result is None
+
+
+# ──────────────────────────────────────────────
+# TestCallHaikuCli
+# ──────────────────────────────────────────────
+
+class TestCallHaikuCli:
+    """Tests for call_haiku_cli() — Claude CLI backend."""
+
+    def test_no_claude_binary(self):
+        """Returns None when claude binary is not found."""
+        with patch("extract_observation.shutil.which", return_value=None):
+            result = call_haiku_cli("jarvis_commit", {}, "some output")
+            assert result is None
+
+    def test_successful_extraction(self):
+        """Successful CLI call returns parsed observation."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "has_observation": True,
+            "content": "Observation from CLI",
+            "importance_score": 0.5,
+            "topics": ["test"],
+        })
+
+        with patch("extract_observation.shutil.which", return_value="/usr/local/bin/claude"):
+            with patch("extract_observation.subprocess.run", return_value=mock_result) as mock_run:
+                result = call_haiku_cli("jarvis_commit", {"op": "create"}, "output here")
+                assert result is not None
+                assert result["has_observation"] is True
+                assert result["content"] == "Observation from CLI"
+                # Verify correct CLI args
+                mock_run.assert_called_once()
+                args = mock_run.call_args
+                assert args[0][0] == ["/usr/local/bin/claude", "-p", "--model", "haiku"]
+                assert args[1]["timeout"] == 30
+
+    def test_cli_nonzero_exit(self):
+        """Returns None when CLI exits with non-zero code."""
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+
+        with patch("extract_observation.shutil.which", return_value="/usr/local/bin/claude"):
+            with patch("extract_observation.subprocess.run", return_value=mock_result):
+                result = call_haiku_cli("jarvis_commit", {}, "output")
+                assert result is None
+
+    def test_cli_timeout(self):
+        """Returns None when CLI times out."""
+        with patch("extract_observation.shutil.which", return_value="/usr/local/bin/claude"):
+            with patch("extract_observation.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 30)):
+                result = call_haiku_cli("jarvis_commit", {}, "output")
+                assert result is None
+
+    def test_cli_invalid_json(self):
+        """Returns None when CLI returns non-JSON output."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "I couldn't parse that request."
+
+        with patch("extract_observation.shutil.which", return_value="/usr/local/bin/claude"):
+            with patch("extract_observation.subprocess.run", return_value=mock_result):
+                result = call_haiku_cli("jarvis_commit", {}, "output")
+                assert result is None
+
+    def test_cli_exception(self):
+        """Returns None when subprocess.run raises an exception."""
+        with patch("extract_observation.shutil.which", return_value="/usr/local/bin/claude"):
+            with patch("extract_observation.subprocess.run", side_effect=OSError("No such file")):
+                result = call_haiku_cli("jarvis_commit", {}, "output")
+                assert result is None
+
+
+# ──────────────────────────────────────────────
+# TestCallHaikuRouter
+# ──────────────────────────────────────────────
+
+class TestCallHaikuRouter:
+    """Tests for call_haiku() — mode routing logic."""
+
+    def test_background_api_mode_uses_api_only(self):
+        """background-api mode only calls call_haiku_api."""
+        with patch("extract_observation.call_haiku_api", return_value=None) as mock_api:
+            with patch("extract_observation.call_haiku_cli") as mock_cli:
+                call_haiku("tool", {}, "output", mode="background-api")
+                mock_api.assert_called_once()
+                mock_cli.assert_not_called()
+
+    def test_background_cli_mode_uses_cli_only(self):
+        """background-cli mode only calls call_haiku_cli."""
+        with patch("extract_observation.call_haiku_api") as mock_api:
+            with patch("extract_observation.call_haiku_cli", return_value=None) as mock_cli:
+                call_haiku("tool", {}, "output", mode="background-cli")
+                mock_api.assert_not_called()
+                mock_cli.assert_called_once()
+
+    def test_background_smart_tries_api_first(self):
+        """Smart background mode tries API first, skips CLI if API succeeds."""
+        api_result = {"has_observation": True, "content": "from API"}
+        with patch("extract_observation.call_haiku_api", return_value=api_result) as mock_api:
+            with patch("extract_observation.call_haiku_cli") as mock_cli:
+                result = call_haiku("tool", {}, "output", mode="background")
+                assert result == api_result
+                mock_api.assert_called_once()
+                mock_cli.assert_not_called()
+
+    def test_background_smart_falls_back_to_cli(self):
+        """Smart background mode falls back to CLI when API returns None."""
+        cli_result = {"has_observation": True, "content": "from CLI"}
+        with patch("extract_observation.call_haiku_api", return_value=None) as mock_api:
+            with patch("extract_observation.call_haiku_cli", return_value=cli_result) as mock_cli:
+                result = call_haiku("tool", {}, "output", mode="background")
+                assert result == cli_result
+                mock_api.assert_called_once()
+                mock_cli.assert_called_once()
+
+    def test_background_smart_both_fail(self):
+        """Smart background mode returns None when both backends fail."""
+        with patch("extract_observation.call_haiku_api", return_value=None):
+            with patch("extract_observation.call_haiku_cli", return_value=None):
+                result = call_haiku("tool", {}, "output", mode="background")
+                assert result is None
+
+    def test_default_mode_is_background(self):
+        """Default mode is 'background' (smart fallback)."""
+        with patch("extract_observation.call_haiku_api", return_value=None) as mock_api:
+            with patch("extract_observation.call_haiku_cli", return_value=None) as mock_cli:
+                call_haiku("tool", {}, "output")  # No mode arg
+                mock_api.assert_called_once()
+                mock_cli.assert_called_once()
 
 
 # ──────────────────────────────────────────────

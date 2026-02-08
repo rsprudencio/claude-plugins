@@ -129,7 +129,12 @@ def get_auto_extract_config() -> dict:
     """Get auto-extract configuration with defaults.
 
     Returns config dict with:
-    - mode: "disabled", "background", or "inline" (default "background")
+    - mode: Extraction mode (default "background"). Options:
+        - "disabled": No extraction
+        - "background": Smart fallback — tries API first, falls back to CLI
+        - "background-api": Force Anthropic SDK (requires ANTHROPIC_API_KEY)
+        - "background-cli": Force Claude CLI (uses OAuth from Keychain)
+        - "inline": Uses session model via systemMessage
     - max_observations_per_session: Max observations per session (default 100)
     - skip_tools_add: Additional tools to skip (user-defined)
     - skip_tools_remove: Tools to un-skip from defaults (user-defined)
