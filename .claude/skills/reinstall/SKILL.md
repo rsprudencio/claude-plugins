@@ -1,5 +1,5 @@
 ---
-description: Reinstall Jarvis plugins with cache clear
+description: Reinstall Jarvis plugins with optional cache clear
 ---
 
 # Jarvis Plugin Reinstall Workflow
@@ -10,20 +10,73 @@ You are helping the developer reinstall Jarvis plugins during active development
 
 The plugin is split into 3 independent plugins in the `raph-claude-plugins` marketplace:
 
-| Plugin | Cache Path |
-|--------|------------|
-| `jarvis` | `~/.claude/plugins/cache/raph-claude-plugins/jarvis/` |
-| `jarvis-todoist` | `~/.claude/plugins/cache/raph-claude-plugins/jarvis-todoist/` |
-| `jarvis-strategic` | `~/.claude/plugins/cache/raph-claude-plugins/jarvis-strategic/` |
+| Plugin | Cache Path (relative to config dir) |
+|--------|--------------------------------------|
+| `jarvis` | `plugins/cache/raph-claude-plugins/jarvis/` |
+| `jarvis-todoist` | `plugins/cache/raph-claude-plugins/jarvis-todoist/` |
+| `jarvis-strategic` | `plugins/cache/raph-claude-plugins/jarvis-strategic/` |
 
 ## Workflow
 
-### Step 1: Clear Cache & Reinstall All Plugins
+### Step 0: Detect Claude Config Directory
 
-Run the following command chain:
+**CRITICAL**: Never assume `~/.claude/` - the config directory location varies by installation.
+
+Run this detection script:
 
 ```bash
-rm -rf ~/.claude/plugins/cache/raph-claude-plugins/* && \
+# Method 1: Check CLAUDE_CONFIG_DIR environment variable
+if [ -n "$CLAUDE_CONFIG_DIR" ]; then
+  DETECTED_DIR="$CLAUDE_CONFIG_DIR"
+  echo "Found CLAUDE_CONFIG_DIR: $DETECTED_DIR"
+# Method 2: Check current session's auto-memory location
+elif [ -d "$(pwd)/.claude/projects" ]; then
+  DETECTED_DIR="$(cd $(pwd)/.claude && pwd | sed 's|/projects/.*||')"
+  echo "Detected from current session: $DETECTED_DIR"
+# Method 3: Search common locations for active projects directory
+elif [ -d ~/.claude-personal/projects ] && [ "$(ls -A ~/.claude-personal/projects 2>/dev/null)" ]; then
+  DETECTED_DIR=~/.claude-personal
+  echo "Found active config at: $DETECTED_DIR"
+elif [ -d ~/.claude/projects ] && [ "$(ls -A ~/.claude/projects 2>/dev/null)" ]; then
+  DETECTED_DIR=~/.claude
+  echo "Found active config at: $DETECTED_DIR"
+else
+  DETECTED_DIR=~/.claude
+  echo "No config detected, defaulting to: $DETECTED_DIR"
+fi
+
+# Verify it looks like a Claude config directory
+if [ ! -d "$DETECTED_DIR/plugins" ]; then
+  echo "WARNING: $DETECTED_DIR/plugins not found - may not be correct config directory"
+  echo "Please verify manually with: ls -la ~/ | grep claude"
+fi
+
+echo ""
+echo "Using Claude config directory: $DETECTED_DIR"
+```
+
+**Store the detected directory** for use in subsequent steps.
+
+### Step 1: Clear Cache (Optional - only with 'clean' argument)
+
+**Default behavior** (`/reinstall`): Skip cache deletion - faster reinstall, preserves old versions for rollback.
+
+**Clean mode** (`/reinstall clean`): Delete all cached plugin versions.
+
+```bash
+# Only run this if user called '/reinstall clean'
+if [ "$1" = "clean" ]; then
+  echo "Cleaning plugin cache..."
+  rm -rf "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"*
+  echo "Cache cleared."
+else
+  echo "Skipping cache clear (use '/reinstall clean' to force clean)."
+fi
+```
+
+### Step 2: Reinstall All Plugins
+
+```bash
 claude plugin marketplace update && \
 claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
 claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
@@ -33,13 +86,26 @@ claude plugin install jarvis-todoist@raph-claude-plugins && \
 claude plugin install jarvis-strategic@raph-claude-plugins
 ```
 
-### Step 2: Remind User to Restart
+### Step 3: Verify Installation
+
+```bash
+echo ""
+echo "Installed plugins:"
+claude plugin list | grep -E "jarvis|todoist|strategic"
+echo ""
+echo "Active cache directory: $DETECTED_DIR/plugins/cache/raph-claude-plugins/"
+ls -la "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"
+```
+
+### Step 4: Remind User to Restart
 
 **IMPORTANT:** Plugin changes only take effect after a full restart of Claude Code, not just a reload.
 
 Inform the user:
 ```
 Plugins reinstalled successfully
+
+Config directory: [show detected directory]
 
 RESTART REQUIRED
 Plugin changes will only take effect after you restart Claude Code.
@@ -53,8 +119,24 @@ Plugin changes will only take effect after you restart Claude Code.
 ## Usage
 
 ```
-/reinstall           # Reinstall all 3 plugins
+/reinstall           # Reinstall all 3 plugins (preserve cache)
+/reinstall clean     # Reinstall all 3 plugins (delete cache first)
 ```
+
+---
+
+## Rationale
+
+### Why preserve cache by default?
+- **Faster**: Skips deletion of potentially large directories
+- **Safer**: Old versions remain available for comparison/rollback
+- **Cleaner**: Cache naturally gets pruned by Claude over time
+
+### When to use clean mode?
+- Testing plugin loading from scratch
+- Debugging cache corruption
+- Verifying packaging issues
+- After major version changes
 
 ---
 
@@ -63,3 +145,4 @@ Plugin changes will only take effect after you restart Claude Code.
 - This skill is for development only (not included in the plugin distribution)
 - Never skip the restart reminder - users often forget this step
 - All 3 plugins are reinstalled together to ensure consistency
+- Config directory detection runs fresh each time to handle multiple Claude installations

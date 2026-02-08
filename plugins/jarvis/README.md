@@ -9,7 +9,7 @@
 
 ```bash
 claude plugin marketplace add [repo-url]
-claude plugin install jarvis@jarvis-marketplace
+claude plugin install jarvis@raph-claude-plugins
 ```
 
 ## Available Skills

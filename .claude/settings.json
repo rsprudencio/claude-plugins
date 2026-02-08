@@ -1,8 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(claude plugin install jarvis@jarvis-marketplace)",
-      "Bash(claude plugin uninstall jarvis@jarvis-marketplace)",
+      "Bash(claude plugin install jarvis@raph-claude-plugins)",
+      "Bash(claude plugin uninstall jarvis@raph-claude-plugins)",
       "Bash(claude plugin marketplace update)"
     ]
   }
