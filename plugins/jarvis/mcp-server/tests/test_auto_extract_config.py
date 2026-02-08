@@ -15,6 +15,7 @@ from tools.auto_extract_config import (
     SKIP_BASH_COMMANDS,
     SKIP_TOOLS,
     check_dedup,
+    check_prerequisites,
     filter_hook_input,
     should_skip_bash_command,
     should_skip_output,
@@ -396,3 +397,71 @@ class TestGetAutoExtractConfig:
         config = get_auto_extract_config()
         assert config["mode"] == "background"  # default preserved
         assert config["skip_tools_add"] == ["Bash"]  # override applied
+
+
+# ──────────────────────────────────────────────
+# TestCheckPrerequisites
+# ──────────────────────────────────────────────
+
+class TestCheckPrerequisites:
+    """Tests for check_prerequisites() — health check."""
+
+    def test_disabled_mode_healthy(self):
+        """Disabled mode is always healthy (nothing to check)."""
+        result = check_prerequisites({"mode": "disabled"})
+        assert result["healthy"] is True
+        assert result["mode"] == "disabled"
+        assert result["issues"] == []
+
+    def test_inline_mode_healthy(self):
+        """Inline mode needs no prerequisites."""
+        result = check_prerequisites({"mode": "inline"})
+        assert result["healthy"] is True
+        assert result["mode"] == "inline"
+        assert result["issues"] == []
+
+    def test_background_no_api_key(self):
+        """Background mode without API key reports issue."""
+        with patch.dict(os.environ, {}, clear=True):
+            env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+            with patch.dict(os.environ, env, clear=True):
+                result = check_prerequisites({"mode": "background"})
+                assert result["healthy"] is False
+                assert any("ANTHROPIC_API_KEY" in issue for issue in result["issues"])
+                assert result["details"]["has_api_key"] is False
+
+    def test_background_with_api_key_and_package(self):
+        """Background mode with all prerequisites is healthy."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+            with patch("importlib.util.find_spec", return_value=True):
+                result = check_prerequisites({"mode": "background"})
+                assert result["healthy"] is True
+                assert result["issues"] == []
+                assert result["details"]["has_api_key"] is True
+                assert result["details"]["has_anthropic_package"] is True
+
+    def test_background_no_anthropic_package(self):
+        """Background mode without anthropic package reports issue."""
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}):
+            with patch("importlib.util.find_spec", return_value=None):
+                result = check_prerequisites({"mode": "background"})
+                assert result["healthy"] is False
+                assert any("anthropic" in issue for issue in result["issues"])
+                assert result["details"]["has_anthropic_package"] is False
+
+    def test_unknown_mode(self):
+        """Unknown mode reports issue."""
+        result = check_prerequisites({"mode": "turbo"})
+        assert result["healthy"] is False
+        assert any("Unknown mode" in issue for issue in result["issues"])
+
+    def test_includes_user_overrides(self):
+        """Status includes user skip list overrides."""
+        config = {
+            "mode": "inline",
+            "skip_tools_add": ["Bash"],
+            "skip_tools_remove": ["Read"],
+        }
+        result = check_prerequisites(config)
+        assert result["details"]["skip_tools_add"] == ["Bash"]
+        assert result["details"]["skip_tools_remove"] == ["Read"]

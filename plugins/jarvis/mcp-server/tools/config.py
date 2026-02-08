@@ -149,6 +149,8 @@ def get_auto_extract_config() -> dict:
 
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
+    from .auto_extract_config import check_prerequisites
+
     config_path = Path.home() / ".jarvis" / "config.json"
     return {
         "config_path": str(config_path),
@@ -156,5 +158,6 @@ def get_debug_info() -> dict:
         "config_contents": get_config(),
         "resolved_vault_path": get_vault_path(),
         "cwd": os.getcwd(),
-        "home": str(Path.home())
+        "home": str(Path.home()),
+        "auto_extract": check_prerequisites(get_auto_extract_config()),
     }

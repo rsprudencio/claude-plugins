@@ -168,6 +168,88 @@ def check_dedup(tool_name: str, tool_result: str) -> bool:
         return False
 
 
+def check_prerequisites(config: dict) -> dict:
+    """Check if auto-extract prerequisites are met for the configured mode.
+
+    Returns a status dict with:
+    - mode: Current mode
+    - healthy: Whether the feature can operate
+    - issues: List of problems found
+    - details: Additional diagnostic info
+    """
+    mode = config.get("mode", "background")
+    issues = []
+    details = {
+        "mode": mode,
+        "skip_tools_add": config.get("skip_tools_add", []),
+        "skip_tools_remove": config.get("skip_tools_remove", []),
+    }
+
+    if mode == "disabled":
+        return {
+            "mode": mode,
+            "healthy": True,
+            "status": "Auto-Extract is disabled",
+            "issues": [],
+            "details": details,
+        }
+
+    if mode == "inline":
+        return {
+            "mode": mode,
+            "healthy": True,
+            "status": "Auto-Extract is active (inline mode — uses session model)",
+            "issues": [],
+            "details": details,
+        }
+
+    if mode == "background":
+        # Check ANTHROPIC_API_KEY
+        has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+        if not has_api_key:
+            issues.append("ANTHROPIC_API_KEY not found in environment — background extraction will silently skip")
+
+        # Check anthropic package
+        has_anthropic = False
+        try:
+            import importlib.util
+            has_anthropic = importlib.util.find_spec("anthropic") is not None
+        except (ImportError, ValueError):
+            pass
+        if not has_anthropic:
+            issues.append("'anthropic' package not installed — run: pip install anthropic")
+
+        details["has_api_key"] = has_api_key
+        details["has_anthropic_package"] = has_anthropic
+
+        if issues:
+            return {
+                "mode": mode,
+                "healthy": False,
+                "status": f"Auto-Extract has {len(issues)} issue(s) — observations will NOT be captured",
+                "issues": issues,
+                "details": details,
+            }
+
+        return {
+            "mode": mode,
+            "healthy": True,
+            "status": "Auto-Extract is active (background mode — Haiku extraction)",
+            "issues": [],
+            "details": details,
+        }
+
+    # Unknown mode
+    issues.append(f"Unknown mode '{mode}' — valid modes: disabled, background, inline")
+    return {
+        "mode": mode,
+        "healthy": False,
+        "status": "Auto-Extract has invalid configuration",
+        "issues": issues,
+        "details": details,
+    }
+
+
 def filter_hook_input(hook_data: dict, config: dict) -> tuple:
     """Main entry point: determine if a tool call should be observed.
 
