@@ -51,6 +51,9 @@ class TestGetPathAbsolute:
     """Absolute paths (memory section) resolve without vault prefix."""
 
     def test_db_path_default(self, mock_config):
+        # Remove the test-isolation db_path to check default fallback
+        mock_config.delete_key("memory")
+
         path = get_path("db_path")
         expected = os.path.expanduser("~/.jarvis/memory_db")
         assert path == expected

@@ -1,6 +1,7 @@
 """Pytest fixtures for Jarvis Tools tests."""
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Generator
@@ -33,9 +34,17 @@ def temp_config_dir() -> Generator[Path, None, None]:
 def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
     """Mock the config module to use temporary paths."""
     import tools.config as config_module
+    import tools.memory as memory_module
+    from chromadb.api.shared_system_client import SharedSystemClient
 
-    # Clear any cached config
+    # CRITICAL: Clear config cache, ChromaDB client, AND system cache
+    # to prevent tests from using production database or stale connections
     config_module._config_cache = None
+    memory_module._chroma_client = None
+    SharedSystemClient.clear_system_cache()
+
+    # Create a temporary ChromaDB directory for this test run
+    temp_db_dir = tempfile.mkdtemp(prefix="jarvis_test_db_")
 
     # Create a valid config
     config_file = temp_config_dir / "config.json"
@@ -43,7 +52,9 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         "vault_path": str(temp_vault),
         "vault_confirmed": True,
         "configured_at": "2026-02-02T12:00:00Z",
-        "version": "0.2.0"
+        "memory": {
+            "db_path": temp_db_dir  # Use isolated test database
+        }
     }
     config_file.write_text(json.dumps(config_data))
 
@@ -63,6 +74,7 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         def __init__(self):
             self.path = config_file
             self.vault_path = temp_vault
+            self.db_path = temp_db_dir
 
         def set(self, **kwargs):
             """Update config values."""
@@ -84,7 +96,16 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
                 self.path.unlink()
             config_module._config_cache = None
 
-    return ConfigHelper()
+    helper = ConfigHelper()
+
+    yield helper
+
+    # Cleanup: Remove temporary database directory
+    try:
+        if os.path.exists(temp_db_dir):
+            shutil.rmtree(temp_db_dir)
+    except Exception:
+        pass  # Best effort cleanup
 
 
 @pytest.fixture
@@ -105,16 +126,12 @@ def no_config(mock_config):
 def cleanup_chroma_client():
     """Clean up ChromaDB client after each test to prevent file handle leaks."""
     yield
-    # After test completes, reset the global client
+    # After test completes, clear the Python reference AND ChromaDB's internal cache
     import tools.memory as memory_module
-    if hasattr(memory_module, '_chroma_client') and memory_module._chroma_client is not None:
-        try:
-            # Close any open connections
-            del memory_module._chroma_client
-        except Exception:
-            pass
-        finally:
-            memory_module._chroma_client = None
+    from chromadb.api.shared_system_client import SharedSystemClient
+
+    memory_module._chroma_client = None
+    SharedSystemClient.clear_system_cache()
 
 
 @pytest.fixture
