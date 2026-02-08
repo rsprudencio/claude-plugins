@@ -38,8 +38,8 @@ Sample entries:
 
 Commands:
   /recall <query>       - Search your vault semantically
-  /memory-index         - Re-index vault files
-  /memory-index --force - Full re-index (rebuilds everything)
+  /memory-stats         - This status view
+  /jarvis-settings      - Configuration (includes reindexing)
 ```
 
 ### 3. Handle empty state
@@ -51,7 +51,7 @@ Memory System Status
 
 No documents indexed yet.
 
-Run /memory-index to index your vault for semantic search.
+Ask Jarvis to index your vault, or run /jarvis-settings to configure and index.
 ```
 
 ## Key Rules

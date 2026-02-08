@@ -48,7 +48,7 @@ You do NOT make decisions about what to do with results - Jarvis (the caller) in
   "status": "error",
   "error": "VAULT_NOT_CONFIGURED",
   "message": "Vault path is not configured. Setup must be completed first.",
-  "action": "Run jarvis-setup skill to configure vault."
+  "action": "Run jarvis-settings skill to configure vault."
 }
 ```
 
@@ -433,7 +433,7 @@ Search these directories, but flag results:
 | **NO_FILTERS** | No search criteria provided | `{"status": "error", "error": "NO_FILTERS", "message": "At least one filter required"}` |
 | **INVALID_DATE** | Date format parsing failed | `{"status": "error", "error": "INVALID_DATE", "message": "Could not parse date: '...'", "suggestion": "Use ISO format (2026-01-01) or relative (7d, 30d)"}` |
 | **NO_RESULTS** | Search found nothing | `{"status": "success", "results": [], "summary": "No results found. Try broader filters."}` |
-| **VAULT_NOT_CONFIGURED** | Config missing vault_path | `{"status": "error", "error": "VAULT_NOT_CONFIGURED", "action": "Run jarvis-setup"}` |
+| **VAULT_NOT_CONFIGURED** | Config missing vault_path | `{"status": "error", "error": "VAULT_NOT_CONFIGURED", "action": "Run jarvis-settings"}` |
 | **MCP_UNAVAILABLE** | Jarvis tools MCP not loaded | `{"status": "error", "error": "MCP_UNAVAILABLE", "action": "Reinstall plugin"}` |
 | **BOUNDARY_VIOLATION** | Path escapes vault | `{"status": "error", "error": "BOUNDARY_VIOLATION", "message": "Path outside vault"}` |
 | **MALFORMED_FRONTMATTER** | YAML parse failed | Continue, set `metadata: null` in result |

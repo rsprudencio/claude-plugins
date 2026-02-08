@@ -28,7 +28,7 @@ Call `mcp__plugin_jarvis_core__jarvis_retrieve` with:
 }
 ```
 
-**If the collection is empty**, the tool returns a message suggesting `/memory-index`.
+**If the collection is empty**, the tool returns a message suggesting the user index their vault (Jarvis can call `jarvis_index_vault` directly).
 
 ### 3. Present results
 

@@ -365,7 +365,7 @@ Same as Step 7-8.
 
 | Error | Action |
 |-------|--------|
-| Strategic memory dir missing | Warn: ".jarvis/strategic/ not found. Run /jarvis-setup to initialize. Continue anyway?" |
+| Strategic memory dir missing | Warn: ".jarvis/strategic/ not found. Run /jarvis-settings to initialize. Continue anyway?" |
 | Todoist MCP unavailable | Cannot proceed - required for analysis |
 | No inbox tasks | "Your inbox is empty! Add some tasks first, or define rules manually." |
 | Project creation fails | Report error, offer to route to Inbox instead |

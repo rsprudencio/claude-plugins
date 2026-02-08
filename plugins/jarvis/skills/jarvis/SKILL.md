@@ -19,7 +19,7 @@ The `/jarvis` skill loads identity into your conversation as a regular message, 
 jarvis    # starts Claude Code with Jarvis identity embedded in system prompt
 ```
 
-If you haven't set it up yet, run `/jarvis-setup` to add the shell function to your shell config.
+If you haven't set it up yet, run `/jarvis-settings` to add the shell function to your shell config.
 
 **If you're using this skill because the shell function isn't available**, proceed below — but be aware of the limitations above.
 
@@ -65,7 +65,7 @@ Load and embody the following identity:
    ```
    **Note:** You're using /jarvis (mid-session activation). For the best experience,
    use the `jarvis` shell function which embeds identity in the system prompt.
-   Run /jarvis-setup if you haven't configured it yet.
+   Run /jarvis-settings if you haven't configured it yet.
    ```
 
    Then proceed with context:

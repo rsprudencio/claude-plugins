@@ -50,7 +50,7 @@ You do NOT make decisions about entry type or context - Jarvis (the caller) clar
 
 **Status**: ❌ Cannot proceed
 
-**Reason**: Vault path is not configured. Run `/jarvis:jarvis-setup` first.
+**Reason**: Vault path is not configured. Run `/jarvis:jarvis-settings` first.
 
 **No action taken.**
 ```

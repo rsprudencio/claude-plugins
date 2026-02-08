@@ -17,7 +17,7 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.14.0",
+      "version": "1.15.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
@@ -37,7 +37,7 @@
   },
 
   "skills": {
-    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 15 user-invocable skills across 3 plugins (plus jarvis-audit, a background reference skill).",
+    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 14 user-invocable skills across 3 plugins (plus jarvis-audit, a background reference skill).",
 
     "jarvis": {
       "command": "/jarvis:jarvis",
@@ -71,12 +71,12 @@
       "plugin": "jarvis"
     },
 
-    "jarvis-setup": {
-      "command": "/jarvis:jarvis-setup",
-      "triggers": ["setup jarvis", "configure jarvis"],
-      "description": "Interactive setup wizard for first-time configuration",
-      "what_it_does": "Configures vault path, writes ~/.jarvis/config.json, optionally configures auto-extract settings, installs shell integration (jarvis command)",
-      "outputs": "~/.jarvis/config.json with vault_path, vault_confirmed, memory, and auto_extract settings",
+    "jarvis-settings": {
+      "command": "/jarvis:jarvis-settings",
+      "triggers": ["jarvis settings", "update config", "configure jarvis", "change vault path"],
+      "description": "View and update Jarvis configuration",
+      "what_it_does": "Menu-driven config manager: vault path, auto-extract, promotion thresholds, vault directory paths, memory system tuning, shell integration. First-time users get a streamlined flow; returning users jump to any section.",
+      "outputs": "~/.jarvis/config.json with all ~30 keys visible (vault, memory, auto_extract, promotion, paths)",
       "plugin": "jarvis"
     },
 
@@ -85,14 +85,6 @@
       "triggers": ["recall", "search vault", "find in vault"],
       "description": "Semantic search across vault content using ChromaDB",
       "what_it_does": "Finds related content by meaning, not just keywords. Searches all indexed vault files and Tier 2 content. Returns ranked results with relevance scoring.",
-      "plugin": "jarvis"
-    },
-
-    "jarvis-memory-index": {
-      "command": "/jarvis:jarvis-memory-index",
-      "triggers": ["index vault", "reindex memory"],
-      "description": "Bulk index vault .md files into ChromaDB for semantic search",
-      "what_it_does": "Scans vault for .md files and indexes them into ChromaDB. Supports --force (reindex all), --dir (specific directory), --sensitive (include documents/ and people/).",
       "plugin": "jarvis"
     },
 
@@ -614,7 +606,7 @@
       "Journal and audit agents use Haiku (fast, cheap) — Todoist uses Sonnet (needs reasoning)",
       "Explorer agent handles vault searches so main context stays clean",
       "Shell integration (jarvis command) auto-loads identity without /jarvis skill",
-      "Run /memory-index after manually adding vault files to keep semantic search current",
+      "Vault files are auto-indexed when written through jarvis_store — for manual additions, ask Jarvis to reindex",
       "Auto-extract runs in background with 120s cooldown — zero impact on conversation speed"
     ],
     "gotchas": [

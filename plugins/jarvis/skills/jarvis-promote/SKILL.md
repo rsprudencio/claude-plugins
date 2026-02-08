@@ -251,5 +251,5 @@ Delegate batch commit to `jarvis-audit-agent` with all promoted paths.
 - If `jarvis_retrieve(list_type="tier2")` returns empty → "No Tier 2 content found. Auto-Extract captures observations automatically during sessions. Check mode with /memory-stats."
 - If `jarvis_promote` fails for unsupported type → "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary, learning, decision."
 - If `jarvis_promote` returns error → Show error message, suggest checking `/memory-stats` for system health
-- If ChromaDB unavailable → "Memory system unavailable. Try /memory-index to initialize."
+- If ChromaDB unavailable → "Memory system unavailable. Try /jarvis-settings to configure and index your vault."
 - If config has no `promotion` section → Use defaults (importance 0.85, retrievals 3, age 30d)

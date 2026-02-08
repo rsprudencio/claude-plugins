@@ -3,7 +3,7 @@
 > **🚧 Documentation In Progress**
 > 
 > This README will be updated once the core implementation is finalized.
-> For now, use `/jarvis:jarvis-setup` after installing the plugin.
+> For now, use `/jarvis:jarvis-settings` after installing the plugin.
 
 ## Quick Install
 
@@ -15,7 +15,7 @@ claude plugin install jarvis@raph-claude-plugins
 ## Available Skills
 
 - `/jarvis` - Activate Jarvis mode
-- `/jarvis:jarvis-setup` - Configuration wizard
+- `/jarvis:jarvis-settings` - Configuration wizard
 - `/jarvis:jarvis-journal` - Create journal entries
 - `/jarvis:jarvis-todoist` - Todoist sync
 - `/jarvis:jarvis-orient` - Strategic briefing

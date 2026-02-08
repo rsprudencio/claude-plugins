@@ -1,280 +1,183 @@
-# Jarvis - Claude Code Plugin Marketplace
+# Jarvis - Personal AI Assistant for Claude Code
 
-**Version:** 1.14.0
-**Author:** Raphael Prudencio
-**License:** CC BY-NC 4.0 (free to use, no commercial use)
+A plugin marketplace that turns Claude Code into **Jarvis** — a context-aware personal assistant with a knowledge vault, semantic memory, and strategic awareness.
 
-Personal AI assistant plugins for Claude Code with knowledge vault management, semantic memory, and strategic context awareness.
+Jarvis manages a folder of markdown files (your "vault") as a personal knowledge base. It journals your thoughts, tracks your goals, searches by meaning, and learns from your conversations — all with a git-audited trail.
 
 ---
 
-## Features
+## Quick Install
 
-- **Knowledge vault management** - PKM system with bidirectional linking
-- **Git-audited trail** - JARVIS protocol commits for all vault operations
-- **Semantic memory** - Two-tier ChromaDB architecture with auto-indexing
-- **Auto-extract** - Passive observation capture from conversations
-- **Journal workflow** - Daily notes and Jarvis entries with intelligent vault linking
-- **Strategic context** - Goal tracking, value alignment, pattern analysis
-- **Todoist integration** - Smart task routing with project classification
-- **21 MCP tools** - Python-based MCP server with comprehensive vault access
-- **3 core agents** - Journal, audit, and explorer with specialized capabilities
-- **10 core skills** - setup, journal, inbox, audit, activation, schedule, recall, memory-index, memory-stats, promote
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Claude Code CLI** (latest version)
-- **Python 3.10+** (for MCP server)
-- **uv** (Python package manager for reproducible builds)
-
-### Install Plugins
+### Option 1: One-Line Installer (Recommended)
 
 ```bash
-# Add the marketplace (first time only)
+curl -fsSL https://raw.githubusercontent.com/rsprudencio/claude-plugins/refs/heads/master/install.sh | bash
+```
+
+This validates prerequisites, installs the plugin, configures your vault, and sets up the `jarvis` shell command — all in one step.
+
+### Option 2: Manual Install
+
+If you prefer to install step by step:
+
+**Prerequisites:**
+- [Claude Code CLI](https://claude.ai/code) (latest version)
+- [Python 3.10+](https://python.org)
+- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+
+**Install:**
+
+```bash
+# Add the marketplace
 claude plugin marketplace add raph-claude-plugins https://github.com/rsprudencio/claude-plugins
 
 # Install core plugin (required)
 claude plugin install jarvis@raph-claude-plugins
 
-# Optional extensions
+# Optional: Todoist integration
 claude plugin install jarvis-todoist@raph-claude-plugins
+
+# Optional: Strategic analysis (orient, catch-up, patterns, summaries)
 claude plugin install jarvis-strategic@raph-claude-plugins
 ```
 
-### First-Time Setup
+**First-time config:**
 
-Run the interactive setup wizard:
-
-```bash
-/jarvis-setup
+```
+/jarvis-settings
 ```
 
-This configures:
-- Vault path location
-- Shell integration (optional)
-- Auto-extract mode (passive observation capture)
-- Memory indexing
+This walks you through vault path selection, auto-extract mode, and shell integration.
 
----
+### Option 3: Clone and Install Locally
 
-## Plugins
-
-### 🔷 Core Plugin: `jarvis` (REQUIRED)
-
-**Features:**
-- Personal knowledge vault management
-- Journal entries with intelligent vault linking
-- Git audit trail with JARVIS protocol
-- Semantic memory with two-tier ChromaDB architecture
-- Auto-extract: passive observation capture from conversations
-- 21 MCP tools for vault operations
-- 3 core agents: audit, journal, explorer
-- 10 core skills: setup, journal, inbox, audit, activation, schedule, recall, memory-index, memory-stats, promote
-
-**Dependencies:** None
-
-**Install:**
 ```bash
+git clone https://github.com/rsprudencio/claude-plugins.git
+cd claude-plugins
+claude plugin marketplace add raph-claude-plugins .
 claude plugin install jarvis@raph-claude-plugins
 ```
 
----
+### Verify Installation
 
-### 📋 Optional: `jarvis-todoist`
+After installing, start Claude Code and run:
 
-**Features:**
-- Smart task routing with 6-option classification
-- Inbox capture workflow
-- Todoist sync with scheduled action detection
-- Task management analyst agent
-- Setup wizard for routing rules
-
-**Dependencies:**
-- `jarvis` plugin (core)
-- Todoist MCP server
-
-**Install:**
-```bash
-claude plugin install jarvis-todoist@raph-claude-plugins
 ```
+/jarvis-settings
+```
+
+If the MCP server loaded correctly, you'll see the configuration menu. If not, run `check-requirements` from the repo root to diagnose.
 
 ---
 
-### 🎯 Optional: `jarvis-strategic`
+## Getting Started
 
-**Features:**
-- Strategic orientation briefings
-- Catch-up summaries after time away
-- Weekly/monthly journal summarization
-- Behavioral pattern analysis
+Once installed, launch Jarvis:
 
-**Dependencies:**
-- `jarvis` plugin (core)
-
-**Install:**
 ```bash
-claude plugin install jarvis-strategic@raph-claude-plugins
+jarvis              # If you set up the shell command during install
+# or
+claude              # Then type /jarvis to activate mid-session
 ```
+
+### First Things to Try
+
+| Command | What it does |
+|---------|--------------|
+| `jarvis, journal this: I decided to use PostgreSQL for the new project` | Creates a journal entry with vault links |
+| `/recall database decisions` | Searches your vault by meaning |
+| `/jarvis-orient` | Strategic briefing — what to focus on today |
+| `/jarvis-todoist` | Process your Todoist inbox with smart routing |
+| `/promote` | Review and promote auto-captured observations |
+
+### How Jarvis Works
+
+1. **You talk to Claude as usual** — Jarvis runs in the background
+2. **Auto-extract** captures valuable insights from your conversations into ephemeral memory
+3. **Journal entries** create permanent, linked notes in your vault
+4. **Semantic search** finds related content by meaning, not just keywords
+5. **Strategic context** keeps you aligned with your goals across sessions
 
 ---
 
-## Key Workflows
+## What's in the Box
 
-### Journal Entries
+### 3 Composable Plugins
 
-Create journal entries with intelligent vault linking:
+| Plugin | What | Install |
+|--------|------|---------|
+| **jarvis** (core) | Vault management, journals, git audit, semantic memory, auto-extract | Required |
+| **jarvis-todoist** | Smart task routing, inbox capture, Todoist sync | Optional (needs [Todoist MCP](https://todoist.com)) |
+| **jarvis-strategic** | Orient briefings, catch-up, summaries, pattern analysis | Optional |
 
-```bash
-/jarvis-journal
-```
+### 14 Skills (Slash Commands)
 
-The journal agent:
-- Searches vault for relevant context
-- Suggests bidirectional links
-- Auto-indexes entries into semantic memory
-- Commits via JARVIS protocol
+**Core:**
+| Skill | Description |
+|-------|-------------|
+| `/jarvis` | Activate Jarvis identity mid-session |
+| `/jarvis-settings` | View and update configuration |
+| `/jarvis-journal` | Create journal entries with intelligent vault linking |
+| `/jarvis-inbox` | Process and organize vault inbox items |
+| `/recall <query>` | Semantic search across your vault |
+| `/promote` | Browse and promote auto-captured observations |
+| `/memory-stats` | Memory system health and statistics |
+| `/jarvis-schedule` | Manage recurring Jarvis actions |
+| `/jarvis-audit` | Git audit protocol reference |
 
-### Semantic Search
+**Todoist** (requires jarvis-todoist plugin):
+| Skill | Description |
+|-------|-------------|
+| `/jarvis-todoist` | Sync Todoist inbox with smart routing |
+| `/jarvis-todoist-setup` | Configure Todoist routing rules |
 
-Search vault content by meaning (not just keywords):
+**Strategic** (requires jarvis-strategic plugin):
+| Skill | Description |
+|-------|-------------|
+| `/jarvis-orient` | Strategic briefing for starting a session |
+| `/jarvis-catchup` | Catch-up after time away |
+| `/jarvis-summarize` | Weekly/monthly journal summaries |
+| `/jarvis-patterns` | Behavioral pattern analysis |
 
-```bash
-/recall [query]
-```
+### 3 Agents (Autonomous Sub-Processes)
 
-Example:
-```bash
-/recall "what did I decide about the TypeScript migration?"
-```
+Jarvis delegates work to specialized agents that run in isolated context windows:
 
-Uses ChromaDB with two-tier architecture:
-- **Tier 1**: File-backed vault content (permanent)
-- **Tier 2**: Auto-extracted observations (ephemeral, promotable)
+- **Journal Agent** (Haiku) — Drafts entries with vault linking and YAML frontmatter
+- **Audit Agent** (Haiku) — JARVIS protocol git commits, history queries, rollbacks
+- **Explorer Agent** (Haiku) — Vault-wide search with regex, date filtering, semantic pre-search
 
-### Strategic Briefings
+### 21 MCP Tools
 
-Get oriented at session start:
-
-```bash
-/jarvis-orient
-```
-
-Loads strategic context:
-- Current priorities and goals
-- Active projects
-- Recent journal themes
-
-### Task Management
-
-Process Todoist inbox with smart routing:
-
-```bash
-/jarvis-todoist
-```
-
-Routes tasks based on:
-- Project relevance
-- Vault connections
-- Due dates and priorities
-- Strategic focus areas
+Python-based MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [docs/capabilities.json](docs/capabilities.json) for the full reference.
 
 ---
 
 ## Memory System
 
-### ChromaDB Semantic Memory
+Jarvis has a two-tier semantic memory powered by ChromaDB:
 
-Jarvis uses ChromaDB for intelligent semantic search across your vault:
+**Tier 1 — File-Backed (Permanent)**
+Your vault markdown files and strategic memories. Git-tracked, visible in Obsidian, searchable via `/recall`.
 
-- **Embedding Model**: all-MiniLM-L6-v2 (384d)
-- **Storage**: `~/.jarvis/memory_db/` (outside vault to avoid sync pollution)
-- **Indexing**: Auto-index on journal creation, bulk index with `/memory-index`
+**Tier 2 — Ephemeral (Auto-Generated)**
+Observations captured from your conversations, patterns, summaries. Lives in ChromaDB only. Review with `/promote` — valuable items get promoted to permanent vault files.
 
-### Two-Tier Architecture
-
-**Tier 1: File-Backed (Permanent)**
-- User-created content (vault files, strategic memories)
-- Git-tracked, Obsidian-visible, permanent
-- Namespace prefix: `vault::`, `memory::`
-
-**Tier 2: ChromaDB-First (Ephemeral)**
-- Auto-generated content (observations, patterns, summaries)
-- ChromaDB-only, invisible to Obsidian, disposable
-- Namespace prefixes: `obs::`, `pattern::`, `summary::`, `code::`, `rel::`, `hint::`, `plan::`
-- Can be promoted to Tier 1 when important
-
-**Content Types (Tier 2):**
-- `observation` - Captured insights from conversations
-- `pattern` - Detected behavioral patterns
-- `summary` - Session or period summaries
-- `code` - Code snippets and analysis
-- `relationship` - Entity relationship mappings
-- `hint` - Contextual hints and suggestions
-- `plan` - Task plans and strategies
-
-### Auto-Extract
-
-Passive observation capture from conversations:
-
-- **Stop hook**: Runs after each conversation turn
-- **Filtering**: Anti-recursion skip lists, SHA-256 dedup
-- **Modes**: disabled, background-api, background-cli
-- **Smart extraction**: Uses Haiku to identify valuable insights
-- **Promotion**: Important observations can be promoted to permanent vault files
-
-Manage Tier 2 content:
-
-```bash
-/promote  # Browse and promote ephemeral observations
-```
-
-### Memory Commands
-
-```bash
-/recall [query]          # Semantic search across vault
-/memory-index            # Bulk index vault files into ChromaDB
-/memory-stats            # Show memory system health and stats
-/promote                 # Browse and promote Tier 2 content
-```
+**Auto-Extract** runs passively after each conversation turn, using Haiku to identify insights worth remembering. Configurable modes: `background` (recommended), `background-api`, `background-cli`, or `disabled`.
 
 ---
 
 ## Configuration
 
-### System Prompt Setup
+All configuration lives in `~/.jarvis/config.json`. The installer writes a full config with all ~30 keys visible so you can discover and tweak options.
 
-Add this function to your `~/.zshrc` or `~/.bashrc` for the full Jarvis experience:
+Run `/jarvis-settings` anytime to update configuration through a guided menu.
 
-```zsh
-jarvis() {
-  local cache_dir="$HOME/.claude/plugins/cache/raph-claude-plugins"
-  local system_prompt=""
-
-  # Detect and concatenate system prompts from installed plugins
-  for plugin in jarvis jarvis-todoist jarvis-strategic; do
-    local prompt_file=$(echo $cache_dir/$plugin/*/system-prompt.md(N[1]))
-
-    if [[ -f "$prompt_file" ]]; then
-      system_prompt+="$(cat "$prompt_file")\n\n---\n\n"
-    fi
-  done
-
-  # Launch claude with combined system prompt
-  if [[ -n "$system_prompt" ]]; then
-    claude --append-system-prompt "$system_prompt" "$@"
-  else
-    echo "Warning: No jarvis plugins found. Install with:"
-    echo "  claude plugin install jarvis@raph-claude-plugins"
-    claude "$@"
-  fi
-}
-```
-
-Then launch with: `jarvis` instead of `claude`
+Key config sections:
+- **vault_path** — Where your markdown files live
+- **memory.auto_extract** — Observation capture mode and thresholds
+- **promotion** — When ephemeral content gets promoted to vault files
+- **paths** — Vault directory layout (all customizable)
 
 ---
 
@@ -284,67 +187,33 @@ Then launch with: `jarvis` instead of `claude`
 
 ```
 .
-├── .claude-plugin/
-│   └── marketplace.json          # Marketplace manifest
+├── install.sh                    # Curl-pipe-bash installer
+├── check-requirements            # Standalone prereq checker
 ├── plugins/
 │   ├── jarvis/                   # Core plugin
-│   │   ├── .claude-plugin/       # Plugin manifest
 │   │   ├── agents/               # Journal, audit, explorer agents
-│   │   ├── skills/               # Core skills
-│   │   ├── mcp-server/           # Python MCP server (21 tools)
-│   │   ├── system-prompt.md      # Jarvis identity
-│   │   └── .mcp.json             # MCP registration
+│   │   ├── skills/               # 9 core skills
+│   │   ├── mcp-server/           # Python MCP server (21 tools, 652 tests)
+│   │   ├── hooks/                # Auto-extract Stop hook
+│   │   └── system-prompt.md      # Jarvis identity
 │   ├── jarvis-todoist/           # Todoist extension
 │   └── jarvis-strategic/         # Strategic analysis extension
 ├── CLAUDE.md                     # Development guide
-└── LICENSE                       # CC BY-NC 4.0 legal text
+└── LICENSE                       # CC BY-NC 4.0
 ```
 
 ### Running Tests
 
 ```bash
-cd plugins/jarvis/mcp-server
-uv run pytest -v
+cd plugins/jarvis/mcp-server && uv run pytest -v
 ```
+
+652 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
 
 ### Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** - Development guide and conventions
-- **[docs/capabilities.json](docs/capabilities.json)** - Full capability reference (v1.14.0)
-- **[docs/](docs/)** - Additional documentation
-
-### Contributing
-
-See [CLAUDE.md](CLAUDE.md) for development conventions:
-- Commit message guidelines
-- Version bumping workflow
-- Plugin reinstall process
-
-**Requirements:**
-- Python 3.10+ (for MCP server)
-- uv (Python package manager for reproducible builds)
-
-**Contributing:** Issues and PRs welcome!
-
----
-
-## Architecture Benefits
-
-### Implicit Dependencies
-
-Claude Code doesn't yet support formal plugin dependencies ([GitHub Issue #9444](https://github.com/anthropics/claude-code/issues/9444)), so we use runtime checks:
-
-- Extension agents verify required core tools exist
-- Helpful error messages if dependencies missing
-- No silent failures
-
----
-
-## Support
-
-- **Issues:** [GitHub Issues](https://github.com/rsprudencio/claude-plugins/issues)
-- **Documentation:** See plugin READMEs and individual SKILL.md files
-- **License:** CC BY-NC 4.0 (Attribution-NonCommercial)
+- **[CLAUDE.md](CLAUDE.md)** — Development conventions and version history
+- **[docs/capabilities.json](docs/capabilities.json)** — Full capability reference
 
 ---
 
@@ -352,13 +221,8 @@ Claude Code doesn't yet support formal plugin dependencies ([GitHub Issue #9444]
 
 **CC BY-NC 4.0** (Creative Commons Attribution-NonCommercial 4.0 International)
 
-- ✅ Share and adapt for non-commercial purposes
-- ✅ Attribute the creator
-- ❌ No commercial use without permission
-
 See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**Status:** Production Ready v1.14.0
-**Latest Release:** 2026-02-08
+**v1.15.0** | [Issues](https://github.com/rsprudencio/claude-plugins/issues) | [Changelog](CLAUDE.md#version-history)

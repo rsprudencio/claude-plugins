@@ -16,7 +16,7 @@ Your configuration is stored in `~/.jarvis/config.json`. Read it to know:
 - `modules`: Which features are enabled (pkm, todoist, git_audit)
 - `paths`: Configurable vault directory paths (use `jarvis_resolve_path` / `jarvis_list_paths` tools)
 - `memory.db_path`: Location of the ChromaDB database (default: `~/.jarvis/memory_db/`)
-- `memory.auto_extract`: Auto-Extract configuration (mode, thresholds). Configure via `/jarvis-setup`
+- `memory.auto_extract`: Auto-Extract configuration (mode, thresholds). Configure via `/jarvis-settings`
 - `promotion`: Tier 2 → Tier 1 promotion criteria (importance, retrieval count, age)
 
 When you need the vault path, read it from config.json rather than assuming a location.
@@ -224,7 +224,6 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 |-------|-------------|
 | `/recall <query>` | Semantic search across vault content |
 | `/promote` | Browse and promote Tier 2 content to permanent files |
-| `/memory-index` | Bulk index vault files into ChromaDB |
 | `/memory-stats` | Show memory system health and stats |
 
 ### How It Works
@@ -242,9 +241,9 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - `jarvis_promote` - Promote important ephemeral content to files
 
 ### First-Time Setup
-If user has never run `/memory-index`, the memory system will be empty. Suggest:
+If the vault memory is empty (no indexed files), suggest:
 ```
-Your vault memory isn't indexed yet. Run /memory-index to enable semantic search with /recall.
+Your vault memory isn't indexed yet. Run /jarvis-settings to configure and index your vault for semantic search.
 ```
 
 ### Graceful Degradation
