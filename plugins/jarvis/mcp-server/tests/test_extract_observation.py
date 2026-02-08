@@ -349,14 +349,14 @@ class TestBuildTurnPrompt:
         turn = {
             "user_text": "Create a journal entry",
             "assistant_text": "Sure, I'll create that",
-            "tool_names": ["jarvis_write_vault_file"],
+            "tool_names": ["jarvis_store"],
             "token_usage": "100 in, 50 out",
         }
         prompt = build_turn_prompt(turn)
 
         assert "Create a journal entry" in prompt
         assert "Sure, I'll create that" in prompt
-        assert "jarvis_write_vault_file" in prompt
+        assert "jarvis_store" in prompt
         assert "100 in, 50 out" in prompt
 
     def test_truncates_long_text(self):

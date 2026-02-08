@@ -24,3 +24,7 @@ Thumbs.db
 
 # Local testing artifacts
 *.log
+
+# Test artifacts
+.coverage
+htmlcov/
