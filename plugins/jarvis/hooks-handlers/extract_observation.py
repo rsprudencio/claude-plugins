@@ -1,70 +1,279 @@
 #!/usr/bin/env python3
-"""Auto-Extract background worker: calls Haiku to extract observations from tool output.
+"""Auto-Extract background worker: analyzes conversation turns and extracts observations.
 
-Usage: echo '{"tool_name": ..., "tool_input": ..., "tool_result": ...}' | python3 extract_observation.py <mcp_server_dir> [mode]
+Usage: python3 extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]
 
-The MCP server directory is passed as the first argument so we can import tools.tier2.
-Mode is optional: "background" (smart, default), "background-api", or "background-cli".
+The Stop hook creates a temp JSONL file with the last N lines of the transcript.
+This script:
+1. Parses the last conversation turn (user + assistant messages)
+2. Checks substance (min total text) and cooldown thresholds
+3. Calls Haiku to extract behavioral observations
+4. Stores observations via tier2_write
+5. Cleans up the temp file
 """
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
+from pathlib import Path
 
-# Max chars of tool output to include in extraction prompt
-MAX_OUTPUT_CHARS = 2000
+# Import anthropic at module level for easier testing (imported conditionally in function)
+try:
+    import anthropic
+except ImportError:
+    anthropic = None  # type: ignore
 
 # Haiku model ID
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
+# Cooldown sentinel file
+COOLDOWN_SENTINEL = Path("/tmp/jarvis-auto-extract-cooldown")
+
+# Token usage log for cost tracking (debug mode)
+TOKEN_LOG_FILE = Path.home() / ".jarvis" / "debug.auto-extraction.log"
+
 EXTRACTION_PROMPT = """\
-You are analyzing a tool call result to extract useful observations for a personal knowledge management system.
+You are analyzing a conversation turn between a user and an AI assistant working on code.
 
-Tool: {tool_name}
-Input: {tool_input_summary}
+## User's Message
+{user_text}
 
-Output (possibly truncated):
-{tool_output}
+## Assistant's Response
+{assistant_text}
 
-If this tool call reveals something structurally meaningful — such as codebase structure, \
-user preferences, decisions made, workflow patterns, project architecture, or important context \
-that would be useful to remember across sessions — extract it as a concise observation.
+## Tools Used
+{tool_names}
+
+## Context
+Token usage: {token_usage}
+
+Extract observations about:
+- User preferences, workflow patterns, or behavioral tendencies
+- Architectural decisions or technical choices made
+- Project context, structure, or conventions discovered
+- Important patterns or insights that would be useful to remember across sessions
+
+DO NOT extract:
+- Routine file operations or trivial tool calls
+- Temporary debugging or exploratory work
+- Secrets, credentials, or PII
 
 Respond with JSON only:
 {{
   "has_observation": true/false,
-  "content": "The observation text (1-3 sentences, markdown OK)",
+  "content": "The observation (1-3 sentences, markdown OK)",
   "importance_score": 0.3-0.8,
   "topics": ["topic1", "topic2"]
 }}
 
-If the output is routine, trivial, or contains nothing worth remembering, set has_observation to false.
-Do NOT extract observations about secrets, passwords, API keys, or personal identifiable information."""
+If the turn is routine or contains nothing worth remembering, set has_observation to false.
+"""
 
 
-def truncate_for_prompt(text: str, max_chars: int = MAX_OUTPUT_CHARS) -> str:
-    """Truncate text for inclusion in extraction prompt."""
+def parse_transcript_turn(lines: list[str]) -> dict | None:
+    """Parse the last conversation turn from transcript JSONL lines.
+
+    Scans backwards to find:
+    - Last assistant message (with text blocks and tool_use blocks)
+    - Preceding user message (with text blocks)
+
+    Returns:
+        Dict with keys: user_text, assistant_text, tool_names, token_usage
+        None if parsing fails or no valid turn found
+    """
+    assistant_msg = None
+    user_msg = None
+
+    # Scan backwards to find last assistant, then preceding user
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        msg_type = entry.get("type")
+
+        # Skip metadata types
+        if msg_type in ("system", "progress", "file-history-snapshot"):
+            continue
+
+        if msg_type == "assistant" and assistant_msg is None:
+            assistant_msg = entry
+        elif msg_type == "user" and assistant_msg is not None and user_msg is None:
+            user_msg = entry
+            break  # Found complete turn
+
+    if not assistant_msg or not user_msg:
+        return None
+
+    # Extract user text
+    user_content = user_msg.get("message", {}).get("content", [])
+    user_texts = [
+        block.get("text", "")
+        for block in user_content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    user_text = "\n".join(user_texts).strip()
+
+    # Extract assistant text and tool names
+    assistant_content = assistant_msg.get("message", {}).get("content", [])
+    assistant_texts = []
+    tool_names = []
+
+    for block in assistant_content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            assistant_texts.append(block.get("text", ""))
+        elif block.get("type") == "tool_use":
+            tool_names.append(block.get("name", "unknown"))
+
+    assistant_text = "\n".join(assistant_texts).strip()
+
+    # Deduplicate tool names while preserving order
+    seen = set()
+    unique_tools = []
+    for tool in tool_names:
+        if tool not in seen:
+            seen.add(tool)
+            unique_tools.append(tool)
+
+    # Extract token usage
+    usage = assistant_msg.get("message", {}).get("usage", {})
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    token_usage = f"{input_tokens} in, {output_tokens} out"
+
+    return {
+        "user_text": user_text,
+        "assistant_text": assistant_text,
+        "tool_names": unique_tools,
+        "token_usage": token_usage,
+    }
+
+
+def check_substance(turn: dict, min_chars: int = 200) -> bool:
+    """Check if turn has enough substance to warrant extraction.
+
+    Args:
+        turn: Parsed turn dict from parse_transcript_turn
+        min_chars: Minimum total characters (user + assistant text)
+
+    Returns:
+        True if turn meets substance threshold
+    """
+    total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+    return total_chars >= min_chars
+
+
+def check_cooldown(cooldown_seconds: int = 120) -> bool:
+    """Check if cooldown period has passed since last extraction.
+
+    Uses a file-based sentinel at /tmp/jarvis-auto-extract-cooldown.
+    At most one extraction per N seconds (system-wide, across all sessions).
+
+    Args:
+        cooldown_seconds: Minimum seconds between extractions
+
+    Returns:
+        True if cooldown has passed (extraction allowed)
+    """
+    try:
+        now = time.time()
+
+        if COOLDOWN_SENTINEL.exists():
+            mtime = COOLDOWN_SENTINEL.stat().st_mtime
+            if now - mtime < cooldown_seconds:
+                return False  # Still in cooldown
+
+        # Create or refresh sentinel
+        COOLDOWN_SENTINEL.touch()
+        return True
+    except OSError:
+        # If /tmp is unavailable, don't block
+        return True
+
+
+def truncate(text: str, max_chars: int) -> str:
+    """Truncate text to max_chars with ellipsis if needed."""
     if len(text) <= max_chars:
         return text
-    return text[:max_chars] + f"\n... (truncated, {len(text)} total chars)"
+    return text[:max_chars] + "..."
 
 
-def summarize_tool_input(tool_input: dict) -> str:
-    """Create a brief summary of tool input for the prompt."""
-    summary = json.dumps(tool_input, default=str)
-    if len(summary) > 500:
-        return summary[:500] + "..."
-    return summary
+def build_turn_prompt(turn: dict) -> str:
+    """Build the extraction prompt for Haiku from parsed turn.
 
+    Args:
+        turn: Parsed turn dict from parse_transcript_turn
 
-def _build_prompt(tool_name: str, tool_input: dict, tool_output: str) -> str:
-    """Build the extraction prompt for Haiku."""
+    Returns:
+        Formatted extraction prompt string
+    """
+    user_text = truncate(turn.get("user_text", ""), 500)
+    assistant_text = truncate(turn.get("assistant_text", ""), 1500)
+    tool_names = turn.get("tool_names", [])
+    tool_list = ", ".join(tool_names) if tool_names else "None"
+    token_usage = turn.get("token_usage", "unknown")
+
     return EXTRACTION_PROMPT.format(
-        tool_name=tool_name,
-        tool_input_summary=summarize_tool_input(tool_input),
-        tool_output=truncate_for_prompt(tool_output),
+        user_text=user_text,
+        assistant_text=assistant_text,
+        tool_names=tool_list,
+        token_usage=token_usage,
     )
+
+
+def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
+                     observation_stored: bool = False, obs_id: str = None,
+                     importance: float = 0.0, topics: list = None, debug: bool = False):
+    """Log Haiku token usage with observation metadata for cost tracking.
+
+    Haiku pricing (as of 2026):
+    - Input: $1.00 per 1M tokens
+    - Output: $5.00 per 1M tokens
+
+    Args:
+        backend: "API" or "CLI"
+        input_tokens: Input token count
+        output_tokens: Output token count
+        observation_stored: Whether an observation was actually stored
+        obs_id: Observation ID if stored (e.g., "obs::1770561133783")
+        importance: Importance score if stored
+        topics: List of topics if stored
+        debug: Enable logging (default False)
+    """
+    if not debug:
+        return
+
+    try:
+        # Calculate costs
+        input_cost = (input_tokens / 1_000_000) * 1.00
+        output_cost = (output_tokens / 1_000_000) * 5.00
+        total_cost = input_cost + output_cost
+
+        # Base log entry
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = (
+            f"{timestamp} | {backend:4s} | "
+            f"in:{input_tokens:6d} out:{output_tokens:4d} | "
+            f"${total_cost:.6f} | "
+        )
+
+        # Add observation metadata
+        if observation_stored and obs_id:
+            topics_str = ",".join(topics) if topics else "none"
+            log_entry += f"STORED | {obs_id} | imp:{importance:.2f} | topics:{topics_str}\n"
+        else:
+            log_entry += "SKIPPED | has_observation:false\n"
+
+        # Append to log file
+        with open(TOKEN_LOG_FILE, "a") as f:
+            f.write(log_entry)
+    except Exception as e:
+        print(f"Failed to log token usage: {e}", file=sys.stderr)
 
 
 def _parse_haiku_text(text: str) -> dict | None:
@@ -89,24 +298,46 @@ def _parse_haiku_text(text: str) -> dict | None:
         return None
 
 
-def call_haiku_api(tool_name: str, tool_input: dict, tool_output: str) -> dict | None:
-    """Call Haiku via Anthropic SDK (fast, requires ANTHROPIC_API_KEY).
+def _extract_with_backend(backend_name: str, backend_fn, prompt: str) -> tuple[dict, int, int] | None:
+    """Common wrapper for API/CLI extraction.
+
+    Args:
+        backend_name: "API" or "CLI" for logging
+        backend_fn: Backend function that returns (response_text, input_tokens, output_tokens) or None
+        prompt: The extraction prompt
 
     Returns:
-        Parsed JSON dict with has_observation, content, importance_score, topics.
-        None if API call fails or no API key found.
+        Tuple of (parsed_observation_dict, input_tokens, output_tokens) or None
+        Token counts returned so caller can log after knowing storage outcome
+    """
+    result = backend_fn(prompt)
+    if result is None:
+        return None
+
+    response_text, input_tokens, output_tokens = result
+
+    # Parse response
+    parsed = _parse_haiku_text(response_text)
+    if parsed is None:
+        print(f"Failed to parse Haiku {backend_name} response", file=sys.stderr)
+        return None
+
+    return (parsed, input_tokens, output_tokens)
+
+
+def _call_api_backend(prompt: str) -> tuple[str, int, int] | None:
+    """Backend: Call Haiku via Anthropic SDK.
+
+    Returns:
+        Tuple of (response_text, input_tokens, output_tokens) or None on failure
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return None
 
-    try:
-        import anthropic
-    except ImportError:
+    if anthropic is None:
         print("anthropic package not installed, skipping API extraction", file=sys.stderr)
         return None
-
-    prompt = _build_prompt(tool_name, tool_input, tool_output)
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
@@ -115,32 +346,39 @@ def call_haiku_api(tool_name: str, tool_input: dict, tool_output: str) -> dict |
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = response.content[0].text
-        result = _parse_haiku_text(text)
-        if result is None:
-            print(f"Failed to parse Haiku API response", file=sys.stderr)
-        return result
+        return (
+            response.content[0].text,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
     except Exception as e:
         print(f"Haiku API call failed: {e}", file=sys.stderr)
         return None
 
 
-def call_haiku_cli(tool_name: str, tool_input: dict, tool_output: str) -> dict | None:
-    """Call Haiku via Claude CLI (slower, uses OAuth from Keychain).
+def call_haiku_api(prompt: str) -> tuple[dict, int, int] | None:
+    """Call Haiku via Anthropic SDK (fast, requires ANTHROPIC_API_KEY).
 
-    Uses `claude -p --model haiku` in non-interactive mode.
-    Inherits OAuth credentials from the user's Claude Code installation.
+    Args:
+        prompt: The extraction prompt string
 
     Returns:
-        Parsed JSON dict with has_observation, content, importance_score, topics.
-        None if CLI call fails or claude binary not found.
+        Tuple of (parsed_dict, input_tokens, output_tokens) or None if failed.
+        Token counts returned for logging after storage outcome is known.
+    """
+    return _extract_with_backend("API", _call_api_backend, prompt)
+
+
+def _call_cli_backend(prompt: str) -> tuple[str, int, int] | None:
+    """Backend: Call Haiku via Claude CLI.
+
+    Returns:
+        Tuple of (response_text, estimated_input_tokens, estimated_output_tokens) or None on failure
     """
     claude_bin = shutil.which("claude")
     if not claude_bin:
         print("claude binary not found on PATH, skipping CLI extraction", file=sys.stderr)
         return None
-
-    prompt = _build_prompt(tool_name, tool_input, tool_output)
 
     try:
         result = subprocess.run(
@@ -154,10 +392,13 @@ def call_haiku_cli(tool_name: str, tool_input: dict, tool_output: str) -> dict |
             print(f"Claude CLI exited with code {result.returncode}", file=sys.stderr)
             return None
 
-        parsed = _parse_haiku_text(result.stdout)
-        if parsed is None:
-            print(f"Failed to parse Haiku CLI response", file=sys.stderr)
-        return parsed
+        # Estimate token usage (CLI doesn't expose exact counts)
+        # Rough estimate: ~4 chars per token for English text
+        est_input = len(prompt) // 4
+        est_output = len(result.stdout) // 4
+
+        return (result.stdout, est_input, est_output)
+
     except subprocess.TimeoutExpired:
         print("Claude CLI timed out after 30s", file=sys.stderr)
         return None
@@ -166,40 +407,58 @@ def call_haiku_cli(tool_name: str, tool_input: dict, tool_output: str) -> dict |
         return None
 
 
-def call_haiku(tool_name: str, tool_input: dict, tool_output: str, mode: str = "background") -> dict | None:
-    """Route extraction to the appropriate backend based on mode.
+def call_haiku_cli(prompt: str) -> tuple[dict, int, int] | None:
+    """Call Haiku via Claude CLI (slower, uses OAuth from Keychain).
 
-    Modes:
-        background: Smart fallback — try API first, fall back to CLI.
-        background-api: Force Anthropic SDK only (needs ANTHROPIC_API_KEY).
-        background-cli: Force Claude CLI only (uses OAuth).
+    Uses `claude -p --model haiku` in non-interactive mode.
+    Inherits OAuth credentials from the user's Claude Code installation.
+
+    Args:
+        prompt: The extraction prompt string
 
     Returns:
-        Parsed JSON dict with has_observation, content, importance_score, topics.
-        None if extraction fails.
+        Tuple of (parsed_dict, estimated_input_tokens, estimated_output_tokens) or None if failed.
+        Token counts returned for logging after storage outcome is known.
+    """
+    return _extract_with_backend("CLI", _call_cli_backend, prompt)
+
+
+def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, str] | None:
+    """Route extraction to the appropriate backend based on mode.
+
+    Args:
+        prompt: The extraction prompt string
+        mode: "background" (smart fallback), "background-api", or "background-cli"
+
+    Returns:
+        Tuple of (parsed_dict, input_tokens, output_tokens, backend_used) or None if failed.
+        backend_used is "API" or "CLI" for logging purposes.
     """
     if mode == "background-api":
-        return call_haiku_api(tool_name, tool_input, tool_output)
+        result = call_haiku_api(prompt)
+        return (*result, "API") if result else None
 
     if mode == "background-cli":
-        return call_haiku_cli(tool_name, tool_input, tool_output)
+        result = call_haiku_cli(prompt)
+        return (*result, "CLI") if result else None
 
     # Smart "background" mode: try API first (fast), fall back to CLI
-    result = call_haiku_api(tool_name, tool_input, tool_output)
+    result = call_haiku_api(prompt)
     if result is not None:
-        return result
+        return (*result, "API")
 
-    return call_haiku_cli(tool_name, tool_input, tool_output)
+    result = call_haiku_cli(prompt)
+    return (*result, "CLI") if result else None
 
 
-def store_observation(content: str, importance_score: float, topics: list, source_tool: str) -> dict:
+def store_observation(content: str, importance_score: float, topics: list, source_label: str) -> dict:
     """Store an observation via tier2_write.
 
     Args:
         content: Observation text
         importance_score: 0.0-1.0
         topics: List of topic tags
-        source_tool: Name of the tool that generated this observation
+        source_label: Source identifier (e.g., "auto-extract:stop-hook")
 
     Returns:
         Result dict from tier2_write
@@ -210,60 +469,105 @@ def store_observation(content: str, importance_score: float, topics: list, sourc
         content=content,
         content_type="observation",
         importance_score=importance_score,
-        source=f"auto-extract:{source_tool}",
+        source=source_label,
         topics=topics,
         skip_secret_scan=False,  # Always scan for secrets
     )
 
 
 def main():
-    """Main entry point: read hook data from stdin, extract and store observation."""
-    # Get MCP server dir and optional mode from args
-    if len(sys.argv) < 2:
-        print("Usage: extract_observation.py <mcp_server_dir> [mode]", file=sys.stderr)
+    """Main entry point: read transcript, extract and store observation."""
+    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]
+    if len(sys.argv) < 4:
+        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]", file=sys.stderr)
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
-    mode = sys.argv[2] if len(sys.argv) >= 3 else "background"
+    mode = sys.argv[2]
+    temp_file = Path(sys.argv[3])
+    session_id = sys.argv[4] if len(sys.argv) >= 5 else "unknown"
     sys.path.insert(0, mcp_server_dir)
 
-    # Read hook data from stdin
     try:
-        hook_data = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, EOFError) as e:
-        print(f"Failed to read hook data: {e}", file=sys.stderr)
-        sys.exit(1)
+        # Read temp JSONL file
+        if not temp_file.exists():
+            print(f"Temp file not found: {temp_file}", file=sys.stderr)
+            sys.exit(0)
 
-    tool_name = hook_data.get("tool_name", "unknown")
-    tool_input = hook_data.get("tool_input", {})
-    tool_result = hook_data.get("tool_result", "")
+        with open(temp_file) as f:
+            lines = [line.strip() for line in f if line.strip()]
 
-    # Call Haiku for extraction using the specified mode
-    extraction = call_haiku(tool_name, tool_input, tool_result, mode=mode)
-    if extraction is None:
-        sys.exit(0)
+        # Parse transcript turn
+        turn = parse_transcript_turn(lines)
+        if turn is None:
+            print("No valid turn found in transcript", file=sys.stderr)
+            sys.exit(0)
 
-    if not extraction.get("has_observation", False):
-        sys.exit(0)
+        # Load config for thresholds
+        from tools.config import get_auto_extract_config
+        config = get_auto_extract_config()
+        debug = config.get("debug", False)
 
-    # Store the observation
-    content = extraction.get("content", "")
-    if not content:
-        sys.exit(0)
+        # Check substance
+        min_chars = config.get("min_turn_chars", 200)
+        if not check_substance(turn, min_chars):
+            print(f"Turn too short (< {min_chars} chars), skipping", file=sys.stderr)
+            sys.exit(0)
 
-    importance = float(extraction.get("importance_score", 0.5))
-    # Clamp importance to valid range
-    importance = max(0.0, min(1.0, importance))
+        # Check cooldown
+        cooldown_seconds = config.get("cooldown_seconds", 120)
+        if not check_cooldown(cooldown_seconds):
+            print(f"Cooldown active (< {cooldown_seconds}s since last extraction), skipping", file=sys.stderr)
+            sys.exit(0)
 
-    topics = extraction.get("topics", [])
-    if not isinstance(topics, list):
-        topics = []
+        # Build prompt and call Haiku
+        prompt = build_turn_prompt(turn)
+        extraction_result = call_haiku(prompt, mode=mode)
+        if extraction_result is None:
+            print("Haiku extraction failed", file=sys.stderr)
+            sys.exit(0)
 
-    result = store_observation(content, importance, topics, tool_name)
-    if result.get("success"):
-        print(f"Stored observation: {result.get('id')}", file=sys.stderr)
-    else:
-        print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
+        extraction, input_tokens, output_tokens, backend = extraction_result
+
+        if not extraction.get("has_observation", False):
+            print("No observation extracted (routine turn)", file=sys.stderr)
+            # Log extraction attempt that yielded no observation
+            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+            sys.exit(0)
+
+        # Store the observation
+        content = extraction.get("content", "")
+        if not content:
+            print("Empty observation content, skipping", file=sys.stderr)
+            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+            sys.exit(0)
+
+        importance = float(extraction.get("importance_score", 0.5))
+        importance = max(0.0, min(1.0, importance))  # Clamp to valid range
+
+        topics = extraction.get("topics", [])
+        if not isinstance(topics, list):
+            topics = []
+
+        result = store_observation(content, importance, topics, "auto-extract:stop-hook")
+        if result.get("success"):
+            obs_id = result.get('id', 'unknown')
+            print(f"Stored observation: {obs_id}", file=sys.stderr)
+            # Log successful extraction with full metadata
+            _log_token_usage(backend, input_tokens, output_tokens,
+                           observation_stored=True, obs_id=obs_id,
+                           importance=importance, topics=topics, debug=debug)
+        else:
+            print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
+            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+
+    finally:
+        # Always clean up temp file
+        try:
+            if temp_file.exists():
+                temp_file.unlink()
+        except OSError as e:
+            print(f"Failed to clean up temp file: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

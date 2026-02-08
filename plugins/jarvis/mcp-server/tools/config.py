@@ -134,19 +134,20 @@ def get_auto_extract_config() -> dict:
         - "background": Smart fallback — tries API first, falls back to CLI
         - "background-api": Force Anthropic SDK (requires ANTHROPIC_API_KEY)
         - "background-cli": Force Claude CLI (uses OAuth from Keychain)
-        - "inline": Uses session model via systemMessage
-    - max_observations_per_session: Max observations per session (default 100)
-    - skip_tools_add: Additional tools to skip (user-defined)
-    - skip_tools_remove: Tools to un-skip from defaults (user-defined)
+    - min_turn_chars: Minimum total text in a turn to trigger extraction (default 200)
+    - cooldown_seconds: Minimum seconds between extractions (default 120)
+    - max_transcript_lines: Lines to tail from transcript JSONL (default 100)
+    - debug: Enable detailed logging to ~/.jarvis/debug.auto-extraction.log (default False)
 
     Config lives at memory.auto_extract in ~/.jarvis/config.json.
     """
     config = get_config()
     defaults = {
         "mode": "background",
-        "max_observations_per_session": 100,
-        "skip_tools_add": [],
-        "skip_tools_remove": [],
+        "min_turn_chars": 200,
+        "cooldown_seconds": 120,
+        "max_transcript_lines": 100,
+        "debug": False,
     }
     memory_config = config.get("memory", {})
     return {**defaults, **memory_config.get("auto_extract", {})}
