@@ -105,14 +105,104 @@ DB location: ~/.jarvis/memory_db/ (configurable via memory.db_path in config)
 Run /jarvis:jarvis-memory-index to index your vault for /recall searches.
 ```
 
-### 6. Mention strategic context
+### 6. Auto-Extract Configuration
+
+Auto-Extract passively captures observations from your Claude sessions and stores them in Tier 2 memory (ephemeral, ChromaDB-only). These observations are searchable via `/recall` and can be promoted to permanent files via `/promote`.
+
+Check current config from Step 1 and ask mode preference:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Auto-Extract mode? (current: [mode from config or 'not configured'])"
+      header: "Auto-Extract"
+      options:
+        - label: "Background (Recommended)"
+          description: "Smart fallback: tries API first, then CLI. Near-zero cost (~$0.02/session)."
+        - label: "Background API only"
+          description: "Requires ANTHROPIC_API_KEY. Fastest extraction (~200ms)."
+        - label: "Background CLI only"
+          description: "Uses Claude CLI via OAuth. No API key needed (~2-5s)."
+        - label: "Disabled"
+          description: "No automatic observation capture."
+      multiSelect: false
+```
+
+Map selection to mode value:
+- "Background" → `"background"`
+- "Background API only" → `"background-api"`
+- "Background CLI only" → `"background-cli"`
+- "Disabled" → `"disabled"`
+
+If mode is NOT "disabled", ask about extraction tuning:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Configure extraction thresholds?"
+      header: "Tuning"
+      options:
+        - label: "Use defaults (Recommended)"
+          description: "Cooldown: 120s, Min text: 200 chars"
+        - label: "Frequent capture"
+          description: "Cooldown: 30s, Min text: 100 chars (more observations, slightly noisier)"
+        - label: "Conservative capture"
+          description: "Cooldown: 300s, Min text: 500 chars (fewer, higher quality)"
+        - label: "Custom values"
+          description: "Enter your own thresholds"
+      multiSelect: false
+```
+
+Map presets to config values:
+- "Use defaults" → `cooldown_seconds: 120, min_turn_chars: 200`
+- "Frequent capture" → `cooldown_seconds: 30, min_turn_chars: 100`
+- "Conservative capture" → `cooldown_seconds: 300, min_turn_chars: 500`
+- "Custom values" → Ask user for `cooldown_seconds` (int, seconds between extractions) and `min_turn_chars` (int, minimum text in a conversation turn to trigger extraction)
+
+**Merge** into config (do NOT overwrite existing keys outside `memory.auto_extract`):
+
+```json
+{
+  "memory": {
+    "auto_extract": {
+      "mode": "[selected mode]",
+      "cooldown_seconds": "[from preset or custom]",
+      "min_turn_chars": "[from preset or custom]",
+      "max_transcript_lines": 100
+    }
+  }
+}
+```
+
+Show confirmation:
+
+```
+Auto-Extract configured:
+  Mode: [mode] ([description])
+  Cooldown: [X]s between extractions
+  Min turn text: [Y] chars
+
+How it works:
+  - Observations captured after each meaningful interaction
+  - Stored in Tier 2 (ephemeral, ChromaDB-only)
+  - Searchable via /recall
+  - Promote important items via /promote
+
+Advanced tuning (edit ~/.jarvis/config.json directly):
+  promotion.importance_threshold    — auto-promote score (default: 0.85)
+  promotion.retrieval_count_threshold — promote after N recalls (default: 3)
+  promotion.age_importance_days     — age-based promotion (default: 30)
+  memory.auto_extract.debug         — enable debug logging (default: false)
+```
+
+### 7. Mention strategic context
 
 ```
 Jarvis stores strategic context (values, goals, trajectory) in your vault at .jarvis/strategic/.
 Run /jarvis:jarvis-interview anytime to set or update these.
 ```
 
-### 7. Shell Integration (Optional but Recommended)
+### 8. Shell Integration (Optional but Recommended)
 
 Ask if the user wants the `jarvis` command added to their shell:
 
@@ -152,7 +242,7 @@ If user says yes:
 
 If adapting for other shells, use the zsh version as reference and adjust syntax as needed.
 
-### 8. Suggest permissions (for smoother experience)
+### 9. Suggest permissions (for smoother experience)
 
 Suggest adding these permissions to avoid repeated prompts:
 
@@ -170,19 +260,21 @@ For a smoother experience, add to ~/.claude/settings.json:
 This allows Jarvis to read its config without prompting each time.
 ```
 
-### 9. Show completion summary
+### 10. Show completion summary
 
 ```
 Setup complete!
 
 Vault: [path]
+Auto-Extract: [mode] ([enabled description | disabled])
 Shell: [jarvis command added to ~/.zshrc | not configured]
 
 Quick Start:
-  $ jarvis                - Launch Claude with Jarvis identity (if shell configured)
-  /jarvis                 - Activate Jarvis mode (within Claude)
-  /jarvis:jarvis-setup    - Update this config
-  /jarvis:jarvis-interview - Set values/goals
+  /recall <query>          - Search vault + Tier 2 observations
+  /promote                 - Review & promote ephemeral content
+  $ jarvis                 - Launch Claude with Jarvis identity (if shell configured)
+  /jarvis                  - Activate Jarvis mode (within Claude)
+  /jarvis:jarvis-setup     - Update this config
 ```
 
 ## Key Rules
@@ -190,4 +282,5 @@ Quick Start:
 - **NO AUTO-LOADING** - Don't call MCP tools before confirmation
 - **ASK FIRST** - Always get user confirmation before any action
 - **Write config ONCE** at the end
+- **Merge config** - When updating auto_extract or other subsections, preserve existing config keys (don't overwrite vault_path, modules, etc.)
 - **All agents always available** - No enable/disable, they fail gracefully if MCP missing

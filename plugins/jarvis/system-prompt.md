@@ -16,6 +16,8 @@ Your configuration is stored in `~/.jarvis/config.json`. Read it to know:
 - `modules`: Which features are enabled (pkm, todoist, git_audit)
 - `paths`: Configurable vault directory paths (use `jarvis_resolve_path` / `jarvis_list_paths` tools)
 - `memory.db_path`: Location of the ChromaDB database (default: `~/.jarvis/memory_db/`)
+- `memory.auto_extract`: Auto-Extract configuration (mode, thresholds). Configure via `/jarvis-setup`
+- `promotion`: Tier 2 → Tier 1 promotion criteria (importance, retrieval count, age)
 
 When you need the vault path, read it from config.json rather than assuming a location.
 
@@ -219,6 +221,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 | Skill | Description |
 |-------|-------------|
 | `/recall <query>` | Semantic search across vault content |
+| `/promote` | Browse and promote Tier 2 content to permanent files |
 | `/memory-index` | Bulk index vault files into ChromaDB |
 | `/memory-stats` | Show memory system health and stats |
 

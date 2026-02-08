@@ -274,6 +274,8 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Version History
 
+- **1.13.0** - `/promote` skill for Tier 2 content management (browse/preview/promote/auto-promote), auto-extract configuration in setup wizard with progressive disclosure (3 presets + custom), system prompt updates for discoverability
+- **1.12.0** - Stop hook redesign: PostToolUse → Stop hook for conversation-turn-level observation, transcript JSONL parsing, substance/cooldown thresholds, drop inline mode, debug logging support
 - **1.11.0** - Multi-mode background extraction: smart fallback (API → CLI), `background-api` (Anthropic SDK, needs API key), `background-cli` (Claude CLI via OAuth), refactored extraction into `call_haiku_api`/`call_haiku_cli`/`_parse_haiku_text` helpers, 30s timeout for CLI, mode-aware prerequisites health check, 35 new tests (577 total)
 - **1.10.0** - Auto-Extract: passive observation capture from tool calls into Tier 2 memory, PostToolUse hook with 3 modes (disabled/background/inline), filtering module with anti-recursion skip lists and SHA-256 dedup, Haiku-based extraction for background mode, inline systemMessage for session model extraction, user-configurable skip list overrides, 53 new tests (542 total)
 - **1.9.0** - Two-Tier SSoT architecture: Tier 2 (ChromaDB-first) ephemeral content, 5 new MCP tools (tier2_write/read/list/delete, promote), 7 content types (observation, pattern, summary, code, relationship, hint, plan), smart promotion based on importance/retrieval/age, tier-aware query results, 3 new namespaces (rel::, hint::, plan::), 54 new tests (30 total tools)
