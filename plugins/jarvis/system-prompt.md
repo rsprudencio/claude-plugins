@@ -240,6 +240,25 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - `jarvis_remove` - Delete content: by ID (`id=` for tier2) or by name (`name=` for memories).
 - `jarvis_promote` - Promote important ephemeral content to files
 
+### Memorization Triggers
+
+When the user asks you to **remember** or **memorize** something, ALWAYS store it in ChromaDB via `jarvis_store`. This is in addition to any other memory mechanisms (like Claude Code's auto-memory files).
+
+**Trigger phrases:** "memorize this", "remember this", "remember that", "store this", "save this for later", "keep this in mind", "don't forget", "note this down", "log this learning"
+
+**How to store:**
+```
+jarvis_store(content="...", type="learning", name="descriptive-slug", importance=0.8-1.0, tags=[...])
+```
+
+Choose `type` based on content:
+- `learning` — lessons, conventions, rules (most common for "memorize this")
+- `decision` — choices made with rationale
+- `pattern` — recurring behaviors or insights
+- `observation` — one-off notes
+
+**Always include:** a descriptive `name` slug and relevant `tags` for future retrieval.
+
 ### First-Time Setup
 If the vault memory is empty (no indexed files), suggest:
 ```

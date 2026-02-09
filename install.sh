@@ -86,11 +86,15 @@ fi
 echo -e "${BOLD}📦 Install Core Plugin${NC}"
 echo ""
 
-# Add marketplace (idempotent — safe to re-add)
-claude plugin marketplace add rsprudencio/claude-plugins >/dev/null 2>&1 || {
-    warn "Could not add marketplace automatically"
+# Add marketplace (may fail if already added — that's OK)
+claude plugin marketplace add rsprudencio/claude-plugins >/dev/null 2>&1 || true
+
+# Verify marketplace is available
+if ! claude plugin marketplace list 2>/dev/null | grep -q "raph-claude-plugins"; then
+    fail "Could not add marketplace"
     echo -e "  Run manually: ${BLUE}claude plugin marketplace add rsprudencio/claude-plugins${NC}"
-}
+    exit 1
+fi
 
 # Install core plugin
 echo -e "  Installing ${BLUE}jarvis@raph-claude-plugins${NC}..."
@@ -208,7 +212,7 @@ esac
 
 echo ""
 
-# Resolve installed plugin directory from Claude's plugin system
+# Resolve installed plugin directory from Claude's plugin system (post-extensions)
 PLUGIN_DIR=$(claude plugin list --json 2>/dev/null | $PYTHON_CMD -c "
 import sys, json
 for p in json.load(sys.stdin):
@@ -339,6 +343,7 @@ fi
 # Shell integration (always ask, independent of config)
 echo -e "  ${BOLD}Shell Integration${NC}"
 echo "  The 'jarvis' command launches Claude with your Jarvis identity."
+echo -e "  ${YELLOW}⚠️  Highly recommended — this is the only way to make Claude fully impersonate Jarvis.${NC}"
 echo ""
 ask "  Add/update 'jarvis' command in your shell? [Y/n]: " SHELL_SETUP "Y"
 
@@ -450,6 +455,9 @@ if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
         warn "Could not detect shell config file"
         echo "    Manually add the jarvis function from $PLUGIN_DIR/shell/"
     fi
+else
+    info "Skipping shell integration"
+    echo -e "  You can still activate Jarvis inside any Claude session by typing: ${BLUE}/jarvis:jarvis${NC}"
 fi
 
 echo ""
