@@ -13,17 +13,29 @@ from typing import Optional
 from .memory import _get_collection
 from .paths import get_path
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
+from .expansion import expand_query as _expand_query
+from .config import get_expansion_config
 
 
 def _compute_relevance(distance: float, importance: str = "medium",
-                       updated_at: Optional[str] = None) -> float:
+                       updated_at: Optional[str] = None,
+                       importance_score: Optional[float] = None) -> float:
     """Convert ChromaDB cosine distance to relevance score with boosts.
 
     ChromaDB cosine distance ranges from 0 (identical) to 2 (opposite).
     We convert to a 0-1 relevance score and apply importance + recency adjustments.
+
+    When importance_score (float 0-1 from scoring module) is available, it
+    provides a more nuanced boost than the string importance field.
     """
     base = 1.0 - (distance / 2.0)
-    boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(importance, 0.0)
+
+    # Use numeric importance_score when available, fall back to string importance
+    if importance_score is not None:
+        # Map 0.0-1.0 score to -0.12..+0.12 boost (centered at 0.5)
+        boost = (importance_score - 0.5) * 0.24
+    else:
+        boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(importance, 0.0)
 
     # Recency boost: recent updates get a small relevance bump
     recency_boost = 0.0
@@ -196,10 +208,18 @@ def query_vault(query: str, n_results: int = 5,
     n_results = min(max(1, n_results), 20)
     where = _translate_filter(filter)
 
+    # Query expansion
+    expansion_config = get_expansion_config()
+    expansion = _expand_query(query, expansion_config)
+    search_text = expansion["expanded"]
+
+    # Over-fetch to account for chunk deduplication
+    fetch_count = min(n_results * 3, 60, total)
+
     try:
         query_params = {
-            "query_texts": [query],
-            "n_results": min(n_results, total),
+            "query_texts": [search_text],
+            "n_results": fetch_count,
         }
         if where:
             query_params["where"] = where
@@ -208,55 +228,106 @@ def query_vault(query: str, n_results: int = 5,
     except Exception as e:
         return {"success": False, "error": f"Query failed: {e}"}
 
-    results = []
+    # Build raw result entries with relevance scores
+    raw_entries = []
     ids = raw.get("ids", [[]])[0]
     distances = raw.get("distances", [[]])[0]
     documents = raw.get("documents", [[]])[0]
     metadatas = raw.get("metadatas", [[]])[0]
 
-    for rank, (doc_id, distance, document, metadata) in enumerate(
-        zip(ids, distances, documents, metadatas), start=1
-    ):
-        importance = (metadata or {}).get("importance", "medium")
-        updated_at = (metadata or {}).get("updated_at")
-        relevance = _compute_relevance(distance, importance, updated_at)
-        preview = _extract_preview(document) if document else ""
-        title = (metadata or {}).get("title", doc_id)
-        # Use vault_type if available, fall back to type
-        doc_type = (metadata or {}).get("vault_type") or (metadata or {}).get("type", "unknown")
-        doc_importance = (metadata or {}).get("importance", "medium")
-        tags = (metadata or {}).get("tags", "")
-        
-        # Add tier and source fields
+    for doc_id, distance, document, metadata in zip(ids, distances, documents, metadatas):
+        meta = metadata or {}
+        importance = meta.get("importance", "medium")
+        updated_at = meta.get("updated_at")
+
+        # Use numeric importance_score if available
+        imp_score = None
+        if "importance_score" in meta:
+            try:
+                imp_score = float(meta["importance_score"])
+            except (ValueError, TypeError):
+                pass
+
+        relevance = _compute_relevance(distance, importance, updated_at, imp_score)
+
+        # Determine parent file for chunk dedup
+        parent_file = meta.get("parent_file")
+        if not parent_file:
+            # Legacy: strip #chunk-N from ID
+            parsed = parse_id(doc_id)
+            parent_file = parsed.content_id
+
+        raw_entries.append({
+            "doc_id": doc_id,
+            "parent_file": parent_file,
+            "relevance": relevance,
+            "document": document,
+            "metadata": meta,
+        })
+
+    # Chunk deduplication: keep best-relevance chunk per parent_file
+    best_per_file = {}
+    for entry in raw_entries:
+        pf = entry["parent_file"]
+        if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
+            best_per_file[pf] = entry
+
+    # Sort by relevance descending and trim to n_results
+    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:n_results]
+
+    results = []
+    all_ids = []
+    for rank, entry in enumerate(deduped, start=1):
+        meta = entry["metadata"]
+        doc_id = entry["doc_id"]
+        preview = _extract_preview(entry["document"]) if entry["document"] else ""
+        title = meta.get("title", doc_id)
+        doc_type = meta.get("vault_type") or meta.get("type", "unknown")
+        doc_importance = meta.get("importance", "medium")
+        tags = meta.get("tags", "")
+        chunk_heading = meta.get("chunk_heading", "")
+
         tier = get_tier(doc_id)
         if tier == TIER_FILE:
             source = "file"
         else:
-            # For Tier 2, use the content type as source
-            source = (metadata or {}).get("type", "chromadb")
-        
-        results.append({
+            source = meta.get("type", "chromadb")
+
+        result_entry = {
             "rank": rank,
-            "path": _display_path(doc_id),
+            "path": entry["parent_file"],
             "title": title,
             "type": doc_type,
             "importance": doc_importance,
-            "relevance": round(relevance, 3),
+            "relevance": round(entry["relevance"], 3),
             "preview": preview,
             "tags": tags,
             "tier": tier,
             "source": source,
-        })
-    
-    # Increment retrieval counts for Tier 2 results (best-effort, non-blocking)
-    _increment_retrieval_counts(collection, ids)
+        }
+        if chunk_heading:
+            result_entry["chunk_heading"] = chunk_heading
+        results.append(result_entry)
+        all_ids.append(doc_id)
 
-    return {
+    # Increment retrieval counts for Tier 2 results (best-effort, non-blocking)
+    _increment_retrieval_counts(collection, all_ids)
+
+    response = {
         "success": True,
         "query": query,
         "results": results,
         "total_in_collection": total,
     }
+
+    # Include expansion metadata when terms were added
+    if expansion["terms_added"]:
+        response["expansion"] = {
+            "terms_added": expansion["terms_added"],
+            "intent": expansion["intent"],
+        }
+
+    return response
 
 
 def doc_read(ids: list, include_metadata: bool = True) -> dict:

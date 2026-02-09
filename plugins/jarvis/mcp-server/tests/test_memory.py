@@ -198,6 +198,7 @@ class TestIndexFile:
         assert result["success"] is True
         assert result["id"] == "vault::notes/single.md"
         assert result["title"] == "Single File"
+        assert result["chunks"] == 1
         assert result["metadata"]["type"] == "vault"
         assert result["metadata"]["vault_type"] == "note"
 
@@ -223,6 +224,186 @@ class TestCollectionCreation:
 
         mem._chroma_client = None
 
+
+
+class TestChunkingIntegration:
+    """Tests for chunking integration in the indexing pipeline."""
+
+    def test_index_file_with_headings_creates_chunks(self, mock_config):
+        """A file with H2 headings should produce multiple chunks."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_h2_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        content = (
+            "---\ntype: note\n---\n# Big Doc\n\n"
+            "## Section One\n\n" + "Content A. " * 60 + "\n\n"
+            "## Section Two\n\n" + "Content B. " * 60 + "\n\n"
+            "## Section Three\n\n" + "Content C. " * 60
+        )
+        (notes_dir / "chunked.md").write_text(content)
+
+        result = index_file("notes/chunked.md")
+        assert result["success"] is True
+        assert result["chunks"] >= 2
+
+        # Verify chunk IDs in collection
+        collection = mem._get_collection()
+        all_data = collection.get(include=["metadatas"])
+        chunk_ids = [i for i in all_data["ids"] if "chunked.md" in i]
+        assert len(chunk_ids) >= 2
+
+        # Verify chunk metadata
+        for i, doc_id in enumerate(all_data["ids"]):
+            meta = all_data["metadatas"][i]
+            if "chunked.md" in doc_id:
+                assert "parent_file" in meta
+                assert meta["parent_file"] == "notes/chunked.md"
+                assert "chunk_heading" in meta
+                assert meta["chunk_total"] >= 2
+
+        mem._chroma_client = None
+
+    def test_index_file_without_headings_single_doc(self, mock_config):
+        """Short file without headings should produce a single document."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_single_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "short.md").write_text("# Short Note\n\nJust a brief note.")
+
+        result = index_file("notes/short.md")
+        assert result["success"] is True
+        assert result["chunks"] == 1
+        assert result["id"] == "vault::notes/short.md"
+
+        mem._chroma_client = None
+
+    def test_index_file_chunk_ids_format(self, mock_config):
+        """Multi-chunk IDs should use vault::path#chunk-N format."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_ids_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        content = (
+            "## Section A\n\n" + "Alpha content. " * 60 + "\n\n"
+            "## Section B\n\n" + "Beta content. " * 60
+        )
+        (notes_dir / "multi.md").write_text(content)
+
+        result = index_file("notes/multi.md")
+        assert result["success"] is True
+        assert result["chunks"] >= 2
+
+        collection = mem._get_collection()
+        all_data = collection.get()
+        for doc_id in all_data["ids"]:
+            assert doc_id.startswith("vault::notes/multi.md#chunk-")
+
+        mem._chroma_client = None
+
+    def test_reindex_updates_chunk_count(self, mock_config):
+        """Re-indexing a file should clean up old chunks and create new ones."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_reindex_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+
+        # First index: 3 sections
+        content_v1 = "\n\n".join([
+            f"## Section {i}\n\n" + f"Content {i}. " * 60
+            for i in range(3)
+        ])
+        (notes_dir / "evolving.md").write_text(content_v1)
+        result1 = index_file("notes/evolving.md")
+        chunks_v1 = result1["chunks"]
+
+        # Re-index: 2 sections
+        content_v2 = "\n\n".join([
+            f"## Section {i}\n\n" + f"Updated content {i}. " * 60
+            for i in range(2)
+        ])
+        (notes_dir / "evolving.md").write_text(content_v2)
+        result2 = index_file("notes/evolving.md")
+
+        # Old chunks should be cleaned up
+        collection = mem._get_collection()
+        all_data = collection.get()
+        evolving_ids = [i for i in all_data["ids"] if "evolving.md" in i]
+        assert len(evolving_ids) == result2["chunks"]
+
+        mem._chroma_client = None
+
+    def test_index_vault_with_chunking(self, mock_config):
+        """Bulk indexing should also produce chunks."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_vault_chunk_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        content = (
+            "## Part 1\n\n" + "First part. " * 60 + "\n\n"
+            "## Part 2\n\n" + "Second part. " * 60
+        )
+        (notes_dir / "bulk-test.md").write_text(content)
+
+        result = index_vault()
+        assert result["success"] is True
+        assert result["files_indexed"] == 1  # 1 file
+        assert result["chunks_total"] >= 2  # Multiple chunks from headings
+
+        mem._chroma_client = None
+
+    def test_importance_score_in_metadata(self, mock_config):
+        """Indexed files should have importance_score float in metadata."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_score_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "scored.md").write_text(
+            "---\nimportance: high\n---\n# Important Decision\n\nArchitecture decision content."
+        )
+
+        result = index_file("notes/scored.md")
+        assert result["success"] is True
+        meta = result["metadata"]
+        assert "importance_score" in meta
+        score = float(meta["importance_score"])
+        assert 0.0 <= score <= 1.0
+        # High frontmatter + "decision"/"architecture" concepts should yield good score
+        assert score >= 0.7
+
+        mem._chroma_client = None
+
+    def test_parent_file_metadata(self, mock_config):
+        """All indexed chunks should have parent_file metadata."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_parent_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "parent-test.md").write_text("# Simple\n\nJust content.")
+
+        index_file("notes/parent-test.md")
+
+        collection = mem._get_collection()
+        all_data = collection.get(include=["metadatas"])
+        for meta in all_data["metadatas"]:
+            assert meta.get("parent_file") == "notes/parent-test.md"
+
+        mem._chroma_client = None
 
 
 class TestTierMetadata:

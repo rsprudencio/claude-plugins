@@ -272,6 +272,74 @@ class TestQueryVault:
         import tools.memory as mem
         mem._chroma_client = None
 
+    def test_expansion_metadata_in_response(self, mock_config):
+        """When query triggers expansion, response should include expansion info."""
+        self._reset_chromadb(mock_config)
+        self._index_test_files(mock_config)
+
+        result = query_vault("auth flow setup")
+        assert result["success"] is True
+        assert "expansion" in result
+        assert len(result["expansion"]["terms_added"]) > 0
+
+        import tools.memory as mem
+        mem._chroma_client = None
+
+    def test_expansion_disabled_no_metadata(self, mock_config):
+        """When query doesn't trigger expansion, no expansion field in response."""
+        self._reset_chromadb(mock_config)
+        self._index_test_files(mock_config)
+
+        result = query_vault("quantum entanglement")
+        assert result["success"] is True
+        # No matching synonyms/intents → no expansion field
+        assert "expansion" not in result
+
+        import tools.memory as mem
+        mem._chroma_client = None
+
+    def test_chunk_deduplication(self, mock_config):
+        """Multiple chunks from same file should be deduped to best match."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_dedup_db")})
+
+        from tools.memory import index_file
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        # Create a multi-section file about auth
+        content = (
+            "## Authentication Overview\n\n"
+            + "OAuth authentication is used for secure login. " * 30 + "\n\n"
+            "## Authorization Rules\n\n"
+            + "Authorization controls what users can access. " * 30 + "\n\n"
+            "## Unrelated Section\n\n"
+            + "This section is about cooking recipes. " * 30
+        )
+        (notes_dir / "auth-guide.md").write_text(content)
+        index_file("notes/auth-guide.md")
+
+        result = query_vault("authentication", n_results=5)
+        assert result["success"] is True
+
+        # Should only appear once despite multiple matching chunks
+        paths = [r["path"] for r in result["results"]]
+        assert paths.count("notes/auth-guide.md") == 1
+
+        mem._chroma_client = None
+
+    def test_importance_score_affects_relevance(self):
+        """Documents with higher importance_score should get relevance boost."""
+        low_score = _compute_relevance(0.5, importance_score=0.3)
+        high_score = _compute_relevance(0.5, importance_score=0.9)
+        assert high_score > low_score
+
+    def test_importance_score_backward_compat(self):
+        """When importance_score is None, should fall back to string importance."""
+        base = _compute_relevance(0.5, "medium", importance_score=None)
+        boosted = _compute_relevance(0.5, "high", importance_score=None)
+        assert boosted == base + 0.10
+
 
 class TestDocRead:
     """Tests for document read by ID (renamed from memory_read)."""

@@ -17,7 +17,9 @@ from typing import Optional
 
 import chromadb
 
-from .config import get_verified_vault_path
+from .config import get_verified_vault_path, get_chunking_config, get_scoring_config
+from .chunking import chunk_markdown
+from .scoring import compute_importance
 from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 
@@ -134,6 +136,86 @@ def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
     return False
 
 
+def _delete_existing_chunks(collection, relative_path: str) -> int:
+    """Delete all existing chunks for a file before re-indexing.
+
+    Handles both chunked docs (parent_file metadata) and legacy
+    single-doc format (vault::{path} ID).
+
+    Returns number of deleted documents.
+    """
+    deleted = 0
+    # Delete chunks by parent_file metadata
+    try:
+        result = collection.get(
+            where={"parent_file": relative_path},
+            include=[]
+        )
+        if result["ids"]:
+            collection.delete(ids=result["ids"])
+            deleted += len(result["ids"])
+    except Exception:
+        pass
+
+    # Also delete legacy single-doc ID if it exists
+    legacy_id = vault_id(relative_path)
+    try:
+        result = collection.get(ids=[legacy_id], include=[])
+        if result["ids"]:
+            collection.delete(ids=[legacy_id])
+            deleted += 1
+    except Exception:
+        pass
+
+    return deleted
+
+
+def _index_single_file(collection, content: str, frontmatter: dict,
+                        relative_path: str, title: str,
+                        chunking_config: dict, scoring_config: dict) -> tuple:
+    """Index a single file with chunking and scoring.
+
+    Returns (chunk_ids, chunk_docs, chunk_metas, chunk_count).
+    """
+    metadata = _build_metadata(frontmatter, relative_path)
+    metadata['title'] = title
+    metadata['parent_file'] = relative_path
+
+    # Compute importance score
+    importance_score = compute_importance(
+        content=content,
+        vault_type=metadata.get("vault_type", "unknown"),
+        frontmatter_importance=frontmatter.get("importance"),
+        created_at=metadata.get("created_at"),
+        config=scoring_config if scoring_config.get("enabled", True) else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}},
+    )
+    metadata['importance_score'] = round(importance_score, 4)
+
+    # Chunk the document
+    chunk_result = chunk_markdown(content, chunking_config)
+
+    ids = []
+    docs = []
+    metas = []
+
+    for chunk in chunk_result.chunks:
+        chunk_meta = {**metadata}
+        chunk_meta['chunk_index'] = chunk.index
+        chunk_meta['chunk_total'] = chunk_result.total
+        chunk_meta['chunk_heading'] = chunk.heading
+
+        if chunk_result.was_chunked:
+            doc_id = vault_id(relative_path, chunk=chunk.index)
+        else:
+            doc_id = vault_id(relative_path)
+
+        ids.append(doc_id)
+        docs.append(chunk.content)
+        metas.append(chunk_meta)
+
+    return ids, docs, metas, chunk_result.total
+
+
 def index_vault(force: bool = False, directory: Optional[str] = None,
                 include_sensitive: bool = False) -> dict:
     """Bulk index all .md files in the vault into ChromaDB.
@@ -158,19 +240,31 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
     if not os.path.isdir(search_path):
         return {"success": False, "error": f"Directory not found: {search_path}"}
 
-    # Get existing IDs to skip (unless force)
-    existing_ids = set()
+    chunking_config = get_chunking_config()
+    scoring_config = get_scoring_config()
+
+    # Get existing parent_files to skip (unless force)
+    existing_files = set()
     if not force:
         try:
-            result = collection.get()
-            existing_ids = set(result['ids'])
+            result = collection.get(include=["metadatas"])
+            for i, doc_id in enumerate(result['ids']):
+                meta = result['metadatas'][i] if result.get('metadatas') else {}
+                parent = (meta or {}).get('parent_file')
+                if parent:
+                    existing_files.add(parent)
+                else:
+                    # Legacy unchunked: extract path from vault::path ID
+                    if doc_id.startswith("vault::") and "#chunk-" not in doc_id:
+                        existing_files.add(doc_id[7:])
         except Exception:
             pass
 
     # Collect files
     md_files = glob.glob(os.path.join(search_path, '**', '*.md'), recursive=True)
 
-    indexed = 0
+    files_indexed = 0
+    chunks_total = 0
     skipped = 0
     errors = []
     batch_ids = []
@@ -184,8 +278,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             skipped += 1
             continue
 
-        doc_id = vault_id(relative)
-        if doc_id in existing_ids and not force:
+        if relative in existing_files and not force:
             skipped += 1
             continue
 
@@ -197,19 +290,27 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
                 skipped += 1
                 continue
 
+            # On force re-index, clean up old chunks first
+            if force:
+                _delete_existing_chunks(collection, relative)
+
             frontmatter = _parse_frontmatter(content)
             title = _extract_title(content, os.path.basename(filepath))
-            metadata = _build_metadata(frontmatter, relative)
-            metadata['title'] = title
 
-            batch_ids.append(doc_id)
-            batch_docs.append(content)
-            batch_meta.append(metadata)
+            ids, docs, metas, n_chunks = _index_single_file(
+                collection, content, frontmatter, relative, title,
+                chunking_config, scoring_config
+            )
+
+            batch_ids.extend(ids)
+            batch_docs.extend(docs)
+            batch_meta.extend(metas)
+            files_indexed += 1
+            chunks_total += n_chunks
 
             # Flush batch
             if len(batch_ids) >= _BATCH_SIZE:
                 collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
-                indexed += len(batch_ids)
                 batch_ids, batch_docs, batch_meta = [], [], []
 
         except Exception as e:
@@ -218,12 +319,12 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
     # Flush remaining
     if batch_ids:
         collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
-        indexed += len(batch_ids)
 
     duration = round(time.time() - start, 2)
     return {
         "success": True,
-        "files_indexed": indexed,
+        "files_indexed": files_indexed,
+        "chunks_total": chunks_total,
         "files_skipped": skipped,
         "errors": errors,
         "duration_seconds": duration,
@@ -232,13 +333,13 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
 
 
 def index_file(relative_path: str) -> dict:
-    """Index a single file into ChromaDB.
+    """Index a single file into ChromaDB with chunking and scoring.
 
     Args:
         relative_path: Path relative to vault root
 
     Returns:
-        Summary dict with success status and metadata
+        Summary dict with success status, chunks count, and metadata
     """
     vault_path, error = get_verified_vault_path()
     if error:
@@ -252,20 +353,29 @@ def index_file(relative_path: str) -> dict:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
 
+        collection = _get_collection()
+        chunking_config = get_chunking_config()
+        scoring_config = get_scoring_config()
+
+        # Clean up old chunks/legacy doc before re-indexing
+        _delete_existing_chunks(collection, relative_path)
+
         frontmatter = _parse_frontmatter(content)
         title = _extract_title(content, os.path.basename(filepath))
-        metadata = _build_metadata(frontmatter, relative_path)
-        metadata['title'] = title
 
-        doc_id = vault_id(relative_path)
-        collection = _get_collection()
-        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        ids, docs, metas, n_chunks = _index_single_file(
+            collection, content, frontmatter, relative_path, title,
+            chunking_config, scoring_config
+        )
+
+        collection.upsert(ids=ids, documents=docs, metadatas=metas)
 
         return {
             "success": True,
-            "id": doc_id,
+            "id": ids[0] if len(ids) == 1 else ids,
             "title": title,
-            "metadata": metadata
+            "chunks": n_chunks,
+            "metadata": metas[0] if metas else {}
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

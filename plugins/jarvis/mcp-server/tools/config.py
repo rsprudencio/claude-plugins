@@ -153,6 +153,72 @@ def get_auto_extract_config() -> dict:
     return {**defaults, **memory_config.get("auto_extract", {})}
 
 
+def get_chunking_config() -> dict:
+    """Get markdown chunking configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Whether chunking is active (default True)
+    - min_chunk_chars: Minimum chunk size before merging (default 200)
+    - max_chunk_chars: Maximum chunk size before paragraph splitting (default 1500)
+    - heading_levels: Which heading levels to split on (default [2, 3])
+
+    Config lives at memory.chunking in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "min_chunk_chars": 200,
+        "max_chunk_chars": 1500,
+        "heading_levels": [2, 3],
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("chunking", {})}
+
+
+def get_scoring_config() -> dict:
+    """Get importance scoring configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Whether scoring is active (default True)
+    - recency_half_life_days: Exponential decay half-life (default 7.0)
+    - type_weights: Override base weights per vault_type (default {})
+    - concept_patterns: Override/extend regex->bonus patterns (default {})
+
+    Config lives at memory.scoring in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "recency_half_life_days": 7.0,
+        "type_weights": {},
+        "concept_patterns": {},
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("scoring", {})}
+
+
+def get_expansion_config() -> dict:
+    """Get query expansion configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Whether expansion is active (default True)
+    - max_expansion_terms: Cap on added terms (default 5)
+    - synonyms: Override/extend trigger->terms mappings (default {})
+    - intent_patterns: Custom intent patterns (default [])
+
+    Config lives at memory.expansion in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "max_expansion_terms": 5,
+        "synonyms": {},
+        "intent_patterns": [],
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("expansion", {})}
+
+
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     from .auto_extract_config import check_prerequisites
