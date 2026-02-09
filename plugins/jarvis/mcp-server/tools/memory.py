@@ -181,25 +181,31 @@ def _index_single_file(collection, content: str, frontmatter: dict,
     metadata['title'] = title
     metadata['parent_file'] = relative_path
 
-    # Compute importance score
-    importance_score = compute_importance(
-        content=content,
-        vault_type=metadata.get("vault_type", "unknown"),
-        frontmatter_importance=frontmatter.get("importance"),
-        created_at=metadata.get("created_at"),
-        config=scoring_config if scoring_config.get("enabled", True) else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}},
-    )
-    metadata['importance_score'] = round(importance_score, 4)
-
     # Chunk the document
     chunk_result = chunk_markdown(content, chunking_config)
+
+    # Shared scoring inputs (file-level)
+    scoring_cfg = scoring_config if scoring_config.get("enabled", True) else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}}
+    vault_type = metadata.get("vault_type", "unknown")
+    fm_importance = frontmatter.get("importance")
+    created_at = metadata.get("created_at")
 
     ids = []
     docs = []
     metas = []
 
     for chunk in chunk_result.chunks:
+        # Score each chunk on its own content (concept patterns match per-chunk)
+        importance_score = compute_importance(
+            content=chunk.content,
+            vault_type=vault_type,
+            frontmatter_importance=fm_importance,
+            created_at=created_at,
+            config=scoring_cfg,
+        )
+
         chunk_meta = {**metadata}
+        chunk_meta['importance_score'] = round(importance_score, 4)
         chunk_meta['chunk_index'] = chunk.index
         chunk_meta['chunk_total'] = chunk_result.total
         chunk_meta['chunk_heading'] = chunk.heading

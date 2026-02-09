@@ -386,6 +386,46 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
 
+    def test_per_chunk_importance_scoring(self, mock_config):
+        """Chunks should get individual importance scores based on their content."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_perchunk_score_db")})
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        # Chunk 0: has "architecture decision" concepts → higher score
+        # Chunk 1: generic filler content → lower score
+        content = (
+            "## Architecture Decision\n\n"
+            + "This is a critical architecture decision about the system. " * 30 + "\n\n"
+            "## Shopping List\n\n"
+            + "Buy milk and eggs from the store. " * 30
+        )
+        (notes_dir / "mixed-importance.md").write_text(content)
+
+        index_file("notes/mixed-importance.md")
+
+        collection = mem._get_collection()
+        all_data = collection.get(include=["metadatas"])
+        # Group scores by heading prefix (chunks may split into continuations)
+        arch_scores = [
+            float(m["importance_score"])
+            for m in all_data["metadatas"]
+            if m["chunk_heading"].startswith("Architecture Decision")
+        ]
+        shopping_scores = [
+            float(m["importance_score"])
+            for m in all_data["metadatas"]
+            if m["chunk_heading"].startswith("Shopping List")
+        ]
+        assert len(arch_scores) >= 1
+        assert len(shopping_scores) >= 1
+        # "architecture decision" concepts should score higher than generic filler
+        assert max(arch_scores) > max(shopping_scores)
+
+        mem._chroma_client = None
+
     def test_parent_file_metadata(self, mock_config):
         """All indexed chunks should have parent_file metadata."""
         import tools.memory as mem
