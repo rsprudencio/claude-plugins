@@ -86,14 +86,11 @@ fi
 echo -e "${BOLD}📦 Install Core Plugin${NC}"
 echo ""
 
-# Add marketplace if not already added
-if ! claude plugin marketplace list 2>/dev/null | grep -q "raph-claude-plugins"; then
-    MARKETPLACE_URL="https://github.com/rsprudencio/claude-plugins"
-    claude plugin marketplace add raph-claude-plugins "$MARKETPLACE_URL" >/dev/null 2>&1 || {
-        warn "Could not add marketplace automatically"
-        echo -e "  Run manually: ${BLUE}claude plugin marketplace add raph-claude-plugins $MARKETPLACE_URL${NC}"
-    }
-fi
+# Add marketplace (idempotent — safe to re-add)
+claude plugin marketplace add rsprudencio/claude-plugins >/dev/null 2>&1 || {
+    warn "Could not add marketplace automatically"
+    echo -e "  Run manually: ${BLUE}claude plugin marketplace add rsprudencio/claude-plugins${NC}"
+}
 
 # Install core plugin
 echo -e "  Installing ${BLUE}jarvis@raph-claude-plugins${NC}..."
