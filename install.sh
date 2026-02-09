@@ -49,7 +49,6 @@ if [ "$HAS_TTY" = false ]; then
     echo ""
 fi
 
-echo ""
 echo -e "${CYAN}"
 echo "  ╦╔═╗╦═╗╦  ╦╦╔═╗"
 echo "  ║╠═╣╠╦╝╚╗╔╝║╚═╗"
@@ -59,19 +58,11 @@ echo -e "  ${BOLD}AI Assistant Plugin Installer${NC} v${JARVIS_VERSION}"
 echo ""
 
 # ═══════════════════════════════════════════════
-# Step 1: Check Prerequisites
+# 📦 Install Core Plugin
 # ═══════════════════════════════════════════════
 
-echo -e "${BOLD}Step 1: Check Prerequisites${NC}"
-echo ""
-
-PREREQS_OK=true
-
-# Check Claude Code CLI
-if command -v claude &> /dev/null; then
-    CLAUDE_VERSION=$(claude --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-    ok "Claude Code CLI ($CLAUDE_VERSION)"
-else
+# Verify Claude CLI exists (silent check)
+if ! command -v claude >/dev/null 2>&1; then
     fail "Claude Code CLI not found"
     echo ""
     echo -e "  Install Claude Code first: ${BLUE}https://claude.ai/code${NC}"
@@ -79,132 +70,122 @@ else
     exit 1
 fi
 
-# Check Python 3.10+
-if command -v python3 &> /dev/null; then
-    PY_VERSION=$(python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
-    PY_MINOR=$(echo "$PY_VERSION" | cut -d. -f2)
-    if [ "$PY_MAJOR" -ge 3 ] && [ "$PY_MINOR" -ge 10 ]; then
-        ok "Python $PY_VERSION"
-    else
-        fail "Python $PY_VERSION found, but 3.10+ required"
-        echo ""
-        echo -e "  Install Python 3.10+: ${BLUE}https://python.org${NC}"
-        echo -e "  macOS: ${BLUE}brew install python@3.12${NC}"
-        echo ""
-        exit 1
-    fi
+# Verify Python 3 exists (silent check)
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON_CMD="python3"
 else
     fail "Python 3 not found"
     echo ""
-    echo -e "  Install Python 3.10+: ${BLUE}https://python.org${NC}"
-    echo -e "  macOS: ${BLUE}brew install python@3.12${NC}"
+    echo -e "  ${BOLD}macOS:${NC} ${BLUE}brew install python@3.12${NC}"
+    echo -e "  ${BOLD}Linux:${NC} ${BLUE}sudo apt install python3${NC} (Debian/Ubuntu)"
+    echo -e "  Or download from: ${BLUE}https://python.org/downloads/${NC}"
     echo ""
     exit 1
 fi
 
-# Check uv / uvx (required for MCP server)
-if command -v uvx &> /dev/null; then
-    UV_VERSION=$(uv --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-    ok "uv $UV_VERSION (with uvx)"
-elif command -v uv &> /dev/null; then
-    # uv exists but uvx doesn't — unusual, warn user
-    warn "uv found but uvx not in PATH"
-    echo -e "    Try: ${BLUE}uv tool install uvx${NC}"
-    echo ""
-    PREREQS_OK=false
-else
-    warn "uv not found — installing..."
-    if curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null; then
-        # Source the new PATH
-        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-        if command -v uvx &> /dev/null; then
-            UV_VERSION=$(uv --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-            ok "uv $UV_VERSION installed"
-        else
-            fail "uv installed but uvx not available after install"
-            echo -e "    Restart your terminal and re-run this installer."
-            exit 1
-        fi
-    else
-        fail "Failed to install uv"
-        echo ""
-        echo -e "  Install manually: ${BLUE}https://docs.astral.sh/uv/getting-started/installation/${NC}"
-        echo ""
-        exit 1
-    fi
-fi
-
-# Check git (required for vault audit trail)
-if command -v git &> /dev/null; then
-    GIT_VERSION=$(git --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-    ok "git $GIT_VERSION"
-else
-    fail "git not found"
-    echo ""
-    echo -e "  Git is required for Jarvis vault operations."
-    echo ""
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo -e "  Install: ${BLUE}xcode-select --install${NC} or ${BLUE}brew install git${NC}"
-    elif [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
-        echo -e "  Install: ${BLUE}https://git-scm.com/download/win${NC}"
-    else
-        echo -e "  Install: ${BLUE}sudo apt install git${NC} (Debian/Ubuntu)"
-    fi
-    echo ""
-    exit 1
-fi
-
-if [ "$PREREQS_OK" != true ]; then
-    echo ""
-    echo -e "${RED}Prerequisites not met. Fix the issues above and re-run.${NC}"
-    exit 1
-fi
-
+echo -e "${BOLD}📦 Install Core Plugin${NC}"
 echo ""
 
-# ═══════════════════════════════════════════════
-# Step 2: Install Plugin
-# ═══════════════════════════════════════════════
-
-echo -e "${BOLD}Step 2: Install Plugin${NC}"
-echo ""
-
-# Add or update marketplace
-MARKETPLACE_EXISTS=$(claude plugin marketplace list 2>/dev/null | grep -c "$MARKETPLACE_NAME" || echo "0")
-
-if [ "$MARKETPLACE_EXISTS" -eq "0" ]; then
-    info "Adding marketplace..."
-    if claude plugin marketplace add "$MARKETPLACE_REPO" 2>/dev/null; then
-        ok "Marketplace added"
-    else
-        fail "Failed to add marketplace"
-        echo -e "    Check: ${BLUE}$MARKETPLACE_REPO${NC}"
-        exit 1
-    fi
-else
-    info "Updating marketplace..."
-    claude plugin marketplace update "$MARKETPLACE_NAME" 2>/dev/null || true
-    ok "Marketplace up to date"
+# Add marketplace if not already added
+if ! claude plugin marketplace list 2>/dev/null | grep -q "raph-claude-plugins"; then
+    MARKETPLACE_URL="https://github.com/rsprudencio/claude-plugins"
+    claude plugin marketplace add raph-claude-plugins "$MARKETPLACE_URL" >/dev/null 2>&1 || {
+        warn "Could not add marketplace automatically"
+        echo -e "  Run manually: ${BLUE}claude plugin marketplace add raph-claude-plugins $MARKETPLACE_URL${NC}"
+    }
 fi
 
 # Install core plugin
-info "Installing jarvis core plugin..."
-if claude plugin install "jarvis@$MARKETPLACE_NAME" 2>/dev/null; then
-    ok "Core plugin installed"
-else
-    # Might already be installed — check
-    if claude plugin list 2>/dev/null | grep -q "jarvis@"; then
-        ok "Core plugin already installed (updated)"
+echo -e "  Installing ${BLUE}jarvis@raph-claude-plugins${NC}..."
+claude plugin install jarvis@raph-claude-plugins >/dev/null 2>&1 || {
+    fail "Could not install jarvis plugin"
+    echo ""
+    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@raph-claude-plugins${NC}"
+    exit 1
+}
+
+ok "Plugin installed"
+echo ""
+
+# ═══════════════════════════════════════════════
+# ✅ Check Prerequisites
+# ═══════════════════════════════════════════════
+
+echo -e "${BOLD}✅ Check Prerequisites${NC}"
+echo ""
+
+# Resolve plugin directory
+PLUGIN_DIR=$($PYTHON_CMD -c "
+import sys, json
+try:
+    result = sys.stdin.read()
+    for p in json.loads(result):
+        if p.get('id', '').startswith('jarvis@'):
+            print(p['installPath'])
+            break
+except:
+    pass
+" < <(claude plugin list --json 2>/dev/null))
+
+if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR/mcp-server/tools" ]; then
+    warn "Could not find installed plugin directory - using basic checks"
+
+    # Fallback: Basic bash checks
+    if command -v uvx >/dev/null 2>&1 || command -v uv >/dev/null 2>&1; then
+        ok "uv/uvx found"
     else
-        fail "Failed to install core plugin"
+        fail "uv/uvx not found"
+        echo ""
+        echo -e "  Install: ${BLUE}curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
+        echo ""
+        exit 1
+    fi
+
+    if command -v git >/dev/null 2>&1; then
+        ok "git found"
+    else
+        fail "git not found"
+        echo ""
+        echo -e "  ${BOLD}macOS:${NC} ${BLUE}xcode-select --install${NC} or ${BLUE}brew install git${NC}"
+        echo -e "  ${BOLD}Linux:${NC} ${BLUE}sudo apt install git${NC} (Debian/Ubuntu)"
+        echo ""
+        exit 1
+    fi
+else
+    # Run comprehensive checks using installed plugin's Python modules
+    $PYTHON_CMD - "$PLUGIN_DIR/mcp-server" <<'PYEOF'
+import sys
+import os
+
+# Get plugin directory from command line argument
+mcp_server_dir = sys.argv[1] if len(sys.argv) > 1 else None
+
+if mcp_server_dir and os.path.exists(mcp_server_dir):
+    sys.path.insert(0, mcp_server_dir)
+
+from tools.system_check import run_system_check, format_check_result
+
+result = run_system_check()
+print(format_check_result(result, verbose=False))
+sys.exit(0 if result["healthy"] else 1)
+PYEOF
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo -e "${RED}Prerequisites not met. Fix the issues above and re-run.${NC}"
         exit 1
     fi
 fi
 
-# Optional extensions
 echo ""
-echo -e "  ${BOLD}Optional extensions:${NC}"
+
+# ═══════════════════════════════════════════════
+# 🧩 Install Optional Extensions
+# ═══════════════════════════════════════════════
+
+echo -e "${BOLD}🧩 Install Optional Extensions${NC}"
+echo ""
+echo -e "  ${BOLD}Available extensions:${NC}"
 echo -e "    ${CYAN}[1]${NC} jarvis-todoist   — Task management via Todoist"
 echo -e "    ${CYAN}[2]${NC} jarvis-strategic — Strategic analysis & briefings"
 echo -e "    ${CYAN}[3]${NC} Both"
@@ -230,20 +211,31 @@ esac
 
 echo ""
 
+# Resolve installed plugin directory from Claude's plugin system
+PLUGIN_DIR=$(claude plugin list --json 2>/dev/null | $PYTHON_CMD -c "
+import sys, json
+for p in json.load(sys.stdin):
+    if p.get('id', '').startswith('jarvis@'):
+        print(p['installPath'])
+        break
+" 2>/dev/null)
+
+if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR" ]; then
+    fail "Plugin directory not found"
+    echo "    Run: claude plugin list --json"
+    echo "    Try reinstalling: claude plugin install jarvis@$MARKETPLACE_NAME"
+    exit 1
+fi
+
 # ═══════════════════════════════════════════════
-# Step 3: Validate MCP Server
+# 🔌 Validate MCP Server
 # ═══════════════════════════════════════════════
 
-echo -e "${BOLD}Step 3: Validate MCP Server${NC}"
+echo -e "${BOLD}🔌 Validate MCP Server${NC}"
 echo ""
 
-# Find installed plugin path
-CACHE_BASE="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/$MARKETPLACE_NAME"
-PLUGIN_DIR=$(find "$CACHE_BASE/jarvis" -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)
-
-if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR/mcp-server" ]; then
-    fail "Plugin directory not found at $CACHE_BASE/jarvis/"
-    echo "    Try reinstalling: claude plugin install jarvis@$MARKETPLACE_NAME"
+if [ ! -d "$PLUGIN_DIR/mcp-server" ]; then
+    fail "MCP server not found in plugin directory"
     exit 1
 fi
 
@@ -274,10 +266,10 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════
-# Step 4: Configure Jarvis
+# ⚙️  Configure Jarvis
 # ═══════════════════════════════════════════════
 
-echo -e "${BOLD}Step 4: Configure Jarvis${NC}"
+echo -e "${BOLD}⚙️  Configure Jarvis${NC}"
 echo ""
 
 # Check for existing config
@@ -286,7 +278,7 @@ if [ -f "$JARVIS_HOME/config.json" ]; then
     echo -e "  Existing config found (vault: ${CYAN}$EXISTING_VAULT${NC})"
     ask "  Reconfigure? [y/N]: " RECONFIG "N"
     if [ "$RECONFIG" != "y" ] && [ "$RECONFIG" != "Y" ]; then
-        info "Keeping existing config"
+        info "Keeping existing config\n"
         VAULT_PATH="$EXISTING_VAULT"
         SKIP_CONFIG=true
     fi
@@ -345,26 +337,25 @@ if [ "$SKIP_CONFIG" != true ]; then
 
     ok "Vault: $VAULT_PATH"
     echo ""
-
-    # Shell integration
-    echo -e "  ${BOLD}Shell Integration${NC}"
-    echo "  The 'jarvis' command launches Claude with your Jarvis identity."
-    echo ""
-    ask "  Add 'jarvis' command to your shell? [Y/n]: " SHELL_SETUP "Y"
 fi
 
+# Shell integration (always ask, independent of config)
+echo -e "  ${BOLD}Shell Integration${NC}"
+echo "  The 'jarvis' command launches Claude with your Jarvis identity."
+echo ""
+ask "  Add/update 'jarvis' command in your shell? [Y/n]: " SHELL_SETUP "Y"
+
 echo ""
 
 # ═══════════════════════════════════════════════
-# Step 5: Write Config & Create Directories
+# 💾 Write Configuration
 # ═══════════════════════════════════════════════
-
-echo -e "${BOLD}Step 5: Write Config${NC}"
-echo ""
 
 mkdir -p "$JARVIS_HOME"
 
 if [ "$SKIP_CONFIG" != true ]; then
+    echo -e "${BOLD}💾 Write Configuration${NC}"
+    echo ""
     # Create vault directory
     mkdir -p "$VAULT_PATH"
     ok "Vault directory ready: $VAULT_PATH"
@@ -419,88 +410,91 @@ if [ "$SKIP_CONFIG" != true ]; then
 }
 CONFIGEOF
     ok "Config written: $JARVIS_HOME/config.json (all defaults visible)"
+fi
 
-    # Shell integration
-    if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
-        # Detect shell
-        SHELL_RC=""
-        if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "$(command -v zsh)" ] || [ -f "$HOME/.zshrc" ]; then
-            SHELL_RC="$HOME/.zshrc"
-            SHELL_TYPE="zsh"
-        elif [ -f "$HOME/.bashrc" ]; then
-            SHELL_RC="$HOME/.bashrc"
-            SHELL_TYPE="bash"
-        elif [ -f "$HOME/.bash_profile" ]; then
-            SHELL_RC="$HOME/.bash_profile"
-            SHELL_TYPE="bash"
+# Shell integration (independent of config — always runs if user said Y)
+if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
+    # Detect shell
+    SHELL_RC=""
+    if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "$(command -v zsh)" ] || [ -f "$HOME/.zshrc" ]; then
+        SHELL_RC="$HOME/.zshrc"
+        SHELL_TYPE="zsh"
+    elif [ -f "$HOME/.bashrc" ]; then
+        SHELL_RC="$HOME/.bashrc"
+        SHELL_TYPE="bash"
+    elif [ -f "$HOME/.bash_profile" ]; then
+        SHELL_RC="$HOME/.bash_profile"
+        SHELL_TYPE="bash"
+    fi
+
+    if [ -n "$SHELL_RC" ]; then
+        # Check if already installed
+        if grep -q "# Jarvis AI Assistant" "$SHELL_RC" 2>/dev/null; then
+            # Remove old version before adding new
+            sed -i.bak '/# Jarvis AI Assistant START/,/# Jarvis AI Assistant END/d' "$SHELL_RC" 2>/dev/null || true
+            rm -f "$SHELL_RC.bak"
         fi
 
-        if [ -n "$SHELL_RC" ]; then
-            # Check if already installed
-            if grep -q "# Jarvis AI Assistant" "$SHELL_RC" 2>/dev/null; then
-                # Remove old version before adding new
-                sed -i.bak '/# Jarvis AI Assistant START/,/# Jarvis AI Assistant END/d' "$SHELL_RC" 2>/dev/null || true
-                rm -f "$SHELL_RC.bak"
-            fi
-
-            CACHE_DIR_TEMPLATE="\${CLAUDE_CONFIG_DIR:-\$HOME/.claude}/plugins/cache/$MARKETPLACE_NAME"
-
-            cat >> "$SHELL_RC" << 'SHELLEOF'
-
-# Jarvis AI Assistant START
-jarvis() {
-  local cache_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/raph-claude-plugins"
-  local system_prompt=""
-
-  for plugin in jarvis jarvis-todoist jarvis-strategic; do
-    local plugin_dir=""
-    # Find latest version directory
-    if [ -d "$cache_dir/$plugin" ]; then
-      plugin_dir=$(find "$cache_dir/$plugin" -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)
-    fi
-
-    if [ -n "$plugin_dir" ] && [ -f "$plugin_dir/system-prompt.md" ]; then
-      if [ -n "$system_prompt" ]; then
-        system_prompt+=$'\n\n---\n\n'
-      fi
-      system_prompt+="$(cat "$plugin_dir/system-prompt.md")"
-    fi
-  done
-
-  if [ -n "$system_prompt" ]; then
-    claude --append-system-prompt "$system_prompt" "$@"
-  else
-    echo "Warning: No jarvis plugins found. Install with:"
-    echo "  claude plugin install jarvis@raph-claude-plugins"
-    claude "$@"
-  fi
-}
-# Jarvis AI Assistant END
-SHELLEOF
+        # Copy shell function content into RC (no version-pinned source path)
+        SHELL_FUNCTION_FILE="$PLUGIN_DIR/shell/jarvis.$SHELL_TYPE"
+        if [ -f "$SHELL_FUNCTION_FILE" ]; then
+            {
+                echo ""
+                echo "# Jarvis AI Assistant START"
+                cat "$SHELL_FUNCTION_FILE"
+                echo "# Jarvis AI Assistant END"
+            } >> "$SHELL_RC"
             ok "Shell function added to $SHELL_RC"
-            info "Run: source $SHELL_RC"
         else
-            warn "Could not detect shell config file"
-            echo "    Manually add the jarvis function from plugins/jarvis/shell/"
+            warn "Shell function not found at $SHELL_FUNCTION_FILE"
+            echo "    Expected: $PLUGIN_DIR/shell/jarvis.$SHELL_TYPE"
         fi
+    else
+        warn "Could not detect shell config file"
+        echo "    Manually add the jarvis function from $PLUGIN_DIR/shell/"
     fi
 fi
 
 echo ""
 
 # ═══════════════════════════════════════════════
-# Step 6: Index Vault (if applicable)
+# 📚 Index Vault
 # ═══════════════════════════════════════════════
 
-echo -e "${BOLD}Step 6: Index Vault${NC}"
+echo -e "${BOLD}📚 Index Vault${NC}"
 echo ""
 
 if [ -d "$VAULT_PATH" ]; then
     MD_COUNT=$(find "$VAULT_PATH" -name "*.md" -not -path "*/.obsidian/*" -not -path "*/templates/*" -not -path "*/.jarvis/*" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$MD_COUNT" -gt 0 ]; then
+    if [ "$MD_COUNT" -gt 5 ]; then
         info "Found $MD_COUNT .md files in vault"
-        info "Indexing will happen automatically on first Jarvis session"
-        ok "Vault ready for semantic search"
+
+        # Offer to index now (only if meaningful content exists)
+        ask "  Index now for semantic search? [Y/n]: " INDEX_NOW "Y"
+
+        if [ "$INDEX_NOW" = "Y" ] || [ "$INDEX_NOW" = "y" ]; then
+            info "Indexing vault (may take a moment)..."
+
+            # Call jarvis_index_vault via MCP server (requires full handshake)
+            INDEX_OUTPUT=$(printf '%s\n%s\n%s\n' \
+                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"installer","version":"0.1"}}}' \
+                '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jarvis_index_vault","arguments":{}}}' | \
+                timeout 120 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-tools 2>/dev/null || true)
+
+            if echo "$INDEX_OUTPUT" | grep -q '"result"' 2>/dev/null; then
+                ok "Vault indexed ($MD_COUNT files) — semantic search ready"
+            else
+                warn "Indexing failed or timed out"
+                info "You can index later by asking Jarvis: 'index my vault'"
+            fi
+        else
+            info "Skipped — index later by asking Jarvis: 'index my vault'"
+        fi
+    elif [ "$MD_COUNT" -gt 0 ]; then
+        info "Found $MD_COUNT .md files in vault"
+        info "Index later: ask Jarvis 'index my vault' or run /jarvis-settings"
+        ok "Vault ready"
     else
         info "Vault is empty — start by running: jarvis"
         info "Jarvis will create journal entries and notes as you use it"
@@ -529,7 +523,7 @@ echo -e "  Config:      ${CYAN}$JARVIS_HOME/config.json${NC}"
 echo ""
 echo -e "  ${BOLD}Quick Start:${NC}"
 echo -e "    ${BLUE}\$ jarvis${NC}                     — Launch Jarvis"
-echo -e "    ${BLUE}\$ jarvis \"/recall AI tools\"${NC}  — Search your vault"
+echo -e "    ${BLUE}\$ jarvis \"/jarvis-recall AI tools\"${NC}  — Search your vault"
 echo -e "    ${BLUE}/jarvis-settings${NC}              — Update configuration"
 echo ""
 

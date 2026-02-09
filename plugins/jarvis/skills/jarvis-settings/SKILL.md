@@ -336,8 +336,8 @@ Changed:
   - auto_extract.mode: disabled -> background
 
 Quick Start:
-  /recall <query>     - Search vault semantically
-  /promote            - Review & promote observations
+  /jarvis-recall <query>  - Search vault semantically
+  /jarvis-promote         - Review & promote observations
   /jarvis-settings    - Update configuration anytime
   $ jarvis            - Launch from terminal (if shell configured)
 ```

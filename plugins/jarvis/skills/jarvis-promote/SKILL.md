@@ -1,10 +1,10 @@
 ---
 name: jarvis-promote
-description: Browse and promote Tier 2 (ephemeral) content to permanent vault files. Use when user says "/promote", "Jarvis, promote this", "save observation permanently", "review tier 2 content", or "what observations do I have".
+description: Browse and promote Tier 2 (ephemeral) content to permanent vault files. Use when user says "/jarvis-promote", "Jarvis, promote this", "save observation permanently", "review tier 2 content", or "what observations do I have".
 user_invocable: true
 ---
 
-# /promote - Tier 2 Content Management
+# /jarvis-promote - Tier 2 Content Management
 
 Browse, preview, and promote ephemeral Tier 2 content (observations, patterns, summaries) to permanent file-backed Tier 1 storage.
 
@@ -13,10 +13,10 @@ Browse, preview, and promote ephemeral Tier 2 content (observations, patterns, s
 ### 1. Parse user intent
 
 Determine mode from input:
-- `/promote` or `/promote browse` → **Browse mode** (list Tier 2 content)
-- `/promote preview <id>` or user replies with a number → **Preview mode**
-- `/promote confirm <id>` or user confirms after preview → **Promote mode**
-- `/promote auto` → **Auto-promote** all items meeting criteria
+- `/jarvis-promote` or `/jarvis-promote browse` → **Browse mode** (list Tier 2 content)
+- `/jarvis-promote preview <id>` or user replies with a number → **Preview mode**
+- `/jarvis-promote confirm <id>` or user confirms after preview → **Promote mode**
+- `/jarvis-promote auto` → **Auto-promote** all items meeting criteria
 
 ### 2. Browse mode (default)
 
@@ -74,7 +74,7 @@ AskUserQuestion:
         - label: "Auto-promote eligible"
           description: "Promote all items marked with *"
         - label: "Done"
-          description: "Exit /promote"
+          description: "Exit /jarvis-promote"
       multiSelect: false
 ```
 
@@ -182,7 +182,7 @@ If user confirms commit, delegate to `jarvis-audit-agent`:
 
 ### 5. Auto-promote mode
 
-When user says `/promote auto`:
+When user says `/jarvis-promote auto`:
 
 1. Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `{"list_type": "tier2", "limit": 100}` to get all Tier 2 content
 2. Evaluate each item against promotion criteria (same logic as browse `*` marker)
@@ -248,8 +248,8 @@ Delegate batch commit to `jarvis-audit-agent` with all promoted paths.
 
 ## Graceful Degradation
 
-- If `jarvis_retrieve(list_type="tier2")` returns empty → "No Tier 2 content found. Auto-Extract captures observations automatically during sessions. Check mode with /memory-stats."
+- If `jarvis_retrieve(list_type="tier2")` returns empty → "No Tier 2 content found. Auto-Extract captures observations automatically during sessions. Check mode with /jarvis-memory-stats."
 - If `jarvis_promote` fails for unsupported type → "Type '[type]' can't be promoted yet. Supported: observation, pattern, summary, learning, decision."
-- If `jarvis_promote` returns error → Show error message, suggest checking `/memory-stats` for system health
+- If `jarvis_promote` returns error → Show error message, suggest checking `/jarvis-memory-stats` for system health
 - If ChromaDB unavailable → "Memory system unavailable. Try /jarvis-settings to configure and index your vault."
 - If config has no `promotion` section → Use defaults (importance 0.85, retrievals 3, age 30d)

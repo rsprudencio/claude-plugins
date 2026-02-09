@@ -1,25 +1,31 @@
-# Jarvis - Global AI assistant
-# Concatenates system prompts from all installed Jarvis plugins (modular architecture)
 # Source: https://github.com/rsprudencio/claude-plugins
 unalias jarvis 2>/dev/null
-function jarvis() {
-    local cache_dir="$HOME/.claude/plugins/cache/raph-claude-plugins"
+jarvis() {
     local system_prompt=""
     local settings_file=""
     local found_core=false
 
-    # Load prompts from all Jarvis plugins (order matters: core first)
-    for plugin in jarvis jarvis-todoist jarvis-strategic; do
-        # Glob to find versioned directory (e.g., jarvis/1.0.0/system-prompt.md)
-        local prompt_file=$(echo $cache_dir/$plugin/*/system-prompt.md(N[1]))
-        if [[ -f "$prompt_file" ]]; then
-            system_prompt+="$(cat "$prompt_file")"$'\n\n---\n\n'
-            if [[ "$plugin" == "jarvis" ]]; then
+    # Get installed plugin paths from Claude's plugin system (canonical source of truth)
+    local plugin_paths
+    plugin_paths=$(claude plugin list --json 2>/dev/null | python3 -c "
+import sys, json
+for p in json.load(sys.stdin):
+    pid = p.get('id', '')
+    if pid.startswith('jarvis'):
+        print(f\"{pid.split('@')[0]}|{p['installPath']}\")
+" 2>/dev/null)
+
+    local name path
+    while IFS='|' read -r name path; do
+        [[ -z "$name" ]] && continue
+        if [[ -f "$path/system-prompt.md" ]]; then
+            system_prompt+="$(cat "$path/system-prompt.md")"$'\n\n---\n\n'
+            if [[ "$name" == "jarvis" ]]; then
                 found_core=true
-                settings_file="$(dirname "$prompt_file")/settings.json"
+                settings_file="$path/settings.json"
             fi
         fi
-    done
+    done <<< "$plugin_paths"
 
     # Require core plugin
     if [[ "$found_core" == false ]]; then
@@ -29,14 +35,13 @@ function jarvis() {
     fi
 
     # Launch Claude with concatenated prompts and settings
+    local -a extra_args=()
     if [[ -f "$settings_file" ]]; then
-        __JARVIS_CLAUDE_STATUSLINE__=1 claude \
-            --append-system-prompt "$system_prompt" \
-            --settings "$settings_file" \
-            "$@"
-    else
-        __JARVIS_CLAUDE_STATUSLINE__=1 claude \
-            --append-system-prompt "$system_prompt" \
-            "$@"
+        extra_args+=(--settings "$settings_file")
     fi
+
+    __JARVIS_CLAUDE_STATUSLINE__=1 claude \
+        --append-system-prompt "$system_prompt" \
+        "${extra_args[@]}" \
+        "$@"
 }

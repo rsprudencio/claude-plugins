@@ -578,11 +578,11 @@
     },
     "semantic_search": {
       "description": "Find related content by meaning across the vault",
-      "steps": ["Say '/recall [topic]'", "Review semantic matches with relevance scores", "Drill into relevant results"]
+      "steps": ["Say '/jarvis-recall [topic]'", "Review semantic matches with relevance scores", "Drill into relevant results"]
     },
     "memory_management": {
       "description": "Review and promote auto-captured observations",
-      "steps": ["Say '/promote' to browse Tier 2 content", "Preview items of interest", "Promote valuable observations to permanent vault files", "Check health with '/memory-stats'"]
+      "steps": ["Say '/jarvis-promote' to browse Tier 2 content", "Preview items of interest", "Promote valuable observations to permanent vault files", "Check health with '/jarvis-memory-stats'"]
     },
     "ad_hoc_research": {
       "description": "Search vault for information on a topic",
@@ -598,8 +598,8 @@
       "Run pattern analysis monthly to spot behavioral trends",
       "Keep strategic memories updated — they're Jarvis's long-term context at .jarvis/strategic/",
       "Use specific entry types (incident-log, learning, idea) for better categorization",
-      "Use /recall for semantic search — finds related content by meaning, not just keywords",
-      "Auto-extract passively captures observations from your conversations — review with /promote"
+      "Use /jarvis-recall for semantic search — finds related content by meaning, not just keywords",
+      "Auto-extract passively captures observations from your conversations — review with /jarvis-promote"
     ],
     "performance": [
       "Jarvis delegates to sub-agents to preserve main context window",

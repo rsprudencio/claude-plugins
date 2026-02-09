@@ -3,11 +3,19 @@
 Checks all prerequisites for running Jarvis on Windows, Linux, and macOS.
 """
 import sys
-import shutil
 import subprocess
 import platform
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+from tools.platform_utils import (
+    which,
+    which_python,
+    extract_version,
+    format_error_message,
+    check_version_requirement,
+    Version,
+)
 
 
 def check_python_version() -> Tuple[bool, str, Dict]:
@@ -17,19 +25,24 @@ def check_python_version() -> Tuple[bool, str, Dict]:
         (is_valid, message, details)
     """
     required = (3, 10)
-    current = sys.version_info[:2]
+    # Handle both namedtuple (normal) and tuple (when mocked in tests)
+    version_info = sys.version_info
+    if isinstance(version_info, tuple) and not hasattr(version_info, 'major'):
+        major, minor, micro = version_info[0], version_info[1], version_info[2]
+    else:
+        major, minor, micro = version_info.major, version_info.minor, version_info.micro
+
+    current_version = Version(major, minor, micro)
 
     details = {
         "required": f"{required[0]}.{required[1]}+",
-        "current": f"{current[0]}.{current[1]}.{sys.version_info[2]}",
+        "current": str(current_version),
         "platform": platform.system(),
         "implementation": platform.python_implementation(),
     }
 
-    if current >= required:
-        return True, f"✓ Python {details['current']}", details
-    else:
-        return False, f"✗ Python {details['current']} (requires {details['required']}+)", details
+    is_valid, message = check_version_requirement(current_version, required, "Python")
+    return is_valid, message, details
 
 
 def check_uv() -> Tuple[bool, str, Dict]:
@@ -38,8 +51,8 @@ def check_uv() -> Tuple[bool, str, Dict]:
     Returns:
         (is_valid, message, details)
     """
-    uv_path = shutil.which("uv")
-    uvx_path = shutil.which("uvx")
+    uv_path = which("uv", enriched=True)
+    uvx_path = which("uvx", enriched=True)
 
     details = {
         "uv_path": uv_path,
@@ -57,7 +70,11 @@ def check_uv() -> Tuple[bool, str, Dict]:
                 timeout=5
             )
             if result.returncode == 0:
-                details["version"] = result.stdout.strip()
+                version = extract_version(result.stdout)
+                if version:
+                    details["version"] = str(version)
+                else:
+                    details["version"] = result.stdout.strip()
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
@@ -66,12 +83,7 @@ def check_uv() -> Tuple[bool, str, Dict]:
     elif uv_path:
         return True, f"✓ uv found at {uv_path} (uvx should be available)", details
     else:
-        msg = "✗ uv not found on PATH"
-        if platform.system() == "Windows":
-            msg += " — Install: https://docs.astral.sh/uv/getting-started/installation/"
-        else:
-            msg += " — Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
-        return False, msg, details
+        return False, format_error_message("uv", "not found on PATH"), details
 
 
 def check_git() -> Tuple[bool, str, Dict]:
@@ -80,7 +92,7 @@ def check_git() -> Tuple[bool, str, Dict]:
     Returns:
         (is_valid, message, details)
     """
-    git_path = shutil.which("git")
+    git_path = which("git", enriched=True)
 
     details = {
         "git_path": git_path,
@@ -97,56 +109,18 @@ def check_git() -> Tuple[bool, str, Dict]:
                 timeout=5
             )
             if result.returncode == 0:
-                details["version"] = result.stdout.strip().replace("git version ", "")
+                version = extract_version(result.stdout)
+                if version:
+                    details["version"] = str(version)
+                else:
+                    details["version"] = result.stdout.strip().replace("git version ", "")
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
     if git_path:
         return True, f"✓ git found at {git_path}", details
     else:
-        msg = "✗ git not found on PATH"
-        system = platform.system()
-        if system == "Windows":
-            msg += " — Install: https://git-scm.com/download/win"
-        elif system == "Darwin":
-            msg += " — Install: xcode-select --install or brew install git"
-        else:
-            msg += " — Install: sudo apt install git (Debian/Ubuntu) or sudo yum install git (RedHat/CentOS)"
-        return False, msg, details
-
-
-def check_claude_cli() -> Tuple[bool, str, Dict]:
-    """Check if Claude CLI is available (optional).
-
-    Returns:
-        (is_valid, message, details)
-    """
-    claude_path = shutil.which("claude")
-
-    details = {
-        "claude_path": claude_path,
-        "required_for": "Auto-extract background-cli mode (optional)",
-        "optional": True,
-    }
-
-    # Get version if available
-    if claude_path:
-        try:
-            result = subprocess.run(
-                [claude_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                details["version"] = result.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-    if claude_path:
-        return True, f"✓ claude CLI found at {claude_path}", details
-    else:
-        return True, "○ claude CLI not found (optional for auto-extract)", details
+        return False, format_error_message("git", "not found on PATH"), details
 
 
 
@@ -219,9 +193,7 @@ def run_system_check() -> Dict:
         ("git", check_git()),
     ]
 
-    optional_checks = [
-        ("claude_cli", check_claude_cli()),
-    ]
+    optional_checks = []
 
     platform_checks = check_platform_specific()
 
@@ -268,7 +240,6 @@ def run_system_check() -> Dict:
             "python": details["python"]["current"],
             "uv": bool(details["uv"]["uvx_path"] or details["uv"]["uv_path"]),
             "git": bool(details["git"]["git_path"]),
-            "claude_cli": bool(details["claude_cli"]["claude_path"]),
         }
     }
 
@@ -315,17 +286,6 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
 
     lines.append("")
 
-    # Optional features
-    lines.append("Optional Features:")
-    if "claude_cli" in result["details"]:
-        check_details = result["details"]["claude_cli"]
-        if check_details["claude_path"]:
-            lines.append(f"  ✓ Claude CLI: {check_details['claude_path']}")
-        else:
-            lines.append(f"  ○ Claude CLI: not found (auto-extract CLI fallback unavailable)")
-
-    lines.append("")
-
     # Status
     if result["healthy"]:
         lines.append("Status: ✓ All critical requirements met")
@@ -349,11 +309,13 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
 
     # Platform-specific notes
     if result["details"].get("platform_specific"):
-        lines.append("Platform Notes:")
-        for note in result["details"]["platform_specific"]:
-            if "note" in note:
+        # Only show section if there are actual notes to display
+        notes_to_show = [note for note in result["details"]["platform_specific"] if "note" in note]
+        if notes_to_show:
+            lines.append("Platform Notes:")
+            for note in notes_to_show:
                 lines.append(f"  • {note['note']}")
-        lines.append("")
+            lines.append("")
 
     # Verbose details
     if verbose:

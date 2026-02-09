@@ -190,7 +190,7 @@ def query_vault(query: str, n_results: int = 5,
             "query": query,
             "results": [],
             "total_in_collection": 0,
-            "message": "No documents indexed. Run /memory-index."
+            "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool."
         }
 
     n_results = min(max(1, n_results), 20)
@@ -341,13 +341,12 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
         return {"success": False, "error": f"ChromaDB unavailable: {e}"}
 
     total = collection.count()
-
     if total == 0:
         return {
             "success": True,
             "total_documents": 0,
             "samples": [],
-            "message": "No documents indexed. Run /memory-index.",
+            "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool.",
         }
 
     sample_size = min(max(1, sample_size), total)

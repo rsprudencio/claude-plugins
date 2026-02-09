@@ -1,10 +1,10 @@
 ---
 name: jarvis-memory-stats
-description: Show memory system health and statistics. Use when user says "/memory-stats", "Jarvis, memory status", "how many files indexed", or "memory health".
+description: Show memory system health and statistics. Use when user says "/jarvis-memory-stats", "Jarvis, memory status", "how many files indexed", or "memory health".
 user_invocable: true
 ---
 
-# /memory-stats - Memory System Status
+# /jarvis-memory-stats - Memory System Status
 
 Shows the health and statistics of Jarvis's semantic memory system.
 
@@ -37,8 +37,8 @@ Sample entries:
 - journal/jarvis/2026/02/20260206-chromadb.md (type: journal)
 
 Commands:
-  /recall <query>       - Search your vault semantically
-  /memory-stats         - This status view
+  /jarvis-recall <query>       - Search your vault semantically
+  /jarvis-memory-stats         - This status view
   /jarvis-settings      - Configuration (includes reindexing)
 ```
 

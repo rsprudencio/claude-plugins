@@ -222,14 +222,14 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 ### Skills
 | Skill | Description |
 |-------|-------------|
-| `/recall <query>` | Semantic search across vault content |
-| `/promote` | Browse and promote Tier 2 content to permanent files |
-| `/memory-stats` | Show memory system health and stats |
+| `/jarvis-recall <query>` | Semantic search across vault content |
+| `/jarvis-promote` | Browse and promote Tier 2 content to permanent files |
+| `/jarvis-memory-stats` | Show memory system health and stats |
 
 ### How It Works
 - Vault .md files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
 - Stored at the path configured in `memory.db_path` (default: `~/.jarvis/memory_db/`, outside the vault to avoid Obsidian Sync pollution)
-- `/recall` finds related content by meaning, not just keywords (returns both Tier 1 and Tier 2)
+- `/jarvis-recall` finds related content by meaning, not just keywords (returns both Tier 1 and Tier 2)
 - Journal entries are auto-indexed after creation (via `jarvis_index_file`)
 - Explorer agent uses semantic pre-search before keyword search
 - Query results include `tier` and `source` fields to distinguish file-backed from ephemeral content

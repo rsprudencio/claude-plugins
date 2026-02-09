@@ -1,10 +1,10 @@
 ---
 name: jarvis-recall
-description: Semantic search over vault content using ChromaDB. Use when user says "Jarvis, recall X", "/recall X", "what did we decide about X", "find notes about X", or asks to search vault semantically.
+description: Semantic search over vault content using ChromaDB. Use when user says "Jarvis, recall X", "/jarvis-recall X", "what did we decide about X", "find notes about X", or asks to search vault semantically.
 user_invocable: true
 ---
 
-# /recall - Semantic Vault Search
+# /jarvis-recall - Semantic Vault Search
 
 Search your vault using meaning, not just keywords. Finds related content even when exact words don't match.
 
@@ -13,7 +13,7 @@ Search your vault using meaning, not just keywords. Finds related content even w
 ### 1. Extract query from user input
 
 The user provides a search topic. Examples:
-- `/recall OAuth decisions`
+- `/jarvis-recall OAuth decisions`
 - `Jarvis, what did we discuss about authentication?`
 - `recall notes about career goals`
 

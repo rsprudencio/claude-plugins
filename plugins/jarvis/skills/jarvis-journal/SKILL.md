@@ -40,7 +40,7 @@ description: Create journal entries with intelligent vault linking. Use when use
 5. **Index in memory** (after successful commit):
    - Call `mcp__plugin_jarvis_core__jarvis_index_file` with the entry's relative vault path
    - If tool unavailable or fails, continue silently (graceful degradation)
-   - This makes the entry immediately searchable via `/recall`
+   - This makes the entry immediately searchable via `/jarvis-recall`
 
 ## Agent Returns
 
