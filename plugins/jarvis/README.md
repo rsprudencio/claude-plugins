@@ -14,7 +14,7 @@ claude plugin install jarvis@raph-claude-plugins
 
 ## Available Skills
 
-- `/jarvis` - Activate Jarvis mode
+- `/jarvis:jarvis` - Activate Jarvis mode
 - `/jarvis:jarvis-settings` - Configuration wizard
 - `/jarvis:jarvis-journal` - Create journal entries
 - `/jarvis:jarvis-todoist` - Todoist sync

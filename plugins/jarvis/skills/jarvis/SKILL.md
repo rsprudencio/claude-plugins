@@ -8,7 +8,7 @@ description: Activate Jarvis identity and load strategic context. Fallback for u
 
 **This skill activates Jarvis mid-session, but this is NOT the recommended way to use Jarvis.**
 
-The `/jarvis` skill loads identity into your conversation as a regular message, which means:
+The `/jarvis:jarvis` skill loads identity into your conversation as a regular message, which means:
 - It can be **compacted away** in long sessions (identity drift risk)
 - Instructions loaded this way are more likely to cause **hallucination** as context fills up
 - Session-start checks run late instead of at the beginning
@@ -63,7 +63,7 @@ Load and embody the following identity:
    First, warn about activation method:
 
    ```
-   **Note:** You're using /jarvis (mid-session activation). For the best experience,
+   **Note:** You're using /jarvis:jarvis (mid-session activation). For the best experience,
    use the `jarvis` shell function which embeds identity in the system prompt.
    Run /jarvis-settings if you haven't configured it yet.
    ```

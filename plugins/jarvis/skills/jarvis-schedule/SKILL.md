@@ -15,7 +15,7 @@ Todoist recurring tasks serve as the scheduling engine:
 - **`jarvis-scheduled`** label marks a task as a Jarvis scheduled action
 - **`jarvis-action:[action]`** label specifies which action to trigger
 - Todoist handles recurrence, due dates, and its own notifications
-- Jarvis detects due actions when the user runs `/jarvis-todoist` or `/jarvis`
+- Jarvis detects due actions when the user runs `/jarvis-todoist` or `/jarvis:jarvis`
 
 ---
 
@@ -110,5 +110,5 @@ To pause without cancelling:
 ## Notes
 
 - This skill lives in the core jarvis plugin because scheduling is cross-cutting (not Todoist-specific in concept, even though Todoist is the current engine)
-- Detection of due actions happens in `/jarvis-todoist` Step 0 and `/jarvis` session-start checks
+- Detection of due actions happens in `/jarvis-todoist` Step 0 and `/jarvis:jarvis` session-start checks
 - Todoist sends its own push notifications for due tasks, so users get reminded even when Claude Code is closed

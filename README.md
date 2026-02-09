@@ -77,7 +77,7 @@ Once installed, launch Jarvis:
 ```bash
 jarvis              # If you set up the shell command during install
 # or
-claude              # Then type /jarvis to activate mid-session
+claude              # Then type /jarvis:jarvis to activate mid-session
 ```
 
 ### First Things to Try
@@ -115,7 +115,7 @@ claude              # Then type /jarvis to activate mid-session
 **Core:**
 | Skill | Description |
 |-------|-------------|
-| `/jarvis` | Activate Jarvis identity mid-session |
+| `/jarvis:jarvis` | Activate Jarvis identity mid-session |
 | `/jarvis-settings` | View and update configuration |
 | `/jarvis-journal` | Create journal entries with intelligent vault linking |
 | `/jarvis-inbox` | Process and organize vault inbox items |
@@ -253,7 +253,7 @@ If `install.sh` or `check-requirements` reports missing prerequisites:
 
 ### Plugin Not Loading
 
-If `/jarvis` or `/jarvis-settings` doesn't work:
+If `/jarvis:jarvis` or `/jarvis-settings` doesn't work:
 
 1. **Verify plugin installed**: `claude plugin list` — should show `jarvis@raph-claude-plugins`
 2. **Check MCP server**: Look for "Jarvis MCP server started" in Claude Code logs

@@ -605,7 +605,7 @@
       "Jarvis delegates to sub-agents to preserve main context window",
       "Journal and audit agents use Haiku (fast, cheap) — Todoist uses Sonnet (needs reasoning)",
       "Explorer agent handles vault searches so main context stays clean",
-      "Shell integration (jarvis command) auto-loads identity without /jarvis skill",
+      "Shell integration (jarvis command) auto-loads identity without /jarvis:jarvis skill",
       "Vault files are auto-indexed when written through jarvis_store — for manual additions, ask Jarvis to reindex",
       "Auto-extract runs in background with 120s cooldown — zero impact on conversation speed"
     ],
