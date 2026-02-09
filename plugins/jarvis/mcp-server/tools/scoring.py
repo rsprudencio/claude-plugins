@@ -1,7 +1,7 @@
 """Importance scoring for vault documents.
 
 Computes a 0.0-1.0 importance score from content signals:
-- vault_type weight (journal=0.4, note=0.6, work=0.7, etc.)
+- vault_type weight (journal=0.65, note=0.55, work=0.60, etc.)
 - concept bonus from regex patterns (decision, incident, TODO)
 - recency bonus (exponential decay with configurable half-life)
 - retrieval bonus (log-scaled from access count)
@@ -16,11 +16,11 @@ from typing import Optional
 
 # Default type weights (overridable via config)
 DEFAULT_TYPE_WEIGHTS = {
-    "journal": 0.4,
-    "note": 0.6,
-    "work": 0.7,
+    "journal": 0.65,
+    "note": 0.55,
+    "work": 0.60,
     "inbox": 0.3,
-    "incident-log": 0.8,
+    "incident-log": 0.7,
     "decision": 0.8,
     "unknown": 0.5,
 }
