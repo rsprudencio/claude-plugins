@@ -52,7 +52,12 @@ Parse current version and calculate new version based on bump type.
 **File 1: `plugins/<plugin>/.claude-plugin/plugin.json`**
 - Update the `version` field to the new version
 
-**File 2: `CLAUDE.md`** (only for minor/major bumps to core plugin)
+**File 2: `plugins/<plugin>/mcp-server/pyproject.toml`** (if it exists)
+- Update the `version` field to match the plugin version
+- This keeps the Python package version in sync with the plugin version
+- Critical: `uvx` caches packages by this version — mismatched versions cause stale code
+
+**File 3: `CLAUDE.md`** (only for minor/major bumps to core plugin)
 - Find the "### Version History" section
 - Add new entry at the top:
   ```markdown
@@ -65,6 +70,11 @@ For patch bumps or extension plugins, skip updating CLAUDE.md.
 
 ```bash
 git add plugins/<plugin>/.claude-plugin/plugin.json
+```
+
+If pyproject.toml was updated:
+```bash
+git add plugins/<plugin>/mcp-server/pyproject.toml
 ```
 
 If CLAUDE.md was updated:
