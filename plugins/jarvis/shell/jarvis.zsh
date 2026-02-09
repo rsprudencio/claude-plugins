@@ -15,14 +15,14 @@ for p in json.load(sys.stdin):
         print(f\"{pid.split('@')[0]}|{p['installPath']}\")
 " 2>/dev/null)
 
-    local name path
-    while IFS='|' read -r name path; do
+    local name plugin_path
+    while IFS='|' read -r name plugin_path; do
         [[ -z "$name" ]] && continue
-        if [[ -f "$path/system-prompt.md" ]]; then
-            system_prompt+="$(cat "$path/system-prompt.md")"$'\n\n---\n\n'
+        if [[ -f "$plugin_path/system-prompt.md" ]]; then
+            system_prompt+="$(<"$plugin_path/system-prompt.md")"$'\n\n---\n\n'
             if [[ "$name" == "jarvis" ]]; then
                 found_core=true
-                settings_file="$path/settings.json"
+                settings_file="$plugin_path/settings.json"
             fi
         fi
     done <<< "$plugin_paths"
@@ -40,7 +40,7 @@ for p in json.load(sys.stdin):
         extra_args+=(--settings "$settings_file")
     fi
 
-    __JARVIS_CLAUDE_STATUSLINE__=1 claude \
+    __JARVIS_CLAUDE_STATUSLINE__=1 command claude \
         --append-system-prompt "$system_prompt" \
         "${extra_args[@]}" \
         "$@"
