@@ -484,7 +484,7 @@ if [ -d "$VAULT_PATH" ]; then
             INDEX_OUTPUT=$(printf '%s\n%s\n%s\n' \
                 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"installer","version":"0.1"}}}' \
                 '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jarvis_index_vault","arguments":{}}}' | \
+                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jarvis_index_vault","arguments":{"force":true}}}' | \
                 timeout 120 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-tools 2>/dev/null || true)
 
             if echo "$INDEX_OUTPUT" | grep -q '"result"' 2>/dev/null; then

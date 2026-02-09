@@ -259,6 +259,12 @@ Choose `type` based on content:
 
 **Always include:** a descriptive `name` slug and relevant `tags` for future retrieval.
 
+### Indexing Guidance
+
+- **"index my vault"** (first time or new files only): `jarvis_index_vault()` — skips already-indexed files
+- **"reindex my vault"** / **"rebuild index"** / **"update index"**: `jarvis_index_vault(force=True)` — re-indexes ALL files including updated ones
+- Always use `force=True` when the user implies they want to refresh stale content, not just add new files
+
 ### First-Time Setup
 If the vault memory is empty (no indexed files), suggest:
 ```

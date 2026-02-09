@@ -29,7 +29,7 @@ If you prefer to install step by step:
 
 ```bash
 # Add the marketplace
-claude plugin marketplace add raph-claude-plugins https://github.com/rsprudencio/claude-plugins
+claude plugin marketplace add rsprudencio/claude-plugins
 
 # Install core plugin (required)
 claude plugin install jarvis@raph-claude-plugins
@@ -54,7 +54,7 @@ This walks you through vault path selection, auto-extract mode, and shell integr
 ```bash
 git clone https://github.com/rsprudencio/claude-plugins.git
 cd claude-plugins
-claude plugin marketplace add raph-claude-plugins .
+claude plugin marketplace add rsprudencio/claude-plugins
 claude plugin install jarvis@raph-claude-plugins
 ```
 
