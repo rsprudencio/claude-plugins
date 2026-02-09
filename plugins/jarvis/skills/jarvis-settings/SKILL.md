@@ -213,7 +213,6 @@ Pretty-print `~/.jarvis/config.json` grouped by section:
 vault_path:      ~/.jarvis/vault/
 vault_confirmed: true
 configured_at:   2026-02-08T10:30:00Z
-version:         1.15.0
 
 === Memory ===
 db_path:              ~/.jarvis/memory_db
@@ -279,7 +278,6 @@ For first-time setup, write the FULL config with all defaults visible:
   "vault_path": "[user's choice]",
   "vault_confirmed": true,
   "configured_at": "[ISO 8601]",
-  "version": "1.15.0",
   "memory": {
     "db_path": "~/.jarvis/memory_db",
     "secret_detection": true,

@@ -373,7 +373,6 @@ if [ "$SKIP_CONFIG" != true ]; then
   "vault_path": "$VAULT_PATH",
   "vault_confirmed": true,
   "configured_at": "$TIMESTAMP",
-  "version": "$JARVIS_VERSION",
   "memory": {
     "db_path": "~/.jarvis/memory_db",
     "secret_detection": true,
