@@ -4,9 +4,54 @@ Routes deletes based on parameters:
 - id -> delete by document ID (routes by prefix)
 - name -> delete strategic memory by name
 """
+import os
 from typing import Optional
 
 from .namespaces import get_tier, TIER_CHROMADB
+
+
+def _remove_vault_file(id: str, confirm: bool = False) -> dict:
+    """Delete a vault file from disk and clean its ChromaDB index entries."""
+    from .config import get_verified_vault_path
+    from .memory import _get_collection, _delete_existing_chunks
+
+    file_path = id[7:].split("#chunk-")[0]  # strip vault:: and #chunk-N
+
+    vault_path, error = get_verified_vault_path()
+    if error:
+        return {"success": False, "error": error}
+
+    full_path = os.path.join(vault_path, file_path)
+    if not os.path.exists(full_path):
+        return {
+            "success": False,
+            "error": f"File not found: '{file_path}'",
+        }
+
+    if not confirm:
+        return {
+            "success": True,
+            "confirmation_required": True,
+            "file_path": file_path,
+            "message": f"Delete vault file '{file_path}'? "
+                       f"Pass confirm=True to proceed.",
+        }
+
+    # Delete the file
+    os.remove(full_path)
+
+    # Clean up ChromaDB index
+    try:
+        collection = _get_collection()
+        deleted_chunks = _delete_existing_chunks(collection, file_path)
+    except Exception:
+        deleted_chunks = 0
+
+    return {
+        "success": True,
+        "file_path": file_path,
+        "chunks_removed": deleted_chunks,
+    }
 
 
 def remove(
@@ -33,11 +78,21 @@ def remove(
         if tier == TIER_CHROMADB:
             from .tier2 import tier2_delete
             return tier2_delete(id)
+        elif id.startswith("vault::"):
+            return _remove_vault_file(id, confirm=confirm)
+        elif id.startswith("memory::"):
+            mem_name = id[8:]
+            return {
+                "success": False,
+                "error": f"This is a strategic memory. "
+                         f"Use jarvis_remove(name=\"{mem_name}\", confirm=True) instead.",
+            }
         else:
             return {
                 "success": False,
-                "error": "Only Tier 2 content can be deleted by ID. "
-                         "For vault files, delete manually.",
+                "error": f"Unrecognized ID prefix in '{id}'. "
+                         f"Use id= for Tier 2 content (obs::, pattern::, etc.) "
+                         f"or vault content (vault::), or name= for strategic memories.",
             }
 
     if name:

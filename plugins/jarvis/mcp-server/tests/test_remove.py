@@ -46,17 +46,39 @@ class TestRemoveById:
         assert not result["deleted"]
         assert result["reason"] == "not found"
 
-    def test_delete_vault_id_rejected(self, mock_config):
-        """Vault IDs cannot be deleted via remove (use filesystem)."""
-        result = remove(id="vault::notes/test.md")
-        assert not result["success"]
-        assert "Only Tier 2" in result["error"]
+    def test_delete_vault_id_requires_confirm(self, mock_config):
+        """Vault IDs require confirm=True (safety gate)."""
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "test.md").write_text("test content")
 
-    def test_delete_memory_id_rejected(self, mock_config):
-        """Memory IDs (file-backed) cannot be deleted by ID."""
+        result = remove(id="vault::notes/test.md")
+        assert result["success"]
+        assert result["confirmation_required"]
+        assert "confirm" in result["message"].lower()
+
+    def test_delete_vault_id_with_confirm(self, mock_config):
+        """Vault file is deleted when confirm=True."""
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        test_file = notes_dir / "test.md"
+        test_file.write_text("test content")
+
+        result = remove(id="vault::notes/test.md", confirm=True)
+        assert result["success"]
+        assert not test_file.exists()
+
+    def test_delete_vault_id_not_found(self, mock_config):
+        """Deleting nonexistent vault file returns error."""
+        result = remove(id="vault::notes/nonexistent.md", confirm=True)
+        assert not result["success"]
+        assert "not found" in result["error"].lower()
+
+    def test_delete_memory_id_redirects(self, mock_config):
+        """Memory IDs redirect to name= parameter."""
         result = remove(id="memory::global::test")
         assert not result["success"]
-        assert "Only Tier 2" in result["error"]
+        assert "name=" in result["error"]
 
 
 class TestRemoveByName:

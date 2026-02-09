@@ -17,11 +17,11 @@ class TestTypeWeight:
     """Tests for vault type weight lookup."""
 
     def test_known_types(self):
-        assert _compute_type_weight("journal", {}) == 0.4
-        assert _compute_type_weight("note", {}) == 0.6
-        assert _compute_type_weight("work", {}) == 0.7
+        assert _compute_type_weight("journal", {}) == 0.65
+        assert _compute_type_weight("note", {}) == 0.55
+        assert _compute_type_weight("work", {}) == 0.60
         assert _compute_type_weight("inbox", {}) == 0.3
-        assert _compute_type_weight("incident-log", {}) == 0.8
+        assert _compute_type_weight("incident-log", {}) == 0.7
         assert _compute_type_weight("decision", {}) == 0.8
 
     def test_unknown_type_uses_default(self):
@@ -32,7 +32,7 @@ class TestTypeWeight:
         assert _compute_type_weight("journal", custom) == 0.9
         assert _compute_type_weight("custom", custom) == 0.75
         # Non-overridden type uses default
-        assert _compute_type_weight("note", custom) == 0.6
+        assert _compute_type_weight("note", custom) == 0.55
 
 
 class TestConceptBonus:

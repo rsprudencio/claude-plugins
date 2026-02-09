@@ -237,7 +237,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 ### Unified Content API
 - `jarvis_store` - Write any content: vault files (`relative_path=`), memories (`type="memory"`), or ephemeral (`type="observation"`, etc.). Use `id=` from retrieve results to update existing content.
 - `jarvis_retrieve` - Read/search any content: semantic search (`query=`), by ID (`id=`), by name (`name=`), or list (`list_type=`).
-- `jarvis_remove` - Delete content: by ID (`id=` for tier2) or by name (`name=` for memories).
+- `jarvis_remove` - Delete content: by ID (`id=` from retrieve results) or by name (`name=` for memories).
 - `jarvis_promote` - Promote important ephemeral content to files
 
 ### Memorization Triggers

@@ -257,11 +257,11 @@ TOOLS = [
     ),
     Tool(
         name="jarvis_remove",
-        description="Delete content from Jarvis. Provide id (Tier 2 document ID) or name (strategic memory name).",
+        description="Delete content from Jarvis. Provide id (document ID from retrieve results) or name (strategic memory name).",
         inputSchema={
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Tier 2 document ID to delete"},
+                "id": {"type": "string", "description": "Document ID to delete (from jarvis_retrieve results). Works for vault and tier2 content."},
                 "name": {"type": "string", "description": "Strategic memory name to delete"},
                 "scope": {"type": "string", "enum": ["global", "project"], "default": "global"},
                 "project": {"type": "string", "description": "Project name for scoped memories"},
