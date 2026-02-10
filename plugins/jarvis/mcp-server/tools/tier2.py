@@ -234,20 +234,30 @@ def tier2_read(doc_id: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+VALID_SORT_OPTIONS = (
+    "importance_desc", "importance_asc",
+    "created_at_desc", "created_at_asc",
+    "none",
+)
+
+
 def tier2_list(
     content_type: Optional[str] = None,
     min_importance: Optional[float] = None,
     source: Optional[str] = None,
     limit: int = 20,
+    sort_by: str = "importance_desc",
 ) -> dict:
-    """List Tier 2 documents with optional filtering.
-    
+    """List Tier 2 documents with optional filtering and sorting.
+
     Args:
         content_type: Filter by content type (observation, pattern, etc.)
         min_importance: Minimum importance score (0.0-1.0)
         source: Filter by source (e.g., "auto-extract")
         limit: Maximum number of results (default 20)
-    
+        sort_by: Sort order. One of: importance_desc (default),
+                 importance_asc, created_at_desc, created_at_asc, none
+
     Returns:
         Result dict with success, documents, total
     """
@@ -296,9 +306,28 @@ def tier2_list(
                 "metadata": metadata,
             })
         
+        # Validate sort_by
+        if sort_by not in VALID_SORT_OPTIONS:
+            return {
+                "success": False,
+                "error": f"Invalid sort_by '{sort_by}'. "
+                         f"Valid options: {', '.join(VALID_SORT_OPTIONS)}"
+            }
+
+        # Sort before applying limit
+        if sort_by == "importance_desc":
+            docs.sort(key=lambda d: float(d["metadata"].get("importance_score", "0.5")), reverse=True)
+        elif sort_by == "importance_asc":
+            docs.sort(key=lambda d: float(d["metadata"].get("importance_score", "0.5")))
+        elif sort_by == "created_at_desc":
+            docs.sort(key=lambda d: d["metadata"].get("created_at", ""), reverse=True)
+        elif sort_by == "created_at_asc":
+            docs.sort(key=lambda d: d["metadata"].get("created_at", ""))
+        # "none" — no sorting
+
         # Apply limit
         limited = docs[:limit] if len(docs) > limit else docs
-        
+
         return {
             "success": True,
             "documents": limited,

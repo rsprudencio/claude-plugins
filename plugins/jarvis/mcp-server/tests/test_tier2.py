@@ -258,6 +258,58 @@ class TestTier2List:
         assert "Invalid content_type" in result["error"]
 
 
+class TestTier2ListSortBy:
+    """Test tier2_list sort_by parameter."""
+
+    def test_sort_by_importance_desc(self, mock_config):
+        """Default sort returns highest importance first."""
+        tier2_write(content="Low imp", content_type="observation", importance_score=0.3)
+        tier2_write(content="High imp", content_type="observation", importance_score=0.9)
+        tier2_write(content="Mid imp", content_type="observation", importance_score=0.6)
+
+        result = tier2_list(sort_by="importance_desc")
+        assert result["success"]
+        scores = [float(d["metadata"]["importance_score"]) for d in result["documents"]]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_sort_by_importance_asc(self, mock_config):
+        """Ascending sort returns lowest importance first."""
+        tier2_write(content="Low imp", content_type="observation", importance_score=0.3)
+        tier2_write(content="High imp", content_type="observation", importance_score=0.9)
+
+        result = tier2_list(sort_by="importance_asc")
+        assert result["success"]
+        scores = [float(d["metadata"]["importance_score"]) for d in result["documents"]]
+        assert scores == sorted(scores)
+
+    def test_sort_by_created_at_desc(self, mock_config):
+        """Created_at desc returns most recent first."""
+        import time
+        tier2_write(content="First", content_type="observation")
+        time.sleep(0.05)  # Ensure distinct timestamps
+        tier2_write(content="Second", content_type="observation")
+
+        result = tier2_list(sort_by="created_at_desc")
+        assert result["success"]
+        dates = [d["metadata"]["created_at"] for d in result["documents"]]
+        assert dates == sorted(dates, reverse=True)
+
+    def test_sort_by_none(self, mock_config):
+        """sort_by='none' returns results without sorting."""
+        tier2_write(content="A", content_type="observation", importance_score=0.3)
+        tier2_write(content="B", content_type="observation", importance_score=0.9)
+
+        result = tier2_list(sort_by="none")
+        assert result["success"]
+        assert result["total"] >= 2
+
+    def test_sort_by_invalid(self, mock_config):
+        """Invalid sort_by returns error."""
+        result = tier2_list(sort_by="bogus")
+        assert not result["success"]
+        assert "Invalid sort_by" in result["error"]
+
+
 class TestTier2Delete:
     """Test tier2_delete function."""
     

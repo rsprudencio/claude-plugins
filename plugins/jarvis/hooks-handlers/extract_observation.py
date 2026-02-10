@@ -46,6 +46,9 @@ You are analyzing a conversation turn between a user and an AI assistant working
 ## Tools Used
 {tool_names}
 
+## Files Referenced
+{relevant_files}
+
 ## Project Context
 Project: {project_dir}
 Branch: {git_branch}
@@ -67,11 +70,61 @@ Respond with JSON only:
   "has_observation": true/false,
   "content": "The observation (1-3 sentences, markdown OK)",
   "importance_score": 0.3-0.8,
-  "tags": ["tag1", "tag2"]
+  "tags": ["tag1", "tag2"],
+  "scope": "project" or "global"
 }}
+
+scope: "project" if the observation is specific to this codebase (e.g., project conventions, file structure, architecture). "global" if it's a universal pattern (e.g., user preference, general workflow habit).
 
 If the turn is routine or contains nothing worth remembering, set has_observation to false.
 """
+
+
+# Tools that don't produce meaningful file path context
+_SKIP_FILE_TOOLS = {"Bash", "WebFetch", "WebSearch", "WebSearch", "AskUserQuestion"}
+
+# Keys in tool_use input that may contain file paths
+_FILE_PATH_KEYS = ("file_path", "relative_path", "path")
+
+# Maximum number of file paths to include
+_MAX_FILE_PATHS = 10
+
+
+def extract_file_paths_from_tools(assistant_content: list) -> list[str]:
+    """Extract file paths from tool_use blocks in assistant content.
+
+    Scans tool_use blocks for input fields like file_path, relative_path, path.
+    Skips tools that don't produce meaningful file context (Bash, WebFetch, etc.).
+    Deduplicates and caps at _MAX_FILE_PATHS.
+
+    Args:
+        assistant_content: List of content blocks from assistant message
+
+    Returns:
+        Deduplicated list of file paths (max 10)
+    """
+    seen = set()
+    paths = []
+
+    for block in assistant_content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") != "tool_use":
+            continue
+        if block.get("name", "") in _SKIP_FILE_TOOLS:
+            continue
+
+        tool_input = block.get("input", {})
+        if not isinstance(tool_input, dict):
+            continue
+
+        for key in _FILE_PATH_KEYS:
+            value = tool_input.get(key)
+            if isinstance(value, str) and value and value not in seen:
+                seen.add(value)
+                paths.append(value)
+
+    return paths[:_MAX_FILE_PATHS]
 
 
 def parse_transcript_turn(lines: list[str]) -> dict | None:
@@ -82,7 +135,7 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
     - Preceding user message (with text blocks)
 
     Returns:
-        Dict with keys: user_text, assistant_text, tool_names, token_usage
+        Dict with keys: user_text, assistant_text, tool_names, token_usage, relevant_files
         None if parsing fails or no valid turn found
     """
     assistant_msg = None
@@ -142,6 +195,9 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
             seen.add(tool)
             unique_tools.append(tool)
 
+    # Extract file paths from tool_use blocks
+    relevant_files = extract_file_paths_from_tools(assistant_content)
+
     # Extract token usage
     usage = assistant_msg.get("message", {}).get("usage", {})
     input_tokens = usage.get("input_tokens", 0)
@@ -153,6 +209,7 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
         "assistant_text": assistant_text,
         "tool_names": unique_tools,
         "token_usage": token_usage,
+        "relevant_files": relevant_files,
     }
 
 
@@ -221,11 +278,14 @@ def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -
     tool_names = turn.get("tool_names", [])
     tool_list = ", ".join(tool_names) if tool_names else "None"
     token_usage = turn.get("token_usage", "unknown")
+    relevant_files = turn.get("relevant_files", [])
+    files_list = "\n".join(f"- {f}" for f in relevant_files) if relevant_files else "None"
 
     return EXTRACTION_PROMPT.format(
         user_text=user_text,
         assistant_text=assistant_text,
         tool_names=tool_list,
+        relevant_files=files_list,
         project_dir=project_dir or "unknown",
         git_branch=git_branch or "unknown",
         token_usage=token_usage,
@@ -458,7 +518,8 @@ def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, s
 
 
 def store_observation(content: str, importance_score: float, tags: list, source_label: str,
-                      project_dir: str = "", project_path: str = "", git_branch: str = "") -> dict:
+                      project_dir: str = "", project_path: str = "", git_branch: str = "",
+                      relevant_files: list | None = None, scope: str = "") -> dict:
     """Store an observation via tier2_write.
 
     Args:
@@ -469,6 +530,8 @@ def store_observation(content: str, importance_score: float, tags: list, source_
         project_dir: Current project directory name
         project_path: Full path to project directory
         git_branch: Current git branch name
+        relevant_files: List of file paths referenced in the turn
+        scope: "project" or "global" classification from Haiku
 
     Returns:
         Result dict from tier2_write
@@ -482,6 +545,10 @@ def store_observation(content: str, importance_score: float, tags: list, source_
         extra["project_path"] = project_path
     if git_branch:
         extra["git_branch"] = git_branch
+    if relevant_files:
+        extra["relevant_files"] = ",".join(relevant_files)
+    if scope:
+        extra["scope"] = scope
 
     return tier2_write(
         content=content,
@@ -571,9 +638,18 @@ def main():
         if not isinstance(tags, list):
             tags = []
 
+        # Extract scope from Haiku response (default to empty if missing)
+        scope = extraction.get("scope", "")
+        if scope not in ("project", "global"):
+            scope = ""
+
+        # Get relevant_files from the parsed turn
+        relevant_files = turn.get("relevant_files", [])
+
         result = store_observation(
             content, importance, tags, "auto-extract:stop-hook",
             project_dir=project_dir, project_path=project_path, git_branch=git_branch,
+            relevant_files=relevant_files, scope=scope,
         )
         if result.get("success"):
             obs_id = result.get('id', 'unknown')

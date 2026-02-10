@@ -39,27 +39,29 @@ AskUserQuestion:
       multiSelect: false
 ```
 
-Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `list_type="tier2"` and appropriate filters:
+Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `list_type="tier2"`, `sort_by="importance_desc"`, and appropriate filters:
 
-- "Show all" → `{"list_type": "tier2", "limit": 20}`
-- "Observations only" → `{"list_type": "tier2", "type_filter": "observation", "limit": 20}`
-- "Patterns only" → `{"list_type": "tier2", "type_filter": "pattern", "limit": 20}`
-- "High importance" → `{"list_type": "tier2", "min_importance": 0.7, "limit": 20}`
+- "Show all" → `{"list_type": "tier2", "limit": 20, "sort_by": "importance_desc"}`
+- "Observations only" → `{"list_type": "tier2", "type_filter": "observation", "limit": 20, "sort_by": "importance_desc"}`
+- "Patterns only" → `{"list_type": "tier2", "type_filter": "pattern", "limit": 20, "sort_by": "importance_desc"}`
+- "High importance" → `{"list_type": "tier2", "min_importance": 0.7, "limit": 20, "sort_by": "importance_desc"}`
 
 Present results as a numbered table:
 
 ```
-Tier 2 Content (N items):
+Tier 2 Content (N items, sorted by importance):
 
- #  | Type        | Imp.  | Retrievals | Age  | Preview
-----|-------------|-------|------------|------|-----------------------------
- 1  | observation | 0.65  | 2          | 3d   | OAuth flow uses PKCE with...
- 2* | pattern     | 0.88  | 5          | 12d  | User prefers kebab-case...
- 3  | observation | 0.45  | 0          | 1d   | Vault structure has 3 main...
- 4* | summary     | 0.72  | 4          | 8d   | Week focused on memory...
+ #  | Type        | Imp.  | Project         | Age  | Preview
+----|-------------|-------|-----------------|------|-----------------------------
+ 1* | pattern     | 0.88  | jarvis-plugin   | 12d  | User prefers kebab-case...
+ 2* | summary     | 0.72  | jarvis-plugin   | 8d   | Week focused on memory...
+ 3  | observation | 0.65  | (global)        | 3d   | OAuth flow uses PKCE with...
+ 4  | observation | 0.45  | my-app          | 1d   | Vault structure has 3 main...
 
 * = Meets promotion criteria
 ```
+
+**Project column**: Show `project_dir` from metadata, or `(global)` if absent.
 
 Then ask what to do next:
 
@@ -113,14 +115,22 @@ Content:
 
 Type: pattern | Importance: 0.88 | Retrievals: 5 | Age: 12d
 Source: auto-extract:stop-hook
+Scope: project | Project: jarvis-plugin
+Files: plugins/jarvis/mcp-server/tools/tier2.py, plugins/jarvis/hooks-handlers/extract_observation.py
 
 Promotion Criteria (from ~/.jarvis/config.json):
   [checkmark] Importance 0.88 >= threshold 0.85
   [checkmark] Retrievals 5 > threshold 3
     Age 12d < 30d (age criterion not met, but not needed)
 
-Target path: [resolved from content type - see path resolution below]
+Target path: observations_promoted/jarvis-plugin/observation-unnamed-20260210-143000.md
 ```
+
+**Show project context** from metadata when available:
+- `scope` → from metadata `scope` field ("project" or "global")
+- `Project` → from metadata `project_dir` field
+- `Files` → from metadata `relevant_files` field (comma-separated)
+- `Target path` → if `project_dir` is set, the promoted file nests under `<type>_promoted/<project_dir>/`
 
 Then ask for confirmation:
 
@@ -184,7 +194,7 @@ If user confirms commit, delegate to `jarvis-audit-agent`:
 
 When user says `/jarvis-promote auto`:
 
-1. Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `{"list_type": "tier2", "limit": 100}` to get all Tier 2 content
+1. Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `{"list_type": "tier2", "limit": 100, "sort_by": "importance_desc"}` to get all Tier 2 content
 2. Evaluate each item against promotion criteria (same logic as browse `*` marker)
 3. Filter to only promotable types: observation, pattern, summary, learning, decision
 4. Show eligible items:

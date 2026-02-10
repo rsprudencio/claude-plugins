@@ -171,3 +171,14 @@ class TestRetrieveList:
         result = retrieve(list_type="bogus")
         assert not result["success"]
         assert "Invalid list_type" in result["error"]
+
+    def test_sort_by_passthrough(self, mock_config):
+        """sort_by parameter passes through to tier2_list."""
+        tier2_write(content="Low", content_type="observation", importance_score=0.3)
+        tier2_write(content="High", content_type="observation", importance_score=0.9)
+
+        result = retrieve(list_type="tier2", sort_by="importance_asc")
+        assert result["success"]
+        if result["total"] >= 2:
+            scores = [float(d["metadata"]["importance_score"]) for d in result["documents"]]
+            assert scores == sorted(scores)

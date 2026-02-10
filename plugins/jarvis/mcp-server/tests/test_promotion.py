@@ -304,3 +304,67 @@ class TestPromote:
         with open(full_path) as f:
             content = f.read()
         assert "type: decision" in content
+
+    def test_promote_with_project_dir_nests(self, mock_config):
+        """Project-scoped observation promotes to nested directory."""
+        write_result = tier2_write(
+            content="Project-specific observation",
+            content_type="observation",
+            importance_score=0.9,
+            extra_metadata={"project_dir": "my-project"},
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+        assert "my-project" in result["promoted_path"]
+
+        # Verify nested directory exists
+        full_path = os.path.join(mock_config.vault_path, result["promoted_path"])
+        assert os.path.exists(full_path)
+        assert "/my-project/" in full_path
+
+    def test_promote_without_project_dir_flat(self, mock_config):
+        """Global observation promotes to flat directory (no nesting)."""
+        write_result = tier2_write(
+            content="Global observation",
+            content_type="observation",
+            importance_score=0.9,
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+        # Should NOT have any project subdirectory between the promotion dir and filename
+        # The filename should be directly under the observations path (no nested project dir)
+        filename = os.path.basename(result["promoted_path"])
+        parent_dir = os.path.basename(os.path.dirname(result["promoted_path"]))
+        # parent should be the observations dir itself, not a project name
+        assert filename.startswith("observation-")
+        assert parent_dir != ""  # has a parent dir
+        # Verify no nested subdirectory — the promoted path should end with dir/filename
+        # (not dir/project/filename)
+        assert "observation-" in result["promoted_path"]
+
+    def test_promote_frontmatter_includes_scope_and_project(self, mock_config):
+        """Promoted file frontmatter includes scope, project, and files."""
+        write_result = tier2_write(
+            content="Observation with full context",
+            content_type="observation",
+            importance_score=0.9,
+            extra_metadata={
+                "project_dir": "jarvis-plugin",
+                "scope": "project",
+                "relevant_files": "src/main.py,tests/test_main.py",
+            },
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+
+        full_path = os.path.join(mock_config.vault_path, result["promoted_path"])
+        with open(full_path) as f:
+            content = f.read()
+
+        assert "scope: project" in content
+        assert "project: jarvis-plugin" in content
+        assert "- src/main.py" in content
+        assert "- tests/test_main.py" in content

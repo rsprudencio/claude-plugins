@@ -25,6 +25,7 @@ from extract_observation import (
     call_haiku_cli,
     check_cooldown,
     check_substance,
+    extract_file_paths_from_tools,
     parse_transcript_turn,
     store_observation,
     truncate,
@@ -771,3 +772,234 @@ class TestStoreObservation:
 
         call_args = mock_tier2_write.call_args[1]
         assert call_args["extra_metadata"] is None
+
+    @patch("tools.tier2.tier2_write")
+    def test_relevant_files_passthrough(self, mock_tier2_write):
+        """relevant_files are stored as comma-separated string in extra_metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test observation",
+            importance_score=0.7,
+            tags=["test"],
+            source_label="auto-extract:stop-hook",
+            relevant_files=["src/main.py", "tests/test_main.py"],
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"]["relevant_files"] == "src/main.py,tests/test_main.py"
+
+    @patch("tools.tier2.tier2_write")
+    def test_scope_passthrough(self, mock_tier2_write):
+        """scope is stored in extra_metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test observation",
+            importance_score=0.7,
+            tags=["test"],
+            source_label="auto-extract:stop-hook",
+            scope="project",
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"]["scope"] == "project"
+
+    @patch("tools.tier2.tier2_write")
+    def test_empty_relevant_files_not_in_metadata(self, mock_tier2_write):
+        """Empty relevant_files list doesn't add to metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation("Test", 0.5, [], "auto-extract:stop-hook", relevant_files=[])
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"] is None
+
+    @patch("tools.tier2.tier2_write")
+    def test_empty_scope_not_in_metadata(self, mock_tier2_write):
+        """Empty scope string doesn't add to metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation("Test", 0.5, [], "auto-extract:stop-hook", scope="")
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"] is None
+
+
+# ──────────────────────────────────────────────
+# TestExtractFilePathsFromTools
+# ──────────────────────────────────────────────
+
+
+class TestExtractFilePathsFromTools:
+    """Tests for extract_file_paths_from_tools() — file path extraction from tool_use blocks."""
+
+    def test_extracts_file_path(self):
+        """Extracts file_path from tool_use input."""
+        content = [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["/src/main.py"]
+
+    def test_extracts_relative_path(self):
+        """Extracts relative_path from tool_use input."""
+        content = [
+            {"type": "tool_use", "name": "mcp__serena__read_file", "input": {"relative_path": "src/lib.rs"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["src/lib.rs"]
+
+    def test_extracts_path_key(self):
+        """Extracts 'path' from tool_use input."""
+        content = [
+            {"type": "tool_use", "name": "Glob", "input": {"path": "/Users/test/project"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["/Users/test/project"]
+
+    def test_skips_bash(self):
+        """Skips Bash tool — file paths in commands aren't structured."""
+        content = [
+            {"type": "tool_use", "name": "Bash", "input": {"command": "ls", "path": "/tmp"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == []
+
+    def test_skips_webfetch(self):
+        """Skips WebFetch tool."""
+        content = [
+            {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.com", "path": "/tmp"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == []
+
+    def test_skips_websearch(self):
+        """Skips WebSearch tool."""
+        content = [
+            {"type": "tool_use", "name": "WebSearch", "input": {"query": "test", "path": "/tmp"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == []
+
+    def test_deduplicates(self):
+        """Deduplicates file paths across multiple tool_use blocks."""
+        content = [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/main.py"}},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/lib.py"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["/src/main.py", "/src/lib.py"]
+
+    def test_caps_at_10(self):
+        """Caps file paths at 10."""
+        content = [
+            {"type": "tool_use", "name": "Read", "input": {"file_path": f"/src/file{i}.py"}}
+            for i in range(15)
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert len(result) == 10
+
+    def test_ignores_non_tool_use(self):
+        """Ignores text blocks."""
+        content = [
+            {"type": "text", "text": "Hello"},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["/src/main.py"]
+
+    def test_handles_missing_input(self):
+        """Handles tool_use blocks without input."""
+        content = [
+            {"type": "tool_use", "name": "Read"},
+            {"type": "tool_use", "name": "Edit", "input": {}},
+        ]
+        result = extract_file_paths_from_tools(content)
+        assert result == []
+
+    def test_empty_content(self):
+        """Returns empty list for empty content."""
+        result = extract_file_paths_from_tools([])
+        assert result == []
+
+    def test_non_dict_blocks_skipped(self):
+        """Skips non-dict items in content list."""
+        content = ["string_item", 42, None, {"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}}]
+        result = extract_file_paths_from_tools(content)
+        assert result == ["/a.py"]
+
+
+class TestParseTranscriptTurnRelevantFiles:
+    """Tests for relevant_files in parse_transcript_turn()."""
+
+    def test_includes_relevant_files(self):
+        """parsed turn includes relevant_files from tool_use blocks."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read this"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Reading file"},
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/lib.py"}},
+                    ],
+                    "usage": {"input_tokens": 100, "output_tokens": 50}
+                }
+            }),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        assert result["relevant_files"] == ["/src/main.py", "/src/lib.py"]
+
+    def test_empty_relevant_files_when_no_tools(self):
+        """relevant_files is empty when no tool_use blocks."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        assert result["relevant_files"] == []
+
+
+class TestBuildTurnPromptRelevantFiles:
+    """Tests for relevant_files in build_turn_prompt()."""
+
+    def test_includes_file_list_in_prompt(self):
+        """Prompt includes relevant files as bulleted list."""
+        turn = {
+            "user_text": "Test",
+            "assistant_text": "OK",
+            "tool_names": ["Read"],
+            "token_usage": "100 in, 50 out",
+            "relevant_files": ["/src/main.py", "/src/lib.py"],
+        }
+        prompt = build_turn_prompt(turn)
+        assert "- /src/main.py" in prompt
+        assert "- /src/lib.py" in prompt
+
+    def test_none_when_no_files(self):
+        """Prompt shows 'None' when no relevant files."""
+        turn = {
+            "user_text": "Test",
+            "assistant_text": "OK",
+            "tool_names": [],
+            "token_usage": "50 in, 25 out",
+            "relevant_files": [],
+        }
+        prompt = build_turn_prompt(turn)
+        assert "## Files Referenced\nNone" in prompt
+
+    def test_includes_scope_in_prompt(self):
+        """Prompt includes scope instruction."""
+        turn = {
+            "user_text": "Test",
+            "assistant_text": "OK",
+            "tool_names": [],
+            "token_usage": "50 in, 25 out",
+        }
+        prompt = build_turn_prompt(turn)
+        assert '"scope": "project" or "global"' in prompt

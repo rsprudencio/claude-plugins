@@ -146,18 +146,24 @@ def promote(doc_id: str) -> dict:
         
         # Get promotion directory
         promotion_dir = get_path(path_name, ensure_exists=True)
-        
+
+        # Project-aware nesting: if observation has project_dir, nest under it
+        project_dir_meta = metadata.get("project_dir", "")
+        if project_dir_meta:
+            promotion_dir = os.path.join(promotion_dir, project_dir_meta)
+            os.makedirs(promotion_dir, exist_ok=True)
+
         # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         name_slug = metadata.get("name", "unnamed").lower().replace(" ", "-")
         filename = f"{filename_prefix}-{name_slug}-{timestamp}.md"
-        
+
         # Build full path (relative to vault)
         from .config import get_verified_vault_path
         vault_path, error = get_verified_vault_path()
         if error:
             return {"success": False, "error": error}
-        
+
         relative_path = os.path.relpath(os.path.join(promotion_dir, filename), vault_path)
         
         # Check if file already exists (idempotency)
@@ -174,7 +180,7 @@ def promote(doc_id: str) -> dict:
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         tags = metadata.get("tags", "").split(",") if metadata.get("tags") else []
         tags_yaml = "\n".join(f"  - {tag.strip()}" for tag in tags if tag.strip())
-        
+
         frontmatter = f"""---
 type: {content_type}
 importance: {metadata.get('importance_score', '0.5')}
@@ -183,10 +189,27 @@ promoted_at: {now_iso}
 source: {metadata.get('source', 'unknown')}
 created_at: {metadata.get('created_at', now_iso)}
 retrieval_count: {metadata.get('retrieval_count', '0')}"""
-        
+
+        # Add scope if present
+        scope_meta = metadata.get("scope", "")
+        if scope_meta:
+            frontmatter += f"\nscope: {scope_meta}"
+
+        # Add project if present
+        if project_dir_meta:
+            frontmatter += f"\nproject: {project_dir_meta}"
+
+        # Add relevant files if present
+        files_meta = metadata.get("relevant_files", "")
+        if files_meta:
+            files_list = [f.strip() for f in files_meta.split(",") if f.strip()]
+            if files_list:
+                files_yaml = "\n".join(f"  - {f}" for f in files_list)
+                frontmatter += f"\nfiles:\n{files_yaml}"
+
         if tags_yaml:
             frontmatter += f"\ntags:\n{tags_yaml}"
-        
+
         frontmatter += "\n---\n\n"
         
         # Combine frontmatter + content

@@ -251,7 +251,13 @@ TOOLS = [
                 "importance": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Filter by importance for memory listing"},
                 "limit": {"type": "integer", "default": 20, "description": "Max results for list mode"},
                 "filter": {"type": "object", "description": "Metadata filter for query mode (directory, type, importance, tags)"},
-                "include_metadata": {"type": "boolean", "default": True, "description": "Include metadata in ID-based reads"}
+                "include_metadata": {"type": "boolean", "default": True, "description": "Include metadata in ID-based reads"},
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["importance_desc", "importance_asc", "created_at_desc", "created_at_asc", "none"],
+                    "default": "importance_desc",
+                    "description": "Sort order for tier2 list mode (default: importance_desc)"
+                }
             }
         }
     ),
