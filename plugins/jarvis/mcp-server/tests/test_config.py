@@ -17,7 +17,7 @@ class TestVerifyConfig:
         valid, error = verify_config()
         assert valid is False
         assert "not confirmed" in error.lower()
-        assert "jarvis-setup" in error.lower()
+        assert "jarvis-settings" in error.lower()
 
     def test_missing_config_file_fails(self, no_config):
         """Missing config file should fail."""

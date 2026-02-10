@@ -266,10 +266,19 @@ Choose `type` based on content:
 - Always use `force=True` when the user implies they want to refresh stale content, not just add new files
 
 ### First-Time Setup
-If the vault memory is empty (no indexed files), suggest:
-```
-Your vault memory isn't indexed yet. Run /jarvis-settings to configure and index your vault for semantic search.
-```
+
+If `~/.jarvis/config.json` doesn't exist or is missing `vault_path`:
+> I don't have a Jarvis configuration yet. Let's set one up — run /jarvis-settings
+> and I'll walk you through vault path selection and preferences. Takes about a minute.
+
+If the vault memory is empty (config exists but no indexed files):
+> Your vault memory isn't indexed yet. Run /jarvis-settings and choose
+> "Re-index vault" to enable semantic search.
+
+### Self-Reference
+For comprehensive feature documentation, read `capabilities.json` in the plugin root directory.
+It contains all skills, tools, workflows, configuration options, and troubleshooting tips.
+Use it when users ask "what can you do?", need help with a feature, or you need to verify a capability.
 
 ### Graceful Degradation
 If ChromaDB is unavailable or empty, all features fall back to keyword-based Grep search. No errors shown to user — just slightly less intelligent search.

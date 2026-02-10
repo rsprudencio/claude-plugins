@@ -1,0 +1,65 @@
+{
+  "vault_path": "__REQUIRED__",
+  "vault_confirmed": false,
+  "configured_at": "__REQUIRED__",
+  "memory": {
+    "db_path": "~/.jarvis/memory_db",
+    "secret_detection": true,
+    "importance_scoring": true,
+    "recency_boost_days": 7,
+    "default_importance": "medium",
+    "auto_extract": {
+      "mode": "background",
+      "min_turn_chars": 200,
+      "cooldown_seconds": 120,
+      "max_transcript_lines": 100,
+      "debug": false
+    },
+    "per_prompt_search": {
+      "enabled": true,
+      "threshold": 0.5,
+      "max_results": 5,
+      "max_content_length": 500,
+      "debug": false
+    },
+    "chunking": {
+      "enabled": true,
+      "min_chunk_chars": 200,
+      "max_chunk_chars": 1500,
+      "heading_levels": [2, 3]
+    },
+    "scoring": {
+      "enabled": true,
+      "recency_half_life_days": 7.0,
+      "type_weights": {},
+      "concept_patterns": {}
+    },
+    "expansion": {
+      "enabled": true,
+      "max_expansion_terms": 5,
+      "synonyms": {},
+      "intent_patterns": []
+    }
+  },
+  "promotion": {
+    "importance_threshold": 0.85,
+    "retrieval_count_threshold": 3,
+    "age_importance_days": 30,
+    "age_importance_score": 0.7,
+    "on_promoted_file_deleted": "remove"
+  },
+  "paths": {
+    "journal_jarvis": "journal/jarvis",
+    "journal_daily": "journal/daily",
+    "notes": "notes",
+    "work": "work",
+    "inbox": "inbox",
+    "inbox_todoist": "inbox/todoist",
+    "templates": "templates",
+    "strategic": ".jarvis/strategic",
+    "observations_promoted": "journal/jarvis/observations",
+    "patterns_promoted": "journal/jarvis/patterns",
+    "learnings_promoted": "journal/jarvis/learnings",
+    "decisions_promoted": "journal/jarvis/decisions"
+  }
+}

@@ -23,7 +23,7 @@ Vault:        ~/.jarvis/vault/
 Auto-Extract: background (cooldown: 120s, min text: 200 chars)
 Memory DB:    ~/.jarvis/memory_db/ (configurable)
 Shell:        jarvis command in ~/.zshrc
-Version:      1.15.0
+Version:      1.19.0
 ```
 
 If config doesn't exist, say: "No config found. Let's set up the basics." and go to Step 2a (first-time flow).
@@ -297,50 +297,19 @@ If yes:
 
 **Merge** changes into existing config. Never overwrite keys that weren't changed.
 
-For first-time setup, write the FULL config with all defaults visible:
+For first-time setup, read the default config template shipped with the plugin:
 
-```json
-{
-  "vault_path": "[user's choice]",
-  "vault_confirmed": true,
-  "configured_at": "[ISO 8601]",
-  "memory": {
-    "db_path": "~/.jarvis/memory_db",
-    "secret_detection": true,
-    "importance_scoring": true,
-    "recency_boost_days": 7,
-    "default_importance": "medium",
-    "auto_extract": {
-      "mode": "[selected]",
-      "min_turn_chars": 200,
-      "cooldown_seconds": 120,
-      "max_transcript_lines": 100,
-      "debug": false
-    }
-  },
-  "promotion": {
-    "importance_threshold": 0.85,
-    "retrieval_count_threshold": 3,
-    "age_importance_days": 30,
-    "age_importance_score": 0.7,
-    "on_promoted_file_deleted": "remove"
-  },
-  "paths": {
-    "journal_jarvis": "journal/jarvis",
-    "journal_daily": "journal/daily",
-    "notes": "notes",
-    "work": "work",
-    "inbox": "inbox",
-    "inbox_todoist": "inbox/todoist",
-    "templates": "templates",
-    "strategic": ".jarvis/strategic",
-    "observations_promoted": "journal/jarvis/observations",
-    "patterns_promoted": "journal/jarvis/patterns",
-    "learnings_promoted": "journal/jarvis/learnings",
-    "decisions_promoted": "journal/jarvis/decisions"
-  }
-}
-```
+1. Locate template: `<plugin_root>/defaults/config.json`
+   - Use the skill's base directory (two levels up from `skills/<name>/`) to find `defaults/`
+   - Or read it via: `Read` tool on the `defaults/config.json` file relative to the plugin root
+2. Read template, substitute user values:
+   - `vault_path` -> user's chosen path
+   - `vault_confirmed` -> `true`
+   - `configured_at` -> current ISO 8601 timestamp
+   - `auto_extract.mode` -> user's chosen mode
+3. Write to `~/.jarvis/config.json`
+
+For existing config updates, **merge** changes — don't overwrite keys that weren't changed.
 
 Also ensure directories exist:
 ```bash

@@ -54,11 +54,11 @@ def verify_config() -> Tuple[bool, str]:
 
     # Check vault_path exists
     if not config.get("vault_path"):
-        return False, "No vault_path configured. Run /jarvis:jarvis-setup"
+        return False, "No vault_path configured. Run /jarvis-settings to set up your vault"
 
     # Check setup was completed (not just a random config file)
     if not config.get("vault_confirmed"):
-        return False, "Vault not confirmed. Run /jarvis:jarvis-setup to grant write access"
+        return False, "Vault not confirmed. Run /jarvis-settings to complete setup"
 
     # Verify vault directory exists
     vault_path = os.path.expanduser(config["vault_path"])

@@ -6,7 +6,6 @@ set -e
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
 MARKETPLACE_NAME="raph-claude-plugins"
 MARKETPLACE_REPO="https://github.com/rsprudencio/claude-plugins"
-JARVIS_VERSION="1.15.0"
 
 # ── Interactive input setup ──
 # When piped (curl | bash), stdin is the script — we need /dev/tty for prompts
@@ -54,7 +53,7 @@ echo "  ╦╔═╗╦═╗╦  ╦╦╔═╗"
 echo "  ║╠═╣╠╦╝╚╗╔╝║╚═╗"
 echo " ╚╝╩ ╩╩╚═ ╚╝ ╩╚═╝"
 echo -e "${NC}"
-echo -e "  ${BOLD}AI Assistant Plugin Installer${NC} v${JARVIS_VERSION}"
+echo -e "  ${BOLD}AI Assistant Plugin Installer${NC}"
 echo ""
 
 # ═══════════════════════════════════════════════
@@ -366,50 +365,29 @@ if [ "$SKIP_CONFIG" != true ]; then
     mkdir -p "$JARVIS_HOME/memory_db"
     ok "Memory DB directory ready: $JARVIS_HOME/memory_db/"
 
-    # Write full config with all defaults visible
+    # Write config from shipped template (SSoT) with user values substituted
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    cat > "$JARVIS_HOME/config.json" << CONFIGEOF
+    TEMPLATE="$PLUGIN_DIR/defaults/config.json"
+    if [ -f "$TEMPLATE" ]; then
+        $PYTHON_CMD -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    cfg = json.load(f)
+cfg['vault_path'] = sys.argv[2]
+cfg['vault_confirmed'] = True
+cfg['configured_at'] = sys.argv[3]
+json.dump(cfg, sys.stdout, indent=2)
+" "$TEMPLATE" "$VAULT_PATH" "$TIMESTAMP" > "$JARVIS_HOME/config.json"
+    else
+        # Fallback: minimal config if template not found in plugin distribution
+        cat > "$JARVIS_HOME/config.json" << FALLBACKEOF
 {
   "vault_path": "$VAULT_PATH",
   "vault_confirmed": true,
-  "configured_at": "$TIMESTAMP",
-  "memory": {
-    "db_path": "~/.jarvis/memory_db",
-    "secret_detection": true,
-    "importance_scoring": true,
-    "recency_boost_days": 7,
-    "default_importance": "medium",
-    "auto_extract": {
-      "mode": "background",
-      "min_turn_chars": 200,
-      "cooldown_seconds": 120,
-      "max_transcript_lines": 100,
-      "debug": false
-    }
-  },
-  "promotion": {
-    "importance_threshold": 0.85,
-    "retrieval_count_threshold": 3,
-    "age_importance_days": 30,
-    "age_importance_score": 0.7,
-    "on_promoted_file_deleted": "remove"
-  },
-  "paths": {
-    "journal_jarvis": "journal/jarvis",
-    "journal_daily": "journal/daily",
-    "notes": "notes",
-    "work": "work",
-    "inbox": "inbox",
-    "inbox_todoist": "inbox/todoist",
-    "templates": "templates",
-    "strategic": ".jarvis/strategic",
-    "observations_promoted": "journal/jarvis/observations",
-    "patterns_promoted": "journal/jarvis/patterns",
-    "learnings_promoted": "journal/jarvis/learnings",
-    "decisions_promoted": "journal/jarvis/decisions"
-  }
+  "configured_at": "$TIMESTAMP"
 }
-CONFIGEOF
+FALLBACKEOF
+    fi
     ok "Config written: $JARVIS_HOME/config.json (all defaults visible)"
 fi
 
