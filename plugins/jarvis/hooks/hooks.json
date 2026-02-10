@@ -1,6 +1,17 @@
 {
-  "description": "Auto-Extract: observes conversation turns and extracts observations into Tier 2 memory",
+  "description": "Jarvis hooks: per-prompt memory search + auto-extract observation capture",
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/prompt-search.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

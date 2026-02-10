@@ -7,11 +7,12 @@ All document IDs use namespaced format (vault:: prefix) for type-safe identifica
 """
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
 from .memory import _get_collection
-from .paths import get_path
+from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
 from .config import get_expansion_config
@@ -328,6 +329,141 @@ def query_vault(query: str, n_results: int = 5,
         }
 
     return response
+
+
+def semantic_context(query: str, max_results: int = 5,
+                     threshold: float = 0.5,
+                     max_content_length: int = 500) -> dict:
+    """Search vault memories for per-prompt context injection.
+
+    Optimized for automatic, per-message use. Differs from query_vault():
+    - Applies minimum relevance threshold (filters low-scoring results)
+    - Returns longer content previews (default 500 chars vs 150)
+    - Does NOT increment retrieval counts (only explicit /recall should)
+    - Filters out sensitive directories (documents/, people/)
+    - Returns query_ms timing for performance monitoring
+    - Silently returns empty on any error (graceful degradation)
+
+    Args:
+        query: User's raw prompt text
+        max_results: Maximum memories to return (default 5)
+        threshold: Minimum relevance score 0.0-1.0 (default 0.5)
+        max_content_length: Character limit per content preview (default 500)
+
+    Returns:
+        Dict with matches list and metadata
+    """
+    start = time.time()
+
+    try:
+        collection = _get_collection()
+    except Exception:
+        return {"matches": [], "query_ms": 0, "total_searched": 0}
+
+    total = collection.count()
+    if total == 0:
+        return {"matches": [], "query_ms": 0, "total_searched": 0}
+
+    # Query expansion (reuse existing infrastructure)
+    expansion_config = get_expansion_config()
+    expansion = _expand_query(query, expansion_config)
+    search_text = expansion["expanded"]
+
+    # Over-fetch to account for chunk dedup + threshold filtering
+    fetch_count = min(max_results * 4, 60, total)
+
+    try:
+        raw = collection.query(
+            query_texts=[search_text],
+            n_results=fetch_count,
+        )
+    except Exception:
+        return {"matches": [], "query_ms": 0, "total_searched": total}
+
+    # Build raw entries with relevance scores
+    raw_entries = []
+    ids = raw.get("ids", [[]])[0]
+    distances = raw.get("distances", [[]])[0]
+    documents = raw.get("documents", [[]])[0]
+    metadatas = raw.get("metadatas", [[]])[0]
+
+    skipped_sensitive = 0
+
+    for doc_id, distance, document, metadata in zip(ids, distances, documents, metadatas):
+        meta = metadata or {}
+
+        # Filter sensitive directories
+        directory = meta.get("directory", "")
+        if directory in SENSITIVE_PATHS:
+            skipped_sensitive += 1
+            continue
+
+        importance = meta.get("importance", "medium")
+        updated_at = meta.get("updated_at")
+
+        imp_score = None
+        if "importance_score" in meta:
+            try:
+                imp_score = float(meta["importance_score"])
+            except (ValueError, TypeError):
+                pass
+
+        relevance = _compute_relevance(distance, importance, updated_at, imp_score)
+
+        # Apply threshold
+        if relevance < threshold:
+            continue
+
+        # Determine parent file for chunk dedup
+        parent_file = meta.get("parent_file")
+        if not parent_file:
+            parsed = parse_id(doc_id)
+            parent_file = parsed.content_id
+
+        raw_entries.append({
+            "doc_id": doc_id,
+            "parent_file": parent_file,
+            "relevance": relevance,
+            "document": document,
+            "metadata": meta,
+        })
+
+    # Chunk deduplication: keep best-relevance chunk per parent_file
+    best_per_file = {}
+    for entry in raw_entries:
+        pf = entry["parent_file"]
+        if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
+            best_per_file[pf] = entry
+
+    # Sort by relevance descending, trim to max_results
+    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:max_results]
+
+    matches = []
+    for entry in deduped:
+        meta = entry["metadata"]
+        content = _extract_preview(entry["document"], max_len=max_content_length) if entry["document"] else ""
+        doc_type = meta.get("vault_type") or meta.get("type", "unknown")
+        chunk_heading = meta.get("chunk_heading", "")
+
+        match = {
+            "source": entry["parent_file"],
+            "title": meta.get("title", entry["parent_file"]),
+            "relevance": round(entry["relevance"], 3),
+            "type": doc_type,
+            "content": content,
+        }
+        if chunk_heading:
+            match["heading"] = chunk_heading
+        matches.append(match)
+
+    query_ms = round((time.time() - start) * 1000, 1)
+
+    return {
+        "matches": matches,
+        "query_ms": query_ms,
+        "total_searched": total,
+        "skipped_sensitive": skipped_sensitive,
+    }
 
 
 def doc_read(ids: list, include_metadata: bool = True) -> dict:

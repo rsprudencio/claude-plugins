@@ -89,7 +89,7 @@ class TestBuildMetadata:
         assert _build_metadata({}, "journal/test.md")["vault_type"] == "journal"
         assert _build_metadata({}, "work/test.md")["vault_type"] == "work"
         assert _build_metadata({}, "inbox/test.md")["vault_type"] == "inbox"
-        assert _build_metadata({}, "random/test.md")["vault_type"] == "unknown"
+        assert _build_metadata({}, "random/test.md")["vault_type"] == "random"
 
     def test_all_inferred_have_vault_type(self):
         """All vault metadata must have type=vault and a vault_type."""
@@ -97,6 +97,16 @@ class TestBuildMetadata:
             meta = _build_metadata({}, path)
             assert meta["type"] == "vault"
             assert "vault_type" in meta
+
+    def test_vault_type_directory_fallback(self):
+        """Unknown directories use directory name as vault_type."""
+        assert _build_metadata({}, "roadmaps/plan.md")["vault_type"] == "roadmaps"
+        assert _build_metadata({}, "docs/readme.md")["vault_type"] == "docs"
+        assert _build_metadata({}, ".jarvis/strategic/traj.md")["vault_type"] == "strategic"
+
+    def test_vault_type_root_level_file(self):
+        """Root-level files (no directory) get vault_type 'document'."""
+        assert _build_metadata({}, "README.md")["vault_type"] == "document"
 
 
 class TestShouldSkip:

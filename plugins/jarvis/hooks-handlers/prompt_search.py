@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Per-prompt semantic search: queries vault memories relevant to user's prompt.
+
+Usage:
+  Hook mode:  echo '{"prompt":"..."}' | python3 prompt_search.py <mcp_server_dir> --hook
+  Direct:     python3 prompt_search.py <mcp_server_dir> "query text here"
+
+Called by the UserPromptSubmit hook. Outputs XML-formatted vault memories
+to stdout for injection into Claude's context. Silent on errors (exit 0,
+no output) to avoid disrupting the user's conversation.
+"""
+import json
+import sys
+import time
+import xml.sax.saxutils as saxutils
+from pathlib import Path
+from typing import Tuple
+
+
+# --- Debug Logging ---
+
+DEBUG_LOG_FILE = Path.home() / ".jarvis" / "debug.per-prompt-search.log"
+
+
+def _debug_log(action: str, detail: str, prompt: str = ""):
+    """Append a debug line to the per-prompt search log."""
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        truncated = prompt[:80] + "..." if len(prompt) > 80 else prompt
+        truncated = truncated.replace("\n", " ")
+        line = f'{ts} | {action:5s} | {detail} | prompt:"{truncated}"\n'
+        with open(DEBUG_LOG_FILE, "a") as f:
+            f.write(line)
+    except Exception:
+        pass  # Never fail on debug logging
+
+
+# --- Prompt Filtering ---
+
+_SKIP_PATTERNS = {
+    "yes", "no", "ok", "sure", "thanks", "thank you", "go ahead",
+    "done", "next", "continue", "correct", "right", "got it",
+    "sounds good", "perfect", "great", "fine", "agreed",
+    "yep", "nope", "nah", "yeah", "yup", "okay",
+}
+
+
+def _should_skip_prompt(query: str) -> Tuple[bool, str]:
+    """Determine if prompt is too trivial for semantic search.
+
+    Returns:
+        Tuple of (should_skip, reason). Reason is empty string if not skipped.
+    """
+    stripped = query.strip()
+
+    # Too short
+    if len(stripped) < 10:
+        return True, "short"
+
+    # Slash commands (have their own handlers)
+    if stripped.startswith("/"):
+        return True, "slash_cmd"
+
+    # Known confirmation patterns (case-insensitive, strip trailing punctuation)
+    normalized = stripped.lower().rstrip(".!?")
+    if normalized in _SKIP_PATTERNS:
+        return True, "confirmation"
+
+    # Pure code blocks
+    if stripped.startswith("```"):
+        return True, "code_block"
+
+    return False, ""
+
+
+# --- Prompt Extraction from Hook JSON ---
+
+def _extract_prompt(hook_json: str) -> str:
+    """Extract prompt text from UserPromptSubmit hook input JSON."""
+    try:
+        data = json.loads(hook_json)
+        # Try known key names for the prompt text
+        prompt = data.get("prompt") or data.get("user_prompt") or data.get("message") or ""
+        if isinstance(prompt, dict):
+            prompt = prompt.get("text", prompt.get("content", ""))
+        return str(prompt)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return ""
+
+
+# --- Output Formatting ---
+
+def _format_memories(matches: list, query_ms: float) -> str:
+    """Format search results as XML for injection into Claude's context."""
+    if not matches:
+        return ""
+
+    lines = [f'<relevant-vault-memories count="{len(matches)}" query_ms="{query_ms}">']
+
+    for match in matches:
+        attrs = [
+            f'source="{saxutils.escape(match["source"])}"',
+            f'relevance="{match["relevance"]}"',
+            f'type="{saxutils.escape(match.get("type", "unknown"))}"',
+        ]
+        if match.get("heading"):
+            attrs.append(f'heading="{saxutils.escape(match["heading"])}"')
+
+        content = saxutils.escape(match.get("content", ""))
+        lines.append(f'<memory {" ".join(attrs)}>')
+        lines.append(content)
+        lines.append("</memory>")
+
+    lines.append("</relevant-vault-memories>")
+    return "\n".join(lines)
+
+
+# --- Main Entry Point ---
+
+def main():
+    """Run per-prompt semantic search and output results to stdout."""
+    if len(sys.argv) < 2:
+        sys.exit(0)
+
+    mcp_server_dir = sys.argv[1]
+
+    # Determine prompt text source
+    if len(sys.argv) >= 3 and sys.argv[2] == "--hook":
+        # Hook mode: read JSON from stdin
+        try:
+            hook_input = sys.stdin.read()
+        except Exception:
+            sys.exit(0)
+        prompt_text = _extract_prompt(hook_input)
+    elif len(sys.argv) >= 3:
+        # Direct mode: prompt text as argument
+        prompt_text = sys.argv[2]
+    else:
+        sys.exit(0)
+
+    if not prompt_text:
+        sys.exit(0)
+
+    # Skip trivial prompts before importing heavy modules
+    skip, reason = _should_skip_prompt(prompt_text)
+
+    # Add MCP server to path for tool imports (needed for config check even if skipped)
+    sys.path.insert(0, mcp_server_dir)
+
+    # Load config to check debug flag
+    debug = False
+    try:
+        from tools.config import get_per_prompt_config
+        config = get_per_prompt_config()
+        debug = config.get("debug", False)
+    except Exception:
+        if skip:
+            sys.exit(0)
+        # If config fails but prompt wasn't skipped, continue with defaults
+        config = {"enabled": True, "max_results": 5, "threshold": 0.5, "max_content_length": 500}
+
+    if not config.get("enabled", True):
+        if debug:
+            _debug_log("SKIP", "disabled")
+        sys.exit(0)
+
+    if skip:
+        if debug:
+            _debug_log("SKIP", reason, prompt_text)
+        sys.exit(0)
+
+    try:
+        from tools.query import semantic_context
+    except ImportError:
+        sys.exit(0)
+
+    # Run search
+    max_results = config.get("max_results", 5)
+    try:
+        search_start = time.time()
+        result = semantic_context(
+            query=prompt_text,
+            max_results=max_results,
+            threshold=config.get("threshold", 0.5),
+            max_content_length=config.get("max_content_length", 500),
+        )
+        query_ms = round((time.time() - search_start) * 1000)
+    except Exception as e:
+        if debug:
+            _debug_log("ERROR", str(e), prompt_text)
+        sys.exit(0)
+
+    matches = result.get("matches", [])
+    if not matches:
+        if debug:
+            _debug_log("EMPTY", f"{query_ms}ms | 0/{max_results}", prompt_text)
+        sys.exit(0)
+
+    if debug:
+        sources = " ".join(
+            f'{m["source"]}({m["relevance"]})'
+            for m in matches
+        )
+        _debug_log("FOUND", f"{query_ms}ms | {len(matches)}/{max_results} | {sources}", prompt_text)
+
+    # Format and output to stdout (Claude sees this)
+    output = _format_memories(matches, result.get("query_ms", 0))
+    if output:
+        print(output)
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

@@ -197,6 +197,29 @@ def get_scoring_config() -> dict:
     return {**defaults, **memory_config.get("scoring", {})}
 
 
+def get_per_prompt_config() -> dict:
+    """Get per-prompt semantic search configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for per-prompt search (default True)
+    - threshold: Minimum relevance score for injection (default 0.5)
+    - max_results: Maximum memories to inject per prompt (default 5)
+    - max_content_length: Character limit per memory preview (default 500)
+
+    Config lives at memory.per_prompt_search in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "threshold": 0.5,
+        "max_results": 5,
+        "max_content_length": 500,
+        "debug": False,
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("per_prompt_search", {})}
+
+
 def get_expansion_config() -> dict:
     """Get query expansion configuration with defaults.
 

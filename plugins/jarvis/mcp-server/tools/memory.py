@@ -104,8 +104,11 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
     # Vault type: from frontmatter 'type' or inferred from directory
     vault_type = frontmatter.get("type")
     if not vault_type:
-        type_map = {'journal': 'journal', 'notes': 'note', 'work': 'work', 'inbox': 'inbox'}
-        vault_type = type_map.get(directory, 'unknown')
+        type_map = {
+            'journal': 'journal', 'notes': 'note', 'work': 'work', 'inbox': 'inbox',
+            '.jarvis': 'strategic',
+        }
+        vault_type = type_map.get(directory, directory or 'document')
     meta["vault_type"] = vault_type
 
     # Optional fields from frontmatter

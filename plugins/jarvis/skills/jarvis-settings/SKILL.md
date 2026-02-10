@@ -155,6 +155,8 @@ AskUserQuestion:
           description: "Where journals, notes, inbox, etc. are stored"
         - label: "Memory system"
           description: "Secret detection, importance scoring, DB location"
+        - label: "Per-prompt search"
+          description: "Automatic vault memory injection on every message"
         - label: "Back to main menu"
       multiSelect: false
 ```
@@ -204,6 +206,24 @@ Let user change specific paths. All paths are relative to vault root.
 | `default_importance` | "medium" | Default importance for new content |
 | `db_path` | `~/.jarvis/memory_db` | ChromaDB database location |
 
+#### Per-prompt search
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | true | Master switch for automatic memory recall |
+| `threshold` | 0.5 | Minimum relevance score (0.3=aggressive, 0.5=balanced, 0.7=conservative) |
+| `max_results` | 5 | Maximum memories injected per message (1-10) |
+| `max_content_length` | 500 | Character limit per memory preview (100-2000) |
+
+Offer presets:
+- "Balanced" (default) -> `threshold: 0.5, max_results: 5, max_content_length: 500`
+- "Aggressive recall" -> `threshold: 0.4, max_results: 7, max_content_length: 700`
+- "Conservative" -> `threshold: 0.6, max_results: 3, max_content_length: 300`
+- "Disabled" -> `enabled: false`
+- "Custom" -> Ask for each setting individually
+
+Config key: `memory.per_prompt_search`
+
 ### 3d. View full config
 
 Pretty-print `~/.jarvis/config.json` grouped by section:
@@ -220,6 +240,12 @@ secret_detection:     true
 importance_scoring:   true
 recency_boost_days:   7
 default_importance:   medium
+
+=== Per-Prompt Search ===
+enabled:              true
+threshold:            0.5
+max_results:          5
+max_content_length:   500
 
 === Auto-Extract ===
 mode:                 background

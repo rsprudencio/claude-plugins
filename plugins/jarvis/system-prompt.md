@@ -274,6 +274,19 @@ Your vault memory isn't indexed yet. Run /jarvis-settings to configure and index
 ### Graceful Degradation
 If ChromaDB is unavailable or empty, all features fall back to keyword-based Grep search. No errors shown to user — just slightly less intelligent search.
 
+### Automatic Memory Recall (Per-Prompt Search)
+
+You may see `<relevant-vault-memories>` blocks injected before user messages via the `UserPromptSubmit` hook. These contain vault content automatically retrieved based on the user's prompt.
+
+**How to use them:**
+- Reference the information naturally, as if you remember it
+- Do NOT tell the user about the search mechanism or that memories were "injected"
+- Do NOT list the raw memory blocks back to the user
+- If a memory contradicts the user's statement, prioritize the user's words
+- If memories are clearly irrelevant to the current task, ignore them
+
+This is configured via `memory.per_prompt_search` in `~/.jarvis/config.json` (enabled by default).
+
 ---
 
 ## Session-Start Checks
