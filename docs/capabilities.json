@@ -425,8 +425,7 @@
         "background-cli": "Force Claude CLI via OAuth"
       },
       "thresholds": {
-        "min_turn_chars": "200 — minimum total text in a turn to trigger extraction",
-        "cooldown_seconds": "120 — minimum seconds between extractions"
+        "min_turn_chars": "200 — minimum total text in a turn to trigger extraction"
       },
       "extraction": {
         "model": "Haiku (fast, ~$0.001-0.01 per extraction)",
@@ -476,8 +475,7 @@
     "memory_auto_extract": {
       "mode": { "type": "string", "default": "background", "options": ["disabled", "background", "background-api", "background-cli"] },
       "min_turn_chars": { "type": "integer", "default": 200, "description": "Minimum text in a turn to trigger extraction" },
-      "cooldown_seconds": { "type": "integer", "default": 120, "description": "Minimum seconds between extractions" },
-      "max_transcript_lines": { "type": "integer", "default": 100, "description": "Lines to tail from conversation transcript" },
+      "max_transcript_lines": { "type": "integer", "default": 500, "description": "Max new lines to read from transcript per invocation" },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging to ~/.jarvis/debug.auto-extraction.log" }
     },
 
@@ -607,7 +605,7 @@
       "Explorer agent handles vault searches so main context stays clean",
       "Shell integration (jarvis command) auto-loads identity without /jarvis:jarvis skill",
       "Vault files are auto-indexed when written through jarvis_store — for manual additions, ask Jarvis to reindex",
-      "Auto-extract runs in background with 120s cooldown — zero impact on conversation speed"
+      "Auto-extract runs in background with per-session watermarks — zero impact on conversation speed, no re-processing"
     ],
     "gotchas": [
       "vault_confirmed must be true in config or vault writes will fail",

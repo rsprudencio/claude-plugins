@@ -135,9 +135,11 @@ def get_auto_extract_config() -> dict:
         - "background-api": Force Anthropic SDK (requires ANTHROPIC_API_KEY)
         - "background-cli": Force Claude CLI (uses OAuth from Keychain)
     - min_turn_chars: Minimum total text in a turn to trigger extraction (default 200)
-    - cooldown_seconds: Minimum seconds between extractions (default 120)
-    - max_transcript_lines: Lines to tail from transcript JSONL (default 100)
+    - max_transcript_lines: Max new lines to read from transcript per invocation (default 500)
     - debug: Enable detailed logging to ~/.jarvis/debug.auto-extraction.log (default False)
+
+    Per-session watermarks (at ~/.jarvis/state/sessions/) replace the old global
+    cooldown — each session tracks its own last-processed position independently.
 
     Config lives at memory.auto_extract in ~/.jarvis/config.json.
     """
@@ -145,8 +147,7 @@ def get_auto_extract_config() -> dict:
     defaults = {
         "mode": "background",
         "min_turn_chars": 200,
-        "cooldown_seconds": 120,
-        "max_transcript_lines": 100,
+        "max_transcript_lines": 500,
         "debug": False,
     }
     memory_config = config.get("memory", {})

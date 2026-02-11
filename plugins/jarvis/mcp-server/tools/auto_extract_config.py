@@ -22,8 +22,7 @@ def check_prerequisites(config: dict) -> dict:
     details = {
         "mode": mode,
         "min_turn_chars": config.get("min_turn_chars", 200),
-        "cooldown_seconds": config.get("cooldown_seconds", 120),
-        "max_transcript_lines": config.get("max_transcript_lines", 100),
+        "max_transcript_lines": config.get("max_transcript_lines", 500),
     }
 
     if mode == "disabled":

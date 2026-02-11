@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
 """Auto-Extract background worker: analyzes conversation turns and extracts observations.
 
-Usage: python3 extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id]
+Usage: python3 extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id]
 
-The Stop hook creates a temp JSONL file with the last N lines of the transcript.
-This script:
-1. Parses the last conversation turn (user + assistant messages)
-2. Checks substance (min total text) and cooldown thresholds
-3. Calls Haiku to extract behavioral observations
-4. Stores observations via tier2_write
-5. Cleans up the temp file
+The Stop hook fires after every conversation round. This script uses a
+per-session line watermark (similar to Filebeat/Kafka consumer offsets)
+to track the last processed transcript line, avoiding re-analysis of
+already-seen turns.
+
+Pipeline:
+1. Read watermark for this session → know where we left off
+2. Read new transcript lines from watermark+1 onward
+3. Parse ALL new user→assistant turns (forward scan)
+4. Score turns and pick the most substantive one
+5. Call Haiku to extract behavioral observations
+6. Store observation via tier2_write
+7. Advance watermark to last line read
 """
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -28,8 +35,9 @@ except ImportError:
 # Haiku model ID
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
-# Cooldown sentinel file
-COOLDOWN_SENTINEL = Path("/tmp/jarvis-auto-extract-cooldown")
+# Per-session watermark directory
+WATERMARK_DIR = Path.home() / ".jarvis" / "state" / "sessions"
+WATERMARK_MAX_AGE = 2592000  # 30 days in seconds
 
 # Token usage log for cost tracking (debug mode)
 TOKEN_LOG_FILE = Path.home() / ".jarvis" / "debug.auto-extraction.log"
@@ -88,6 +96,211 @@ _FILE_PATH_KEYS = ("file_path", "relative_path", "path")
 
 # Maximum number of file paths to include
 _MAX_FILE_PATHS = 10
+
+
+def read_watermark(session_id: str) -> int:
+    """Read the last-extracted line number for a session.
+
+    Args:
+        session_id: Claude Code session ID
+
+    Returns:
+        Last extracted line number (0-based), or -1 if no watermark exists
+    """
+    watermark_file = WATERMARK_DIR / f"{session_id}.json"
+    try:
+        if not watermark_file.exists():
+            return -1
+        with open(watermark_file) as f:
+            data = json.load(f)
+        return int(data.get("last_extracted_line", -1))
+    except (json.JSONDecodeError, ValueError, TypeError, OSError):
+        return -1
+
+
+def write_watermark(session_id: str, last_line: int) -> None:
+    """Atomically write the watermark for a session.
+
+    Uses tempfile + os.replace for POSIX-atomic rename, preventing
+    corrupt reads if the process crashes mid-write.
+
+    Args:
+        session_id: Claude Code session ID
+        last_line: Last processed line number (0-based)
+    """
+    WATERMARK_DIR.mkdir(parents=True, exist_ok=True)
+    watermark_file = WATERMARK_DIR / f"{session_id}.json"
+    data = {
+        "last_extracted_line": last_line,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    # Atomic write: write to temp file in same dir, then rename
+    fd, tmp_path = tempfile.mkstemp(dir=WATERMARK_DIR, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+        os.replace(tmp_path, watermark_file)
+    except Exception:
+        # Clean up temp file on failure
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def read_transcript_from(transcript_path: str, start_line: int,
+                         max_lines: int = 500) -> tuple[list[tuple[int, str]], int]:
+    """Read transcript JSONL lines from a starting position.
+
+    Args:
+        transcript_path: Path to the transcript JSONL file
+        start_line: 0-based line index to start reading from
+        max_lines: Maximum lines to read (safety cap)
+
+    Returns:
+        Tuple of:
+        - List of (absolute_line_index, line_text) tuples
+        - Total line count in the file
+    """
+    indexed_lines = []
+    total_lines = 0
+    try:
+        with open(transcript_path) as f:
+            for i, line in enumerate(f):
+                total_lines = i + 1
+                if i >= start_line and len(indexed_lines) < max_lines:
+                    stripped = line.strip()
+                    if stripped:
+                        indexed_lines.append((i, stripped))
+    except OSError:
+        return [], 0
+    return indexed_lines, total_lines
+
+
+def parse_all_turns(indexed_lines: list[tuple[int, str]]) -> list[dict]:
+    """Parse ALL user→assistant turns from indexed transcript lines.
+
+    Walks FORWARD through lines, collecting every complete user→assistant
+    pair as a turn. Each turn includes metadata useful for scoring.
+
+    Args:
+        indexed_lines: List of (absolute_line_index, line_text) tuples
+
+    Returns:
+        List of turn dicts, each with keys:
+        - user_text, assistant_text, tool_names, token_usage
+        - relevant_files, start_line_idx, end_line_idx
+    """
+    turns = []
+    pending_user = None
+    pending_user_line = -1
+    all_file_paths_seen = set()
+    all_file_paths_ordered = []
+
+    for abs_idx, line in indexed_lines:
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        msg_type = entry.get("type")
+
+        # Skip metadata types
+        if msg_type in ("system", "progress", "file-history-snapshot"):
+            continue
+
+        if msg_type == "user":
+            # Extract user text
+            content = entry.get("message", {}).get("content", [])
+            texts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            pending_user = "\n".join(texts).strip()
+            pending_user_line = abs_idx
+
+        elif msg_type == "assistant" and pending_user is not None:
+            # Extract assistant text, tools, and file paths
+            content = entry.get("message", {}).get("content", [])
+            assistant_texts = []
+            tool_names = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    assistant_texts.append(block.get("text", ""))
+                elif block.get("type") == "tool_use":
+                    tool_names.append(block.get("name", "unknown"))
+
+            assistant_text = "\n".join(assistant_texts).strip()
+
+            # Deduplicate tool names
+            seen_tools = set()
+            unique_tools = []
+            for tool in tool_names:
+                if tool not in seen_tools:
+                    seen_tools.add(tool)
+                    unique_tools.append(tool)
+
+            # Extract file paths from this assistant turn
+            turn_files = extract_file_paths_from_tools(content)
+            for fp in turn_files:
+                if fp not in all_file_paths_seen:
+                    all_file_paths_seen.add(fp)
+                    all_file_paths_ordered.append(fp)
+
+            # Token usage
+            usage = entry.get("message", {}).get("usage", {})
+            input_tokens = usage.get("input_tokens", 0)
+            output_tokens = usage.get("output_tokens", 0)
+
+            turns.append({
+                "user_text": pending_user,
+                "assistant_text": assistant_text,
+                "tool_names": unique_tools,
+                "token_usage": f"{input_tokens} in, {output_tokens} out",
+                "relevant_files": list(all_file_paths_ordered)[:_MAX_FILE_PATHS],
+                "start_line_idx": pending_user_line,
+                "end_line_idx": abs_idx,
+            })
+
+            pending_user = None
+            pending_user_line = -1
+
+    return turns
+
+
+def pick_best_turn(turns: list[dict], min_chars: int = 200) -> dict | None:
+    """Select the most substantive turn from a list by scoring.
+
+    Scoring formula: total_chars + (unique_tools * 100) + (has_files * 200)
+
+    Args:
+        turns: List of turn dicts from parse_all_turns()
+        min_chars: Minimum total characters (user + assistant) to consider
+
+    Returns:
+        The highest-scoring turn, or None if all are below threshold
+    """
+    best = None
+    best_score = -1
+
+    for turn in turns:
+        total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        if total_chars < min_chars:
+            continue
+
+        unique_tools = len(set(turn.get("tool_names", [])))
+        has_files = 1 if turn.get("relevant_files") else 0
+        score = total_chars + (unique_tools * 100) + (has_files * 200)
+
+        if score > best_score:
+            best_score = score
+            best = turn
+
+    return best
 
 
 def extract_file_paths_from_tools(assistant_content: list) -> list[str]:
@@ -251,33 +464,6 @@ def check_substance(turn: dict, min_chars: int = 200) -> bool:
     total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
     return total_chars >= min_chars
 
-
-def check_cooldown(cooldown_seconds: int = 120) -> bool:
-    """Check if cooldown period has passed since last extraction.
-
-    Uses a file-based sentinel at /tmp/jarvis-auto-extract-cooldown.
-    At most one extraction per N seconds (system-wide, across all sessions).
-
-    Args:
-        cooldown_seconds: Minimum seconds between extractions
-
-    Returns:
-        True if cooldown has passed (extraction allowed)
-    """
-    try:
-        now = time.time()
-
-        if COOLDOWN_SENTINEL.exists():
-            mtime = COOLDOWN_SENTINEL.stat().st_mtime
-            if now - mtime < cooldown_seconds:
-                return False  # Still in cooldown
-
-        # Create or refresh sentinel
-        COOLDOWN_SENTINEL.touch()
-        return True
-    except OSError:
-        # If /tmp is unavailable, don't block
-        return True
 
 
 def truncate(text: str, max_chars: int) -> str:
@@ -629,132 +815,143 @@ def store_observation(content: str, importance_score: float, tags: list, source_
 
 
 def main():
-    """Main entry point: read transcript, extract and store observation."""
-    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_path] [git_branch] [total_transcript_lines]
+    """Main entry point: watermark-based extraction pipeline.
+
+    Flow:
+    1. Read watermark → know where we left off
+    2. Read new lines from transcript
+    3. Parse all turns → find complete user→assistant pairs
+    4. Pick best turn → select most substantive
+    5. Call Haiku → extract observation
+    6. Store → persist to Tier 2
+    7. Advance watermark → mark position for next invocation
+
+    Watermark advance rules:
+    - No new lines: no advance (already current)
+    - No complete turns: advance (incomplete data won't improve)
+    - No substantive turn: advance (evaluated, nothing worth extracting)
+    - Haiku failure: NO advance (retry when Haiku available)
+    - has_observation false: advance (Haiku evaluated, nothing interesting)
+    - Observation stored: advance
+    - Storage failure: advance (Haiku already ran, no point retrying)
+    """
+    # Args: <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]
     if len(sys.argv) < 4:
-        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_path] [git_branch] [total_transcript_lines]", file=sys.stderr)
+        print("Usage: extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]", file=sys.stderr)
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
     mode = sys.argv[2]
-    temp_file = Path(sys.argv[3])
+    transcript_path = sys.argv[3]
     session_id = sys.argv[4] if len(sys.argv) >= 5 else "unknown"
     project_path = sys.argv[5] if len(sys.argv) >= 6 else ""
     git_branch = sys.argv[6] if len(sys.argv) >= 7 else ""
-    total_transcript_lines = int(sys.argv[7]) if len(sys.argv) >= 8 else 0
     hook_input = os.environ.get("JARVIS_HOOK_INPUT", "")
     sys.path.insert(0, mcp_server_dir)
 
-    try:
-        # Read temp JSONL file
-        if not temp_file.exists():
-            print(f"Temp file not found: {temp_file}", file=sys.stderr)
-            sys.exit(0)
+    # Load config for thresholds
+    from tools.config import get_auto_extract_config
+    config = get_auto_extract_config()
+    debug = config.get("debug", False)
+    min_chars = config.get("min_turn_chars", 200)
+    max_lines = config.get("max_transcript_lines", 500)
 
-        with open(temp_file) as f:
-            lines = [line.strip() for line in f if line.strip()]
+    # Step 1: Read watermark
+    watermark = read_watermark(session_id)
 
-        # Parse transcript turn
-        turn = parse_transcript_turn(lines)
-        if turn is None:
-            print("No valid turn found in transcript", file=sys.stderr)
-            sys.exit(0)
+    # Step 2: Read new transcript lines
+    start_from = watermark + 1  # Start after last processed line
+    indexed_lines, total_lines = read_transcript_from(transcript_path, start_from, max_lines)
 
-        # Load config for thresholds
-        from tools.config import get_auto_extract_config
-        config = get_auto_extract_config()
-        debug = config.get("debug", False)
+    if not indexed_lines:
+        print("No new transcript lines since last extraction", file=sys.stderr)
+        sys.exit(0)
 
-        # Check substance
-        min_chars = config.get("min_turn_chars", 200)
-        if not check_substance(turn, min_chars):
-            print(f"Turn too short (< {min_chars} chars), skipping", file=sys.stderr)
-            sys.exit(0)
+    # Step 3: Parse all turns
+    turns = parse_all_turns(indexed_lines)
+    last_line_read = indexed_lines[-1][0]  # Absolute index of last line we read
 
-        # Check cooldown
-        cooldown_seconds = config.get("cooldown_seconds", 120)
-        if not check_cooldown(cooldown_seconds):
-            print(f"Cooldown active (< {cooldown_seconds}s since last extraction), skipping", file=sys.stderr)
-            sys.exit(0)
+    if not turns:
+        print("No complete turns in new transcript lines", file=sys.stderr)
+        write_watermark(session_id, last_line_read)
+        sys.exit(0)
 
-        # Build prompt and call Haiku
-        project_dir = os.path.basename(project_path) if project_path else ""
-        prompt = build_turn_prompt(turn, project_dir=project_dir, git_branch=git_branch)
-        extraction_result = call_haiku(prompt, mode=mode)
-        if extraction_result is None:
-            print("Haiku extraction failed", file=sys.stderr)
-            sys.exit(0)
+    # Step 4: Pick best turn
+    turn = pick_best_turn(turns, min_chars=min_chars)
 
-        extraction, input_tokens, output_tokens, backend = extraction_result
+    if turn is None:
+        print(f"No substantive turn (all below {min_chars} chars)", file=sys.stderr)
+        write_watermark(session_id, last_line_read)
+        sys.exit(0)
 
-        if not extraction.get("has_observation", False):
-            print("No observation extracted (routine turn)", file=sys.stderr)
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=False, prompt=prompt,
-                            hook_input=hook_input, debug=debug)
-            sys.exit(0)
+    # Step 5: Build prompt and call Haiku
+    project_dir = os.path.basename(project_path) if project_path else ""
+    prompt = build_turn_prompt(turn, project_dir=project_dir, git_branch=git_branch)
+    extraction_result = call_haiku(prompt, mode=mode)
 
-        # Store the observation
-        content = extraction.get("content", "")
-        if not content:
-            print("Empty observation content, skipping", file=sys.stderr)
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=False, prompt=prompt,
-                            hook_input=hook_input, debug=debug)
-            sys.exit(0)
+    if extraction_result is None:
+        # Haiku failure — do NOT advance watermark (retry next time)
+        print("Haiku extraction failed, watermark NOT advanced", file=sys.stderr)
+        sys.exit(0)
 
-        importance = float(extraction.get("importance_score", 0.5))
-        importance = max(0.0, min(1.0, importance))  # Clamp to valid range
+    extraction, input_tokens, output_tokens, backend = extraction_result
 
-        tags = extraction.get("tags", [])
-        if not isinstance(tags, list):
-            tags = []
+    if not extraction.get("has_observation", False):
+        print("No observation extracted (routine turn)", file=sys.stderr)
+        _log_extraction(backend, input_tokens, output_tokens,
+                        observation_stored=False, prompt=prompt,
+                        hook_input=hook_input, debug=debug)
+        write_watermark(session_id, last_line_read)
+        sys.exit(0)
 
-        # Extract scope from Haiku response (default to empty if missing)
-        scope = extraction.get("scope", "")
-        if scope not in ("project", "global"):
-            scope = ""
+    # Step 6: Store the observation
+    content = extraction.get("content", "")
+    if not content:
+        print("Empty observation content, skipping", file=sys.stderr)
+        _log_extraction(backend, input_tokens, output_tokens,
+                        observation_stored=False, prompt=prompt,
+                        hook_input=hook_input, debug=debug)
+        write_watermark(session_id, last_line_read)
+        sys.exit(0)
 
-        # Get relevant_files from the parsed turn
-        relevant_files = turn.get("relevant_files", [])
+    importance = float(extraction.get("importance_score", 0.5))
+    importance = max(0.0, min(1.0, importance))  # Clamp to valid range
 
-        # Compute absolute transcript line from tail offset
-        tail_line = turn.get("assistant_line", -1)
-        if total_transcript_lines > 0 and tail_line >= 0:
-            max_lines = int(config.get("max_transcript_lines", 100))
-            tail_start = max(0, total_transcript_lines - max_lines)
-            absolute_line = tail_start + tail_line
-        else:
-            absolute_line = tail_line
+    tags = extraction.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
 
-        result = store_observation(
-            content, importance, tags, "auto-extract:stop-hook",
-            project_path=project_path, git_branch=git_branch,
-            relevant_files=relevant_files, scope=scope,
-            session_id=session_id, transcript_line=absolute_line,
-        )
-        if result.get("success"):
-            obs_id = result.get('id', 'unknown')
-            print(f"Stored observation: {obs_id}", file=sys.stderr)
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=True, obs_id=obs_id,
-                            importance=importance, tags=tags,
-                            prompt=prompt, observation_content=content,
-                            scope=scope, hook_input=hook_input, debug=debug)
-        else:
-            print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=False, prompt=prompt,
-                            observation_content=content,
-                            hook_input=hook_input, debug=debug)
+    scope = extraction.get("scope", "")
+    if scope not in ("project", "global"):
+        scope = ""
 
-    finally:
-        # Always clean up temp file
-        try:
-            if temp_file.exists():
-                temp_file.unlink()
-        except OSError as e:
-            print(f"Failed to clean up temp file: {e}", file=sys.stderr)
+    relevant_files = turn.get("relevant_files", [])
+    absolute_line = turn.get("end_line_idx", -1)
+
+    result = store_observation(
+        content, importance, tags, "auto-extract:stop-hook",
+        project_path=project_path, git_branch=git_branch,
+        relevant_files=relevant_files, scope=scope,
+        session_id=session_id, transcript_line=absolute_line,
+    )
+
+    if result.get("success"):
+        obs_id = result.get('id', 'unknown')
+        print(f"Stored observation: {obs_id}", file=sys.stderr)
+        _log_extraction(backend, input_tokens, output_tokens,
+                        observation_stored=True, obs_id=obs_id,
+                        importance=importance, tags=tags,
+                        prompt=prompt, observation_content=content,
+                        scope=scope, hook_input=hook_input, debug=debug)
+    else:
+        print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
+        _log_extraction(backend, input_tokens, output_tokens,
+                        observation_stored=False, prompt=prompt,
+                        observation_content=content,
+                        hook_input=hook_input, debug=debug)
+
+    # Step 7: Advance watermark (even on storage failure — Haiku already ran)
+    write_watermark(session_id, last_line_read)
 
 
 if __name__ == "__main__":

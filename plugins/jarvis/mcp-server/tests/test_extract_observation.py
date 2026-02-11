@@ -1,4 +1,4 @@
-"""Tests for extract_observation.py — transcript parsing and Haiku extraction."""
+"""Tests for extract_observation.py — transcript parsing, watermark tracking, and Haiku extraction."""
 import json
 import os
 import subprocess
@@ -17,18 +17,22 @@ HOOKS_DIR = os.path.join(
 sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
-    COOLDOWN_SENTINEL,
+    WATERMARK_DIR,
     _parse_haiku_text,
     build_turn_prompt,
     call_haiku,
     call_haiku_api,
     call_haiku_cli,
-    check_cooldown,
     check_substance,
     extract_file_paths_from_tools,
+    parse_all_turns,
     parse_transcript_turn,
+    pick_best_turn,
+    read_transcript_from,
+    read_watermark,
     store_observation,
     truncate,
+    write_watermark,
 )
 
 # Pre-import tools.tier2 so it can be patched in TestStoreObservation
@@ -36,7 +40,418 @@ import tools.tier2  # noqa: F401
 
 
 # ──────────────────────────────────────────────
-# TestParseTranscriptTurn
+# TestReadWatermark
+# ──────────────────────────────────────────────
+
+
+class TestReadWatermark:
+    """Tests for read_watermark() — session position tracking."""
+
+    def test_missing_file_returns_negative_one(self, tmp_path):
+        """Returns -1 when no watermark file exists."""
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("nonexistent-session")
+        assert result == -1
+
+    def test_valid_watermark(self, tmp_path):
+        """Reads a valid watermark file."""
+        wm_file = tmp_path / "session-abc.json"
+        wm_file.write_text(json.dumps({"last_extracted_line": 42, "timestamp": "2026-01-01T00:00:00Z"}))
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("session-abc")
+        assert result == 42
+
+    def test_corrupt_json_returns_negative_one(self, tmp_path):
+        """Returns -1 on corrupt JSON."""
+        wm_file = tmp_path / "corrupt.json"
+        wm_file.write_text("not valid json")
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("corrupt")
+        assert result == -1
+
+    def test_missing_key_returns_negative_one(self, tmp_path):
+        """Returns -1 when key is missing from JSON."""
+        wm_file = tmp_path / "nokey.json"
+        wm_file.write_text(json.dumps({"other": 5}))
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("nokey")
+        assert result == -1
+
+    def test_non_integer_value_returns_negative_one(self, tmp_path):
+        """Returns -1 when value is not convertible to int."""
+        wm_file = tmp_path / "bad.json"
+        wm_file.write_text(json.dumps({"last_extracted_line": "not-a-number"}))
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("bad")
+        assert result == -1
+
+    def test_per_session_isolation(self, tmp_path):
+        """Different sessions have independent watermarks."""
+        (tmp_path / "session-A.json").write_text(json.dumps({"last_extracted_line": 10}))
+        (tmp_path / "session-B.json").write_text(json.dumps({"last_extracted_line": 99}))
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            assert read_watermark("session-A") == 10
+            assert read_watermark("session-B") == 99
+
+    def test_zero_watermark(self, tmp_path):
+        """Correctly reads watermark value of 0."""
+        wm_file = tmp_path / "zero.json"
+        wm_file.write_text(json.dumps({"last_extracted_line": 0}))
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            result = read_watermark("zero")
+        assert result == 0
+
+
+# ──────────────────────────────────────────────
+# TestWriteWatermark
+# ──────────────────────────────────────────────
+
+
+class TestWriteWatermark:
+    """Tests for write_watermark() — atomic watermark persistence."""
+
+    def test_creates_directory_and_file(self, tmp_path):
+        """Creates directory structure if it doesn't exist."""
+        wm_dir = tmp_path / "state" / "sessions"
+        with patch("extract_observation.WATERMARK_DIR", wm_dir):
+            write_watermark("new-session", 55)
+        wm_file = wm_dir / "new-session.json"
+        assert wm_file.exists()
+        data = json.loads(wm_file.read_text())
+        assert data["last_extracted_line"] == 55
+
+    def test_valid_json_written(self, tmp_path):
+        """Written file contains valid JSON with expected keys."""
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            write_watermark("test", 100)
+        data = json.loads((tmp_path / "test.json").read_text())
+        assert "last_extracted_line" in data
+        assert "timestamp" in data
+        assert data["last_extracted_line"] == 100
+
+    def test_timestamp_format(self, tmp_path):
+        """Timestamp is ISO-8601 UTC format."""
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            write_watermark("ts-test", 0)
+        data = json.loads((tmp_path / "ts-test.json").read_text())
+        ts = data["timestamp"]
+        assert ts.endswith("Z")
+        assert "T" in ts
+
+    def test_overwrites_existing(self, tmp_path):
+        """Overwriting an existing watermark replaces the value."""
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            write_watermark("overwrite", 10)
+            write_watermark("overwrite", 50)
+        data = json.loads((tmp_path / "overwrite.json").read_text())
+        assert data["last_extracted_line"] == 50
+
+    def test_no_temp_files_left(self, tmp_path):
+        """No .tmp files left after successful write."""
+        with patch("extract_observation.WATERMARK_DIR", tmp_path):
+            write_watermark("clean", 30)
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0
+
+
+# ──────────────────────────────────────────────
+# TestReadTranscriptFrom
+# ──────────────────────────────────────────────
+
+
+class TestReadTranscriptFrom:
+    """Tests for read_transcript_from() — positional transcript reading."""
+
+    def _write_transcript(self, tmp_path, lines):
+        """Helper to write transcript JSONL lines to a temp file."""
+        path = tmp_path / "transcript.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        return str(path)
+
+    def test_full_read_from_start(self, tmp_path):
+        """Reads all lines when starting from 0."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        indexed, total = read_transcript_from(path, 0)
+        assert total == 2
+        assert len(indexed) == 2
+        assert indexed[0][0] == 0  # absolute index
+        assert indexed[1][0] == 1
+
+    def test_mid_file_start(self, tmp_path):
+        """Reads only lines from start_line onward."""
+        lines = [
+            json.dumps({"type": "system", "message": {}}),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        indexed, total = read_transcript_from(path, 1)
+        assert total == 3
+        assert len(indexed) == 2
+        assert indexed[0][0] == 1  # starts at line 1
+        assert indexed[1][0] == 2
+
+    def test_safety_cap(self, tmp_path):
+        """Caps at max_lines even if more lines available."""
+        lines = [json.dumps({"type": "user", "n": i}) for i in range(20)]
+        path = self._write_transcript(tmp_path, lines)
+        indexed, total = read_transcript_from(path, 0, max_lines=5)
+        assert total == 20
+        assert len(indexed) == 5
+
+    def test_empty_file(self, tmp_path):
+        """Returns empty list for empty file."""
+        path = tmp_path / "empty.jsonl"
+        path.write_text("")
+        indexed, total = read_transcript_from(str(path), 0)
+        assert indexed == []
+        assert total == 0
+
+    def test_nonexistent_file(self, tmp_path):
+        """Returns empty list for nonexistent file."""
+        indexed, total = read_transcript_from(str(tmp_path / "nope.jsonl"), 0)
+        assert indexed == []
+        assert total == 0
+
+    def test_correct_absolute_indices(self, tmp_path):
+        """Absolute line indices match actual file positions."""
+        lines = [json.dumps({"type": "system", "n": i}) for i in range(10)]
+        path = self._write_transcript(tmp_path, lines)
+        indexed, total = read_transcript_from(path, 5)
+        assert total == 10
+        assert len(indexed) == 5
+        assert indexed[0][0] == 5
+        assert indexed[4][0] == 9
+
+    def test_skips_blank_lines(self, tmp_path):
+        """Blank/whitespace-only lines are skipped."""
+        raw = json.dumps({"type": "user"}) + "\n\n" + json.dumps({"type": "assistant"}) + "\n   \n"
+        path = tmp_path / "blanks.jsonl"
+        path.write_text(raw)
+        indexed, total = read_transcript_from(str(path), 0)
+        assert len(indexed) == 2  # blank lines skipped
+
+
+# ──────────────────────────────────────────────
+# TestParseAllTurns
+# ──────────────────────────────────────────────
+
+
+class TestParseAllTurns:
+    """Tests for parse_all_turns() — forward multi-turn parsing."""
+
+    def _make_user(self, text, idx=0):
+        return (idx, json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": text}]}}))
+
+    def _make_assistant(self, text, tools=None, idx=0, usage=None):
+        content = [{"type": "text", "text": text}]
+        if tools:
+            for t in tools:
+                content.append({"type": "tool_use", "name": t, "input": {}})
+        msg = {"content": content, "usage": usage or {}}
+        return (idx, json.dumps({"type": "assistant", "message": msg}))
+
+    def _make_system(self, idx=0):
+        return (idx, json.dumps({"type": "system", "message": {}}))
+
+    def test_single_turn(self):
+        """Parses a single user→assistant turn."""
+        lines = [self._make_user("Hello", 0), self._make_assistant("Hi", idx=1)]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 1
+        assert turns[0]["user_text"] == "Hello"
+        assert turns[0]["assistant_text"] == "Hi"
+
+    def test_multiple_turns(self):
+        """Parses multiple turns in sequence."""
+        lines = [
+            self._make_user("First", 0),
+            self._make_assistant("Reply 1", idx=1),
+            self._make_user("Second", 2),
+            self._make_assistant("Reply 2", idx=3),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 2
+        assert turns[0]["user_text"] == "First"
+        assert turns[1]["user_text"] == "Second"
+
+    def test_skips_metadata(self):
+        """Skips system/progress/file-history-snapshot lines."""
+        lines = [
+            self._make_system(0),
+            self._make_user("Hello", 1),
+            (2, json.dumps({"type": "progress", "message": {}})),
+            self._make_assistant("Hi", idx=3),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 1
+        assert turns[0]["user_text"] == "Hello"
+
+    def test_incomplete_turn_no_assistant(self):
+        """Incomplete turn (user without assistant) is not returned."""
+        lines = [self._make_user("Hello", 0)]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 0
+
+    def test_assistant_without_user_skipped(self):
+        """Assistant without preceding user is not a turn."""
+        lines = [self._make_assistant("Hi", idx=0)]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 0
+
+    def test_tool_names_deduplication(self):
+        """Tool names within a turn are deduplicated."""
+        lines = [
+            self._make_user("Edit", 0),
+            (1, json.dumps({"type": "assistant", "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {}},
+                    {"type": "tool_use", "name": "Edit", "input": {}},
+                    {"type": "tool_use", "name": "Read", "input": {}},
+                ],
+                "usage": {}
+            }})),
+        ]
+        turns = parse_all_turns(lines)
+        assert turns[0]["tool_names"] == ["Read", "Edit"]
+
+    def test_file_paths_accumulated(self):
+        """File paths accumulate across turns (not just last turn)."""
+        lines = [
+            self._make_user("Read A", 0),
+            (1, json.dumps({"type": "assistant", "message": {
+                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}}],
+                "usage": {}
+            }})),
+            self._make_user("Read B", 2),
+            (3, json.dumps({"type": "assistant", "message": {
+                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/b.py"}}],
+                "usage": {}
+            }})),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 2
+        # Second turn should see accumulated files from both turns
+        assert "/a.py" in turns[1]["relevant_files"]
+        assert "/b.py" in turns[1]["relevant_files"]
+
+    def test_line_indices_tracked(self):
+        """start_line_idx and end_line_idx correctly track positions."""
+        lines = [
+            self._make_user("Hello", 10),
+            self._make_assistant("Hi", idx=15),
+        ]
+        turns = parse_all_turns(lines)
+        assert turns[0]["start_line_idx"] == 10
+        assert turns[0]["end_line_idx"] == 15
+
+    def test_invalid_json_skipped(self):
+        """Invalid JSON lines are silently skipped."""
+        lines = [
+            (0, "not valid json"),
+            self._make_user("Hello", 1),
+            self._make_assistant("Hi", idx=2),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 1
+
+    def test_empty_lines(self):
+        """Empty input returns empty list."""
+        turns = parse_all_turns([])
+        assert turns == []
+
+    def test_token_usage_extracted(self):
+        """Token usage is extracted from assistant message."""
+        lines = [
+            self._make_user("Test", 0),
+            self._make_assistant("OK", idx=1, usage={"input_tokens": 500, "output_tokens": 200}),
+        ]
+        turns = parse_all_turns(lines)
+        assert turns[0]["token_usage"] == "500 in, 200 out"
+
+    def test_user_override(self):
+        """If two user messages appear before an assistant, the second one wins."""
+        lines = [
+            self._make_user("First user msg", 0),
+            self._make_user("Second user msg", 1),
+            self._make_assistant("Reply", idx=2),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 1
+        assert turns[0]["user_text"] == "Second user msg"
+
+
+# ──────────────────────────────────────────────
+# TestPickBestTurn
+# ──────────────────────────────────────────────
+
+
+class TestPickBestTurn:
+    """Tests for pick_best_turn() — substantive turn selection."""
+
+    def test_longest_turn_wins(self):
+        """Picks the turn with most text."""
+        turns = [
+            {"user_text": "x" * 100, "assistant_text": "y" * 100, "tool_names": [], "relevant_files": []},
+            {"user_text": "x" * 300, "assistant_text": "y" * 300, "tool_names": [], "relevant_files": []},
+        ]
+        best = pick_best_turn(turns, min_chars=100)
+        assert best is turns[1]
+
+    def test_tool_diversity_boost(self):
+        """Turn with tools can beat a longer turn without tools."""
+        turns = [
+            {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []},
+            {"user_text": "x" * 150, "assistant_text": "y" * 150, "tool_names": ["Read", "Edit", "Write"], "relevant_files": []},
+        ]
+        # Turn 1: 400 chars, Turn 2: 300 + 300 (3 tools * 100) = 600
+        best = pick_best_turn(turns, min_chars=100)
+        assert best is turns[1]
+
+    def test_file_boost(self):
+        """Turn with files gets +200 score boost."""
+        turns = [
+            {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []},
+            {"user_text": "x" * 150, "assistant_text": "y" * 150, "tool_names": [], "relevant_files": ["/a.py"]},
+        ]
+        # Turn 1: 400, Turn 2: 300 + 200 = 500
+        best = pick_best_turn(turns, min_chars=100)
+        assert best is turns[1]
+
+    def test_below_threshold_filtered(self):
+        """Turns below min_chars are not considered."""
+        turns = [
+            {"user_text": "Hi", "assistant_text": "Hello", "tool_names": ["Read"], "relevant_files": ["/a.py"]},
+        ]
+        best = pick_best_turn(turns, min_chars=200)
+        assert best is None
+
+    def test_empty_list(self):
+        """Returns None for empty list."""
+        assert pick_best_turn([], min_chars=200) is None
+
+    def test_all_below_threshold(self):
+        """Returns None when all turns are below threshold."""
+        turns = [
+            {"user_text": "x" * 50, "assistant_text": "y" * 50, "tool_names": [], "relevant_files": []},
+            {"user_text": "x" * 80, "assistant_text": "y" * 80, "tool_names": [], "relevant_files": []},
+        ]
+        best = pick_best_turn(turns, min_chars=200)
+        assert best is None
+
+    def test_single_turn_above_threshold(self):
+        """Returns the only qualifying turn."""
+        turn = {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []}
+        best = pick_best_turn([turn], min_chars=200)
+        assert best is turn
+
+
+# ──────────────────────────────────────────────
+# TestParseTranscriptTurn (existing — preserved)
 # ──────────────────────────────────────────────
 
 
@@ -266,75 +681,6 @@ class TestCheckSubstance:
             "token_usage": "0 in, 0 out",
         }
         assert check_substance(turn, min_chars=200) is False
-
-
-# ──────────────────────────────────────────────
-# TestCheckCooldown
-# ──────────────────────────────────────────────
-
-
-class TestCheckCooldown:
-    """Tests for check_cooldown() — rate limiting."""
-
-    def test_first_extraction_passes(self):
-        """First extraction passes (no sentinel file)."""
-        # Clean up any existing sentinel
-        if COOLDOWN_SENTINEL.exists():
-            COOLDOWN_SENTINEL.unlink()
-
-        assert check_cooldown(cooldown_seconds=120) is True
-        assert COOLDOWN_SENTINEL.exists()
-
-        # Clean up
-        COOLDOWN_SENTINEL.unlink()
-
-    def test_immediate_retry_blocked(self):
-        """Immediate retry within cooldown is blocked."""
-        # Create sentinel
-        if COOLDOWN_SENTINEL.exists():
-            COOLDOWN_SENTINEL.unlink()
-        COOLDOWN_SENTINEL.touch()
-
-        assert check_cooldown(cooldown_seconds=120) is False
-
-        # Clean up
-        COOLDOWN_SENTINEL.unlink()
-
-    def test_expired_cooldown_passes(self):
-        """Expired cooldown allows extraction."""
-        # Create old sentinel
-        if COOLDOWN_SENTINEL.exists():
-            COOLDOWN_SENTINEL.unlink()
-        COOLDOWN_SENTINEL.touch()
-
-        # Backdate it
-        old_time = time.time() - 200
-        os.utime(COOLDOWN_SENTINEL, (old_time, old_time))
-
-        assert check_cooldown(cooldown_seconds=120) is True
-
-        # Clean up
-        COOLDOWN_SENTINEL.unlink()
-
-    def test_custom_cooldown_seconds(self):
-        """Custom cooldown_seconds works."""
-        # Create recent sentinel
-        if COOLDOWN_SENTINEL.exists():
-            COOLDOWN_SENTINEL.unlink()
-        COOLDOWN_SENTINEL.touch()
-
-        # Backdate it by 10 seconds
-        recent_time = time.time() - 10
-        os.utime(COOLDOWN_SENTINEL, (recent_time, recent_time))
-
-        # Should fail with 60s cooldown
-        assert check_cooldown(cooldown_seconds=60) is False
-
-        # Should pass with 5s cooldown
-        assert check_cooldown(cooldown_seconds=5) is True
-
-        # Clean up
-        COOLDOWN_SENTINEL.unlink()
 
 
 # ──────────────────────────────────────────────

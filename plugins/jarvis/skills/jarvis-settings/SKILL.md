@@ -20,7 +20,7 @@ Read `~/.jarvis/config.json` and show a summary:
 Jarvis Configuration
 --------------------
 Vault:        ~/.jarvis/vault/
-Auto-Extract: background (cooldown: 120s, min text: 200 chars)
+Auto-Extract: background (min text: 200 chars)
 Memory DB:    ~/.jarvis/memory_db/ (configurable)
 Shell:        jarvis command in ~/.zshrc
 Version:      1.19.0
@@ -125,21 +125,21 @@ AskUserQuestion:
       header: "Tuning"
       options:
         - label: "Defaults (Recommended)"
-          description: "Cooldown: 120s, Min text: 200 chars"
+          description: "Min text: 200 chars per turn"
         - label: "Frequent capture"
-          description: "Cooldown: 30s, Min text: 100 chars (more observations, slightly noisier)"
+          description: "Min text: 100 chars (more observations, slightly noisier)"
         - label: "Conservative"
-          description: "Cooldown: 300s, Min text: 500 chars (fewer, higher quality)"
+          description: "Min text: 500 chars (fewer, higher quality)"
         - label: "Custom values"
-          description: "Enter your own thresholds"
+          description: "Enter your own min_turn_chars threshold"
       multiSelect: false
 ```
 
 Preset mapping:
-- "Defaults" -> `cooldown_seconds: 120, min_turn_chars: 200`
-- "Frequent capture" -> `cooldown_seconds: 30, min_turn_chars: 100`
-- "Conservative" -> `cooldown_seconds: 300, min_turn_chars: 500`
-- "Custom" -> Ask for `cooldown_seconds` (int) and `min_turn_chars` (int)
+- "Defaults" -> `min_turn_chars: 200`
+- "Frequent capture" -> `min_turn_chars: 100`
+- "Conservative" -> `min_turn_chars: 500`
+- "Custom" -> Ask for `min_turn_chars` (int)
 
 ### 3c. Advanced settings
 
@@ -250,8 +250,7 @@ max_content_length:   500
 === Auto-Extract ===
 mode:                 background
 min_turn_chars:       200
-cooldown_seconds:     120
-max_transcript_lines: 100
+max_transcript_lines: 500
 debug:                false
 
 === Promotion ===

@@ -1,6 +1,17 @@
 {
-  "description": "Jarvis hooks: per-prompt memory search + auto-extract observation capture",
+  "description": "Jarvis hooks: per-prompt memory search + auto-extract observation capture + session cleanup",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-cleanup.sh",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

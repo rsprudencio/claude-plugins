@@ -24,8 +24,8 @@ class TestGetAutoExtractConfig:
 
         assert config["mode"] == "background"
         assert config["min_turn_chars"] == 200
-        assert config["cooldown_seconds"] == 120
-        assert config["max_transcript_lines"] == 100
+        assert config["max_transcript_lines"] == 500
+        assert "cooldown_seconds" not in config
 
     @patch("tools.config.get_config")
     def test_mode_override(self, mock_get_config):
@@ -47,14 +47,12 @@ class TestGetAutoExtractConfig:
             "memory": {
                 "auto_extract": {
                     "min_turn_chars": 500,
-                    "cooldown_seconds": 60,
                     "max_transcript_lines": 200,
                 }
             }
         }
         config = get_auto_extract_config()
         assert config["min_turn_chars"] == 500
-        assert config["cooldown_seconds"] == 60
         assert config["max_transcript_lines"] == 200
 
     @patch("tools.config.get_config")
@@ -71,8 +69,7 @@ class TestGetAutoExtractConfig:
         config = get_auto_extract_config()
         assert config["mode"] == "disabled"
         assert config["min_turn_chars"] == 300
-        assert config["cooldown_seconds"] == 120  # Default
-        assert config["max_transcript_lines"] == 100  # Default
+        assert config["max_transcript_lines"] == 500  # Default
 
     @patch("tools.config.get_config")
     def test_no_inline_mode(self, mock_get_config):
@@ -117,14 +114,12 @@ class TestCheckPrerequisites:
         config = {
             "mode": "disabled",
             "min_turn_chars": 300,
-            "cooldown_seconds": 60,
             "max_transcript_lines": 50,
         }
         result = check_prerequisites(config)
 
         assert result["details"]["mode"] == "disabled"
         assert result["details"]["min_turn_chars"] == 300
-        assert result["details"]["cooldown_seconds"] == 60
         assert result["details"]["max_transcript_lines"] == 50
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=True)
@@ -267,11 +262,9 @@ class TestCheckPrerequisites:
         config = {
             "mode": "disabled",
             "min_turn_chars": 250,
-            "cooldown_seconds": 90,
             "max_transcript_lines": 150,
         }
         result = check_prerequisites(config)
 
         assert result["details"]["min_turn_chars"] == 250
-        assert result["details"]["cooldown_seconds"] == 90
         assert result["details"]["max_transcript_lines"] == 150

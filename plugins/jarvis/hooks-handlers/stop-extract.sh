@@ -5,8 +5,11 @@ set -euo pipefail
 #
 # Reads Stop hook JSON from stdin, checks config, then routes:
 # - disabled: exit 0 immediately
-# - background/background-api/background-cli: tail transcript to temp file,
-#   spawn extract_observation.py in background, exit immediately
+# - background/background-api/background-cli: pass transcript path directly
+#   to extract_observation.py in background, exit immediately
+#
+# The Python script handles per-session watermarking internally —
+# no temp files or line counting needed here.
 
 # Read all stdin (Stop hook input JSON)
 INPUT=$(cat)
@@ -17,7 +20,7 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MCP_SERVER_DIR="$PLUGIN_ROOT/mcp-server"
 
 # Run Python check to determine action
-# Output format: "skip:disabled" or "proceed:MODE:TRANSCRIPT_PATH:SESSION_ID:MAX_LINES"
+# Output format: "skip:disabled" or "proceed:MODE:TRANSCRIPT_PATH:SESSION_ID"
 CHECK_RESULT=$(python3 -c "
 import sys, json, os
 sys.path.insert(0, '$MCP_SERVER_DIR')
@@ -42,9 +45,8 @@ try:
     transcript_path = os.path.expanduser(transcript_path)
 
     session_id = hook_data.get('session_id', 'unknown')
-    max_lines = config.get('max_transcript_lines', 100)
 
-    print(f'proceed:{mode}:{transcript_path}:{session_id}:{max_lines}')
+    print(f'proceed:{mode}:{transcript_path}:{session_id}')
 except Exception as e:
     print(f'skip:error:{e}', file=sys.stderr)
     print('skip:error')
@@ -58,7 +60,7 @@ if [ "$ACTION" = "skip" ]; then
     exit 0
 fi
 
-# Parse proceed components (MODE:TRANSCRIPT_PATH:SESSION_ID:MAX_LINES)
+# Parse proceed components (MODE:TRANSCRIPT_PATH:SESSION_ID)
 # Remove "proceed:" prefix
 PARAMS="${CHECK_RESULT#proceed:}"
 
@@ -69,10 +71,7 @@ PARAMS="${PARAMS#*:}"
 TRANSCRIPT_PATH="${PARAMS%%:*}"
 PARAMS="${PARAMS#*:}"
 
-SESSION_ID="${PARAMS%%:*}"
-PARAMS="${PARAMS#*:}"
-
-MAX_LINES="${PARAMS}"
+SESSION_ID="${PARAMS}"
 
 # Validate transcript file exists
 if [ ! -f "$TRANSCRIPT_PATH" ]; then
@@ -83,16 +82,9 @@ fi
 PROJECT_PATH="$PWD"
 GIT_BRANCH="$(git -C "$PWD" branch --show-current 2>/dev/null || echo "")"
 
-# Create temp file with last N lines of transcript
-TEMP_FILE="/tmp/jarvis-turn-$$.jsonl"
-tail -n "$MAX_LINES" "$TRANSCRIPT_PATH" > "$TEMP_FILE" 2>/dev/null || exit 0
-
-# Get total transcript line count for absolute line computation
-TOTAL_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
-
 # Spawn extraction in background, passing raw hook JSON via env for debug logging
-JARVIS_HOOK_INPUT="$INPUT" nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TEMP_FILE" "$SESSION_ID" \
-    "$PROJECT_PATH" "$GIT_BRANCH" "$TOTAL_LINES" \
+JARVIS_HOOK_INPUT="$INPUT" nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TRANSCRIPT_PATH" "$SESSION_ID" \
+    "$PROJECT_PATH" "$GIT_BRANCH" \
     >/dev/null 2>&1 & disown
 
 exit 0
