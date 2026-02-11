@@ -22,15 +22,40 @@ from typing import Tuple
 DEBUG_LOG_FILE = Path.home() / ".jarvis" / "debug.per-prompt-search.log"
 
 
-def _debug_log(action: str, detail: str, prompt: str = ""):
-    """Append a debug line to the per-prompt search log."""
+def _debug_log(action: str, detail: str, prompt: str = "", injected: str = ""):
+    """Append a structured debug block to the per-prompt search log.
+
+    Uses shared ANSI colors and section dividers for visual consistency
+    with the auto-extract debug log when tailing.
+
+    Args:
+        action: SKIP, ERROR, EMPTY, or FOUND
+        detail: Summary line (e.g., "460ms | 3/5 | sources...")
+        prompt: The user's prompt text
+        injected: The full XML output injected into Claude's context (FOUND only)
+    """
     try:
+        from _colors import C_GREEN, C_YELLOW, C_RESET, divider_thick, divider_section
+
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        truncated = prompt[:80] + "..." if len(prompt) > 80 else prompt
-        truncated = truncated.replace("\n", " ")
-        line = f'{ts} | {action:5s} | {detail} | prompt:"{truncated}"\n'
+        status_color = C_GREEN if action == "FOUND" else C_YELLOW
+
+        lines = []
+        lines.append(divider_thick())
+        lines.append(f"{ts} | {status_color}{action:5s}{C_RESET} | {detail}")
+
+        if prompt:
+            lines.append(divider_section("PROMPT"))
+            lines.append(prompt)
+
+        if injected:
+            lines.append(divider_section("INJECTED"))
+            lines.append(injected)
+
+        lines.append("")  # Blank line separator
+
         with open(DEBUG_LOG_FILE, "a") as f:
-            f.write(line)
+            f.write("\n".join(lines) + "\n")
     except Exception:
         pass  # Never fail on debug logging
 
@@ -69,6 +94,10 @@ def _should_skip_prompt(query: str) -> Tuple[bool, str]:
     # Pure code blocks
     if stripped.startswith("```"):
         return True, "code_block"
+
+    # Auto-extract Haiku prompt (fired via `claude -p` subprocess)
+    if "You are analyzing a conversation turn between a user and an AI assistant" in stripped[:100]:
+        return True, "auto_extract_prompt"
 
     return False, ""
 
@@ -196,15 +225,17 @@ def main():
             _debug_log("EMPTY", f"{query_ms}ms | 0/{max_results}", prompt_text)
         sys.exit(0)
 
+    # Format output (Claude sees this via stdout)
+    output = _format_memories(matches, result.get("query_ms", 0))
+
     if debug:
         sources = " ".join(
             f'{m["source"]}({m["relevance"]})'
             for m in matches
         )
-        _debug_log("FOUND", f"{query_ms}ms | {len(matches)}/{max_results} | {sources}", prompt_text)
+        _debug_log("FOUND", f"{query_ms}ms | {len(matches)}/{max_results} | {sources}",
+                   prompt_text, injected=output)
 
-    # Format and output to stdout (Claude sees this)
-    output = _format_memories(matches, result.get("query_ms", 0))
     if output:
         print(output)
 

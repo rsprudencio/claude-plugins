@@ -62,6 +62,44 @@ class TestPromptFiltering:
         assert reason == "code_block"
         assert _should_skip_prompt("```\nsome code\n```")[0] is True
 
+    def test_auto_extract_prompt_skipped(self):
+        """Auto-extract Haiku prompts (via claude -p subprocess) are skipped."""
+        skip, reason = _should_skip_prompt(
+            "You are analyzing a conversation turn between a user and an AI assistant working on code.\n\n## User's Message\nhello"
+        )
+        assert skip is True
+        assert reason == "auto_extract_prompt"
+        # Also match without "working on code" suffix
+        assert _should_skip_prompt(
+            "You are analyzing a conversation turn between a user and an AI assistant.\n\n## User's Message"
+        )[0] is True
+
+    def test_auto_extract_prompt_matches_real_template(self):
+        """The skip filter catches the ACTUAL extraction prompt template.
+
+        This is a coupling guard: if EXTRACTION_PROMPT in extract_observation.py
+        changes its prefix, this test breaks — forcing the filter in
+        prompt_search.py to be updated in sync.
+        """
+        from extract_observation import EXTRACTION_PROMPT
+
+        # Format the real template with dummy values (same as build_turn_prompt)
+        real_prompt = EXTRACTION_PROMPT.format(
+            user_text="test user message",
+            assistant_text="test assistant response",
+            tool_names="Read, Edit",
+            relevant_files="- /some/file.py",
+            project_dir="my-project",
+            git_branch="main",
+            token_usage="100 in, 50 out",
+        )
+        skip, reason = _should_skip_prompt(real_prompt)
+        assert skip is True, (
+            f"EXTRACTION_PROMPT changed but prompt_search filter didn't catch it. "
+            f"Update the auto_extract_prompt check in _should_skip_prompt()."
+        )
+        assert reason == "auto_extract_prompt"
+
     def test_substantive_prompt_not_skipped(self):
         """Normal questions and requests pass through with empty reason."""
         skip, reason = _should_skip_prompt("What should I focus on for my review?")

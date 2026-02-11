@@ -536,12 +536,7 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
         return
 
     try:
-        # ANSI color codes for terminal readability (cat, tail -f, less -R)
-        C_CYAN = "\033[36m"
-        C_DIM = "\033[2m"
-        C_GREEN = "\033[32m"
-        C_YELLOW = "\033[33m"
-        C_RESET = "\033[0m"
+        from _colors import C_GREEN, C_YELLOW, C_RESET, divider_thick, divider_section
 
         # Calculate costs
         input_cost = (input_tokens / 1_000_000) * 1.00
@@ -554,7 +549,7 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
         tags_str = ",".join(tags) if tags else "none"
 
         lines = []
-        lines.append(f"{C_CYAN}{'═' * 80}{C_RESET}")
+        lines.append(divider_thick())
         lines.append(
             f"{timestamp} | {backend:4s} | "
             f"in:{input_tokens:6d} out:{output_tokens:4d} | "
@@ -563,16 +558,16 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
 
         # Log verbatim hook input from Claude Code
         if hook_input:
-            lines.append(f"{C_DIM}{'─' * 37} HOOK INPUT {'─' * 32}{C_RESET}")
+            lines.append(divider_section("HOOK INPUT"))
             lines.append(hook_input)
 
         # Log the prompt built for Haiku
         if prompt:
-            lines.append(f"{C_DIM}{'─' * 40} PROMPT {'─' * 33}{C_RESET}")
+            lines.append(divider_section("PROMPT"))
             lines.append(prompt)
 
         # Log the result
-        lines.append(f"{C_DIM}{'─' * 40} RESULT {'─' * 33}{C_RESET}")
+        lines.append(divider_section("RESULT"))
         if observation_stored and obs_id:
             lines.append(f"  ID:         {obs_id}")
             lines.append(f"  Content:    {observation_content}")
