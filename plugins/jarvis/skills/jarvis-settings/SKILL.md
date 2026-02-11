@@ -189,10 +189,10 @@ Show all vault-relative paths with current vs default:
 | `inbox_todoist` | `inbox/todoist` | ... |
 | `templates` | `templates` | ... |
 | `strategic` | `.jarvis/strategic` | ... |
-| `observations_promoted` | `journal/jarvis/observations` | ... |
-| `patterns_promoted` | `journal/jarvis/patterns` | ... |
-| `learnings_promoted` | `journal/jarvis/learnings` | ... |
-| `decisions_promoted` | `journal/jarvis/decisions` | ... |
+| `observations_promoted` | `.jarvis/memories/observations` | ... |
+| `patterns_promoted` | `.jarvis/memories/patterns` | ... |
+| `learnings_promoted` | `.jarvis/memories/learnings` | ... |
+| `decisions_promoted` | `.jarvis/memories/decisions` | ... |
 
 Let user change specific paths. All paths are relative to vault root.
 

@@ -440,10 +440,10 @@
     "directories": {
       "journal/jarvis/YYYY/MM/": "Jarvis-created journal entries (timestamped)",
       "journal/jarvis/YYYY/summaries/": "Weekly, monthly, quarterly, yearly summaries",
-      "journal/jarvis/observations/": "Promoted observations from Tier 2",
-      "journal/jarvis/patterns/": "Promoted patterns from Tier 2",
-      "journal/jarvis/learnings/": "Promoted learnings from Tier 2",
-      "journal/jarvis/decisions/": "Promoted decisions from Tier 2",
+      ".jarvis/memories/observations/": "Promoted observations from Tier 2",
+      ".jarvis/memories/patterns/": "Promoted patterns from Tier 2",
+      ".jarvis/memories/learnings/": "Promoted learnings from Tier 2",
+      ".jarvis/memories/decisions/": "Promoted decisions from Tier 2",
       "journal/daily/": "User's daily notes",
       "notes/": "Main knowledge base (open access)",
       "work/": "Work-related content (open access)",
@@ -531,11 +531,11 @@
         "people": "people",
         "documents": "documents",
         "strategic": ".jarvis/strategic",
-        "observations_promoted": "journal/jarvis/observations",
-        "patterns_promoted": "journal/jarvis/patterns",
-        "summaries_promoted": "journal/jarvis/summaries",
-        "learnings_promoted": "journal/jarvis/learnings",
-        "decisions_promoted": "journal/jarvis/decisions"
+        "observations_promoted": ".jarvis/memories/observations",
+        "patterns_promoted": ".jarvis/memories/patterns",
+        "summaries_promoted": ".jarvis/memories/summaries",
+        "learnings_promoted": ".jarvis/memories/learnings",
+        "decisions_promoted": ".jarvis/memories/decisions"
       },
       "absolute": {
         "db_path": "~/.jarvis/memory_db",
