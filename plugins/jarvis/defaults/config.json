@@ -51,14 +51,18 @@
   "paths": {
     "journal_jarvis": "journal/jarvis",
     "journal_daily": "journal/daily",
+    "journal_summaries": "journal/jarvis/{YYYY}/summaries",
     "notes": "notes",
     "work": "work",
     "inbox": "inbox",
     "inbox_todoist": "inbox/todoist",
     "templates": "templates",
+    "people": "people",
+    "documents": "documents",
     "strategic": ".jarvis/strategic",
     "observations_promoted": "journal/jarvis/observations",
     "patterns_promoted": "journal/jarvis/patterns",
+    "summaries_promoted": "journal/jarvis/summaries",
     "learnings_promoted": "journal/jarvis/learnings",
     "decisions_promoted": "journal/jarvis/decisions"
   }

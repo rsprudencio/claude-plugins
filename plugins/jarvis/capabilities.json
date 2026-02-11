@@ -514,7 +514,8 @@
       "importance_threshold": { "type": "float", "default": 0.85, "description": "Min importance score for auto-promote" },
       "retrieval_count_threshold": { "type": "integer", "default": 3, "description": "Min retrieval count for promotion" },
       "age_importance_days": { "type": "integer", "default": 30, "description": "Days after which age+importance combo triggers" },
-      "age_importance_score": { "type": "float", "default": 0.7, "description": "Importance threshold for aged content" }
+      "age_importance_score": { "type": "float", "default": 0.7, "description": "Importance threshold for aged content" },
+      "on_promoted_file_deleted": { "type": "string", "default": "remove", "options": ["remove", "revert_to_chromadb"], "description": "What to do when a promoted vault file is deleted" }
     },
 
     "paths": {

@@ -1,6 +1,6 @@
 # Jarvis Strategic Plugin
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Author:** Raphael Prudencio
 **License:** CC BY-NC 4.0
 

@@ -168,9 +168,9 @@ Then commit the correction.
 
 ---
 
-## Future Enhancements
+## Additional Modes
 
-- **ANALYZE mode**: "Jarvis, analyze my Todoist" → Agent proposes optimizations (archive stale, break down large)
-- **ORGANIZE mode**: "Jarvis, I'm overwhelmed" → Agent proposes hiding low-priority, reordering by goals
-- **Bi-directional sync**: Complete task in vault → sync to Todoist
-- **Proactive suggestions**: Agent notices patterns and suggests without prompt
+The todoist agent also supports these modes (triggered by the user's intent):
+
+- **ANALYZE mode**: "Jarvis, analyze my Todoist" — Agent proposes optimizations (archive stale, break down large tasks)
+- **ORGANIZE mode**: "Jarvis, I'm overwhelmed" — Agent proposes hiding low-priority, reordering by goals
