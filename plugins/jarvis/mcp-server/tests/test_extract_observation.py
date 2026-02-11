@@ -1003,3 +1003,222 @@ class TestBuildTurnPromptRelevantFiles:
         }
         prompt = build_turn_prompt(turn)
         assert '"scope": "project" or "global"' in prompt
+
+
+# ──────────────────────────────────────────────
+# TestParseTranscriptTurnAssistantLine
+# ──────────────────────────────────────────────
+
+
+class TestParseTranscriptTurnAssistantLine:
+    """Tests for assistant_line tracking in parse_transcript_turn()."""
+
+    def test_returns_assistant_line(self):
+        """assistant_line is correct forward index of the last assistant message."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}], "usage": {}}}),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        assert result["assistant_line"] == 1
+
+    def test_assistant_line_with_metadata_lines(self):
+        """assistant_line is correct when system/progress lines are interspersed."""
+        lines = [
+            json.dumps({"type": "system", "message": {}}),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
+            json.dumps({"type": "progress", "message": {}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}], "usage": {}}}),
+            json.dumps({"type": "file-history-snapshot", "message": {}}),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        # Assistant is at index 3 (0-based)
+        assert result["assistant_line"] == 3
+
+    def test_assistant_line_picks_last_assistant(self):
+        """assistant_line refers to the LAST assistant message."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "First"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Old"}], "usage": {}}}),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Second"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "New"}], "usage": {}}}),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        assert result["assistant_line"] == 3
+
+
+# ──────────────────────────────────────────────
+# TestStoreObservationSessionTracing
+# ──────────────────────────────────────────────
+
+
+class TestStoreObservationSessionTracing:
+    """Tests for session_id and transcript_line in store_observation()."""
+
+    @patch("tools.tier2.tier2_write")
+    def test_session_id_passthrough(self, mock_tier2_write):
+        """session_id appears in extra_metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test",
+            importance_score=0.5,
+            tags=[],
+            source_label="auto-extract:stop-hook",
+            session_id="abc-123-def",
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"]["session_id"] == "abc-123-def"
+
+    @patch("tools.tier2.tier2_write")
+    def test_transcript_line_passthrough(self, mock_tier2_write):
+        """transcript_line appears in extra_metadata as string."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test",
+            importance_score=0.5,
+            tags=[],
+            source_label="auto-extract:stop-hook",
+            transcript_line=42,
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"]["transcript_line"] == "42"
+
+    @patch("tools.tier2.tier2_write")
+    def test_empty_session_id_omitted(self, mock_tier2_write):
+        """Empty session_id is not stored in metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test",
+            importance_score=0.5,
+            tags=[],
+            source_label="auto-extract:stop-hook",
+            session_id="",
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"] is None
+
+    @patch("tools.tier2.tier2_write")
+    def test_negative_transcript_line_omitted(self, mock_tier2_write):
+        """Negative transcript_line (-1) is not stored in metadata."""
+        mock_tier2_write.return_value = {"success": True, "id": "obs::123"}
+
+        store_observation(
+            content="Test",
+            importance_score=0.5,
+            tags=[],
+            source_label="auto-extract:stop-hook",
+            transcript_line=-1,
+        )
+
+        call_args = mock_tier2_write.call_args[1]
+        assert call_args["extra_metadata"] is None
+
+
+# ──────────────────────────────────────────────
+# TestRelevantFilesAllTurns
+# ──────────────────────────────────────────────
+
+
+class TestRelevantFilesAllTurns:
+    """Tests for relevant_files scanning across all assistant turns."""
+
+    def test_files_from_all_turns(self):
+        """File paths collected from multiple assistant messages, not just the last."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read file A"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Reading A"},
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/a.py"}},
+                    ],
+                    "usage": {}
+                }
+            }),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Now edit B"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Done"},
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/b.py"}},
+                    ],
+                    "usage": {}
+                }
+            }),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        # Both files should be present even though the last assistant only touched b.py
+        assert "/src/a.py" in result["relevant_files"]
+        assert "/src/b.py" in result["relevant_files"]
+
+    def test_files_deduplicated_across_turns(self):
+        """Same file in multiple assistant turns only appears once."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read it"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+                    ],
+                    "usage": {}
+                }
+            }),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Edit it"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/main.py"}},
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/other.py"}},
+                    ],
+                    "usage": {}
+                }
+            }),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        assert result["relevant_files"] == ["/src/main.py", "/src/other.py"]
+
+    def test_files_from_early_turns_with_text_only_ending(self):
+        """Files from earlier turns are captured even when last assistant is text-only."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read files"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/config.py"}},
+                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+                    ],
+                    "usage": {}
+                }
+            }),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Thanks, summarize"}]}}),
+            json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Here is your summary of the codebase..."},
+                    ],
+                    "usage": {"input_tokens": 500, "output_tokens": 200}
+                }
+            }),
+        ]
+        result = parse_transcript_turn(lines)
+        assert result is not None
+        # Last assistant has no tool_use, but files from earlier turn should be captured
+        assert "/src/config.py" in result["relevant_files"]
+        assert "/src/main.py" in result["relevant_files"]

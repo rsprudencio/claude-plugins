@@ -88,9 +88,12 @@ GIT_BRANCH="$(git -C "$PWD" branch --show-current 2>/dev/null || echo "")"
 TEMP_FILE="/tmp/jarvis-turn-$$.jsonl"
 tail -n "$MAX_LINES" "$TRANSCRIPT_PATH" > "$TEMP_FILE" 2>/dev/null || exit 0
 
+# Get total transcript line count for absolute line computation
+TOTAL_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
+
 # Spawn extraction in background and return immediately
 nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TEMP_FILE" "$SESSION_ID" \
-    "$PROJECT_DIR" "$PROJECT_PATH" "$GIT_BRANCH" \
+    "$PROJECT_DIR" "$PROJECT_PATH" "$GIT_BRANCH" "$TOTAL_LINES" \
     >/dev/null 2>&1 & disown
 
 exit 0

@@ -134,15 +134,20 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
     - Last assistant message (with text blocks and tool_use blocks)
     - Preceding user message (with text blocks)
 
+    Also scans ALL assistant messages for file paths (not just the last one),
+    since file-touching tools (Read, Edit, Grep) happen mid-conversation.
+
     Returns:
-        Dict with keys: user_text, assistant_text, tool_names, token_usage, relevant_files
+        Dict with keys: user_text, assistant_text, tool_names, token_usage,
+                        relevant_files, assistant_line
         None if parsing fails or no valid turn found
     """
     assistant_msg = None
+    assistant_line_idx = -1
     user_msg = None
 
     # Scan backwards to find last assistant, then preceding user
-    for line in reversed(lines):
+    for reverse_idx, line in enumerate(reversed(lines)):
         try:
             entry = json.loads(line)
         except (json.JSONDecodeError, ValueError):
@@ -156,6 +161,7 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
 
         if msg_type == "assistant" and assistant_msg is None:
             assistant_msg = entry
+            assistant_line_idx = len(lines) - 1 - reverse_idx
         elif msg_type == "user" and assistant_msg is not None and user_msg is None:
             user_msg = entry
             break  # Found complete turn
@@ -195,8 +201,26 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
             seen.add(tool)
             unique_tools.append(tool)
 
-    # Extract file paths from tool_use blocks
-    relevant_files = extract_file_paths_from_tools(assistant_content)
+    # Scan ALL assistant turns for file paths (not just the last one)
+    all_file_paths = []
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = entry.get("message", {}).get("content", [])
+        all_file_paths.extend(extract_file_paths_from_tools(content))
+
+    # Deduplicate while preserving order
+    seen_paths = set()
+    relevant_files = []
+    for p in all_file_paths:
+        if p not in seen_paths:
+            seen_paths.add(p)
+            relevant_files.append(p)
+    relevant_files = relevant_files[:_MAX_FILE_PATHS]
 
     # Extract token usage
     usage = assistant_msg.get("message", {}).get("usage", {})
@@ -210,6 +234,7 @@ def parse_transcript_turn(lines: list[str]) -> dict | None:
         "tool_names": unique_tools,
         "token_usage": token_usage,
         "relevant_files": relevant_files,
+        "assistant_line": assistant_line_idx,
     }
 
 
@@ -519,7 +544,8 @@ def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, s
 
 def store_observation(content: str, importance_score: float, tags: list, source_label: str,
                       project_dir: str = "", project_path: str = "", git_branch: str = "",
-                      relevant_files: list | None = None, scope: str = "") -> dict:
+                      relevant_files: list | None = None, scope: str = "",
+                      session_id: str = "", transcript_line: int = -1) -> dict:
     """Store an observation via tier2_write.
 
     Args:
@@ -532,6 +558,8 @@ def store_observation(content: str, importance_score: float, tags: list, source_
         git_branch: Current git branch name
         relevant_files: List of file paths referenced in the turn
         scope: "project" or "global" classification from Haiku
+        session_id: Claude Code session ID for tracing
+        transcript_line: Absolute line index in transcript JSONL (-1 = unknown)
 
     Returns:
         Result dict from tier2_write
@@ -549,6 +577,10 @@ def store_observation(content: str, importance_score: float, tags: list, source_
         extra["relevant_files"] = ",".join(relevant_files)
     if scope:
         extra["scope"] = scope
+    if session_id:
+        extra["session_id"] = session_id
+    if transcript_line >= 0:
+        extra["transcript_line"] = str(transcript_line)
 
     return tier2_write(
         content=content,
@@ -563,9 +595,9 @@ def store_observation(content: str, importance_score: float, tags: list, source_
 
 def main():
     """Main entry point: read transcript, extract and store observation."""
-    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch]
+    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch] [total_transcript_lines]
     if len(sys.argv) < 4:
-        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch]", file=sys.stderr)
+        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch] [total_transcript_lines]", file=sys.stderr)
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
@@ -575,6 +607,7 @@ def main():
     project_dir = sys.argv[5] if len(sys.argv) >= 6 else ""
     project_path = sys.argv[6] if len(sys.argv) >= 7 else ""
     git_branch = sys.argv[7] if len(sys.argv) >= 8 else ""
+    total_transcript_lines = int(sys.argv[8]) if len(sys.argv) >= 9 else 0
     sys.path.insert(0, mcp_server_dir)
 
     try:
@@ -646,10 +679,20 @@ def main():
         # Get relevant_files from the parsed turn
         relevant_files = turn.get("relevant_files", [])
 
+        # Compute absolute transcript line from tail offset
+        tail_line = turn.get("assistant_line", -1)
+        if total_transcript_lines > 0 and tail_line >= 0:
+            max_lines = int(config.get("max_transcript_lines", 100))
+            tail_start = max(0, total_transcript_lines - max_lines)
+            absolute_line = tail_start + tail_line
+        else:
+            absolute_line = tail_line
+
         result = store_observation(
             content, importance, tags, "auto-extract:stop-hook",
             project_dir=project_dir, project_path=project_path, git_branch=git_branch,
             relevant_files=relevant_files, scope=scope,
+            session_id=session_id, transcript_line=absolute_line,
         )
         if result.get("success"):
             obs_id = result.get('id', 'unknown')
