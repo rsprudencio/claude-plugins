@@ -317,10 +317,16 @@ def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -
     )
 
 
-def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
-                     observation_stored: bool = False, obs_id: str = None,
-                     importance: float = 0.0, tags: list = None, debug: bool = False):
-    """Log Haiku token usage with observation metadata for cost tracking.
+def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
+                    observation_stored: bool = False, obs_id: str = None,
+                    importance: float = 0.0, tags: list = None,
+                    prompt: str = "", observation_content: str = "",
+                    scope: str = "", hook_input: str = "",
+                    raw_lines: list = None, debug: bool = False):
+    """Log full extraction pipeline: raw hook input → transcript → prompt → result.
+
+    Logs a structured multi-line block per extraction for complete auditability.
+    Each section shows a stage of the pipeline so bugs and drift are visible.
 
     Haiku pricing (as of 2026):
     - Input: $1.00 per 1M tokens
@@ -334,37 +340,79 @@ def _log_token_usage(backend: str, input_tokens: int, output_tokens: int,
         obs_id: Observation ID if stored (e.g., "obs::1770561133783")
         importance: Importance score if stored
         tags: List of tags if stored
+        prompt: The full prompt sent to Haiku
+        observation_content: The content Haiku generated (empty if skipped)
+        scope: "project" or "global" classification
+        hook_input: Raw JSON from Claude Code's stop hook (verbatim stdin)
+        raw_lines: Raw JSONL transcript lines before parsing
         debug: Enable logging (default False)
     """
     if not debug:
         return
 
     try:
+        # ANSI color codes for terminal readability (cat, tail -f, less -R)
+        C_CYAN = "\033[36m"
+        C_DIM = "\033[2m"
+        C_GREEN = "\033[32m"
+        C_YELLOW = "\033[33m"
+        C_RESET = "\033[0m"
+
         # Calculate costs
         input_cost = (input_tokens / 1_000_000) * 1.00
         output_cost = (output_tokens / 1_000_000) * 5.00
         total_cost = input_cost + output_cost
 
-        # Base log entry
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = (
+        status_color = C_GREEN if observation_stored else C_YELLOW
+        status = "STORED" if observation_stored else "SKIPPED"
+        tags_str = ",".join(tags) if tags else "none"
+
+        lines = []
+        lines.append(f"{C_CYAN}{'═' * 80}{C_RESET}")
+        lines.append(
             f"{timestamp} | {backend:4s} | "
             f"in:{input_tokens:6d} out:{output_tokens:4d} | "
-            f"${total_cost:.6f} | "
+            f"${total_cost:.6f} | {status_color}{status}{C_RESET}"
         )
 
-        # Add observation metadata
-        if observation_stored and obs_id:
-            tags_str = ",".join(tags) if tags else "none"
-            log_entry += f"STORED | {obs_id} | imp:{importance:.2f} | tags:{tags_str}\n"
-        else:
-            log_entry += "SKIPPED | has_observation:false\n"
+        # Log verbatim hook input from Claude Code
+        if hook_input:
+            lines.append(f"{C_DIM}{'─' * 37} HOOK INPUT {'─' * 32}{C_RESET}")
+            lines.append(hook_input)
 
-        # Append to log file
+        # Log raw transcript JSONL (last user + assistant entries)
+        if raw_lines:
+            lines.append(f"{C_DIM}{'─' * 35} RAW TRANSCRIPT {'─' * 29}{C_RESET}")
+            # Show only the last user and assistant JSONL entries (not all 100 lines)
+            for raw_line in raw_lines[-10:]:
+                lines.append(raw_line)
+            if len(raw_lines) > 10:
+                lines.append(f"  ... ({len(raw_lines)} total lines, showing last 10)")
+
+        # Log the prompt built for Haiku
+        if prompt:
+            lines.append(f"{C_DIM}{'─' * 40} PROMPT {'─' * 33}{C_RESET}")
+            lines.append(prompt)
+
+        # Log the result
+        lines.append(f"{C_DIM}{'─' * 40} RESULT {'─' * 33}{C_RESET}")
+        if observation_stored and obs_id:
+            lines.append(f"  ID:         {obs_id}")
+            lines.append(f"  Content:    {observation_content}")
+            lines.append(f"  Importance: {importance:.2f}")
+            lines.append(f"  Scope:      {scope or 'unset'}")
+            lines.append(f"  Tags:       {tags_str}")
+        else:
+            lines.append(f"  {C_YELLOW}has_observation: false (routine turn){C_RESET}")
+
+        lines.append("")  # Blank line separator
+
         with open(TOKEN_LOG_FILE, "a") as f:
-            f.write(log_entry)
-    except Exception as e:
-        print(f"Failed to log token usage: {e}", file=sys.stderr)
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        # Debug logging must never disrupt primary flow
+        pass
 
 
 def _parse_haiku_text(text: str) -> dict | None:
@@ -543,7 +591,7 @@ def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, s
 
 
 def store_observation(content: str, importance_score: float, tags: list, source_label: str,
-                      project_dir: str = "", project_path: str = "", git_branch: str = "",
+                      project_path: str = "", git_branch: str = "",
                       relevant_files: list | None = None, scope: str = "",
                       session_id: str = "", transcript_line: int = -1) -> dict:
     """Store an observation via tier2_write.
@@ -553,7 +601,6 @@ def store_observation(content: str, importance_score: float, tags: list, source_
         importance_score: 0.0-1.0
         tags: List of tags
         source_label: Source identifier (e.g., "auto-extract:stop-hook")
-        project_dir: Current project directory name
         project_path: Full path to project directory
         git_branch: Current git branch name
         relevant_files: List of file paths referenced in the turn
@@ -567,8 +614,6 @@ def store_observation(content: str, importance_score: float, tags: list, source_
     from tools.tier2 import tier2_write
 
     extra = {}
-    if project_dir:
-        extra["project_dir"] = project_dir
     if project_path:
         extra["project_path"] = project_path
     if git_branch:
@@ -595,19 +640,19 @@ def store_observation(content: str, importance_score: float, tags: list, source_
 
 def main():
     """Main entry point: read transcript, extract and store observation."""
-    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch] [total_transcript_lines]
+    # Get args: <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_path] [git_branch] [total_transcript_lines]
     if len(sys.argv) < 4:
-        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_dir] [project_path] [git_branch] [total_transcript_lines]", file=sys.stderr)
+        print("Usage: extract_observation.py <mcp_server_dir> <mode> <temp_jsonl_file> [session_id] [project_path] [git_branch] [total_transcript_lines]", file=sys.stderr)
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
     mode = sys.argv[2]
     temp_file = Path(sys.argv[3])
     session_id = sys.argv[4] if len(sys.argv) >= 5 else "unknown"
-    project_dir = sys.argv[5] if len(sys.argv) >= 6 else ""
-    project_path = sys.argv[6] if len(sys.argv) >= 7 else ""
-    git_branch = sys.argv[7] if len(sys.argv) >= 8 else ""
-    total_transcript_lines = int(sys.argv[8]) if len(sys.argv) >= 9 else 0
+    project_path = sys.argv[5] if len(sys.argv) >= 6 else ""
+    git_branch = sys.argv[6] if len(sys.argv) >= 7 else ""
+    total_transcript_lines = int(sys.argv[7]) if len(sys.argv) >= 8 else 0
+    hook_input = os.environ.get("JARVIS_HOOK_INPUT", "")
     sys.path.insert(0, mcp_server_dir)
 
     try:
@@ -643,6 +688,7 @@ def main():
             sys.exit(0)
 
         # Build prompt and call Haiku
+        project_dir = os.path.basename(project_path) if project_path else ""
         prompt = build_turn_prompt(turn, project_dir=project_dir, git_branch=git_branch)
         extraction_result = call_haiku(prompt, mode=mode)
         if extraction_result is None:
@@ -653,15 +699,18 @@ def main():
 
         if not extraction.get("has_observation", False):
             print("No observation extracted (routine turn)", file=sys.stderr)
-            # Log extraction attempt that yielded no observation
-            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=False, prompt=prompt,
+                            hook_input=hook_input, raw_lines=lines, debug=debug)
             sys.exit(0)
 
         # Store the observation
         content = extraction.get("content", "")
         if not content:
             print("Empty observation content, skipping", file=sys.stderr)
-            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=False, prompt=prompt,
+                            hook_input=hook_input, raw_lines=lines, debug=debug)
             sys.exit(0)
 
         importance = float(extraction.get("importance_score", 0.5))
@@ -690,20 +739,26 @@ def main():
 
         result = store_observation(
             content, importance, tags, "auto-extract:stop-hook",
-            project_dir=project_dir, project_path=project_path, git_branch=git_branch,
+            project_path=project_path, git_branch=git_branch,
             relevant_files=relevant_files, scope=scope,
             session_id=session_id, transcript_line=absolute_line,
         )
         if result.get("success"):
             obs_id = result.get('id', 'unknown')
             print(f"Stored observation: {obs_id}", file=sys.stderr)
-            # Log successful extraction with full metadata
-            _log_token_usage(backend, input_tokens, output_tokens,
-                           observation_stored=True, obs_id=obs_id,
-                           importance=importance, tags=tags, debug=debug)
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=True, obs_id=obs_id,
+                            importance=importance, tags=tags,
+                            prompt=prompt, observation_content=content,
+                            scope=scope, hook_input=hook_input,
+                            raw_lines=lines, debug=debug)
         else:
             print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
-            _log_token_usage(backend, input_tokens, output_tokens, observation_stored=False, debug=debug)
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=False, prompt=prompt,
+                            observation_content=content,
+                            hook_input=hook_input, raw_lines=lines,
+                            debug=debug)
 
     finally:
         # Always clean up temp file

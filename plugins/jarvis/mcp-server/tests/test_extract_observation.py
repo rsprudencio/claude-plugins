@@ -753,13 +753,12 @@ class TestStoreObservation:
             importance_score=0.7,
             tags=["test"],
             source_label="auto-extract:stop-hook",
-            project_dir="jarvis-plugin",
             project_path="/Users/test/jarvis-plugin",
             git_branch="master",
         )
 
         call_args = mock_tier2_write.call_args[1]
-        assert call_args["extra_metadata"]["project_dir"] == "jarvis-plugin"
+        assert "project_dir" not in call_args["extra_metadata"]
         assert call_args["extra_metadata"]["project_path"] == "/Users/test/jarvis-plugin"
         assert call_args["extra_metadata"]["git_branch"] == "master"
 

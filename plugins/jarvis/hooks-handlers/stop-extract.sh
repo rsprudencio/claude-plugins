@@ -80,7 +80,6 @@ if [ ! -f "$TRANSCRIPT_PATH" ]; then
 fi
 
 # Capture project context from working directory
-PROJECT_DIR="$(basename "$PWD")"
 PROJECT_PATH="$PWD"
 GIT_BRANCH="$(git -C "$PWD" branch --show-current 2>/dev/null || echo "")"
 
@@ -91,9 +90,9 @@ tail -n "$MAX_LINES" "$TRANSCRIPT_PATH" > "$TEMP_FILE" 2>/dev/null || exit 0
 # Get total transcript line count for absolute line computation
 TOTAL_LINES=$(wc -l < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ' || echo "0")
 
-# Spawn extraction in background and return immediately
-nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TEMP_FILE" "$SESSION_ID" \
-    "$PROJECT_DIR" "$PROJECT_PATH" "$GIT_BRANCH" "$TOTAL_LINES" \
+# Spawn extraction in background, passing raw hook JSON via env for debug logging
+JARVIS_HOOK_INPUT="$INPUT" nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TEMP_FILE" "$SESSION_ID" \
+    "$PROJECT_PATH" "$GIT_BRANCH" "$TOTAL_LINES" \
     >/dev/null 2>&1 & disown
 
 exit 0
