@@ -1871,23 +1871,22 @@ class TestBuildSessionPrompt:
         assert "### Turn 1" in prompt
         assert "Solo question" in prompt
         assert "Solo answer" in prompt
-        assert "1 substantive turns" in prompt
+        assert "1 turns" in prompt
 
     def test_empty_turns(self):
         """Returns empty string for empty turns list."""
         assert build_session_prompt([], "", 2000) == ""
 
-    def test_budget_limits_turns(self):
-        """When budget is too small for all turns, keeps highest-scoring."""
-        # With budget 300 and _MIN_CHARS_PER_TURN=150, max 2 turns
+    def test_all_turns_always_included(self):
+        """All turns are always present regardless of budget — budget truncates, not excludes."""
         turns = [
             self._make_turn(user_text="x" * 100, assistant_text="y" * 100),  # 200 chars
-            self._make_turn(user_text="x" * 300, assistant_text="y" * 300, tools=["Read"]),  # 600 chars + 100 tool = 700 score
+            self._make_turn(user_text="x" * 300, assistant_text="y" * 300, tools=["Read"]),  # 600 chars
             self._make_turn(user_text="x" * 200, assistant_text="y" * 200),  # 400 chars
         ]
         prompt = build_session_prompt(turns, "", 300)
-        # Should only include 2 turns (300 // 150 = 2), picking highest-scoring
-        assert prompt.count("### Turn") == 2
+        # All 3 turns must be present — budget truncates long content, never drops turns
+        assert prompt.count("### Turn") == 3
 
     def test_project_context(self):
         """Includes project and branch info."""
@@ -1895,6 +1894,35 @@ class TestBuildSessionPrompt:
         prompt = build_session_prompt(turns, "", 2000, project_dir="my-project", git_branch="feature/x")
         assert "my-project" in prompt
         assert "feature/x" in prompt
+
+    def test_short_turns_preserved_at_full_text(self):
+        """Short turns are never truncated — their full text appears in prompt."""
+        short_user = "ok"
+        short_assistant = "Deployed to production."
+        turns = [
+            self._make_turn(user_text="x" * 500, assistant_text="y" * 500),  # Long turn
+            self._make_turn(user_text=short_user, assistant_text=short_assistant),  # Short turn (26 chars)
+            self._make_turn(user_text="x" * 400, assistant_text="y" * 400),  # Long turn
+        ]
+        prompt = build_session_prompt(turns, "", 2000)
+        # Short turn must appear verbatim — no truncation
+        assert short_user in prompt
+        assert short_assistant in prompt
+        assert "### Turn 2" in prompt
+
+    def test_long_turns_truncated_by_budget(self):
+        """Long turns are truncated when budget is tight, but still present."""
+        long_text = "z" * 5000
+        turns = [
+            self._make_turn(user_text="ok", assistant_text="sure"),  # Short
+            self._make_turn(user_text="q" * 200, assistant_text=long_text),  # Long
+        ]
+        prompt = build_session_prompt(turns, "", 2000)
+        # Both turns present
+        assert "### Turn 1" in prompt
+        assert "### Turn 2" in prompt
+        # Long text should be truncated (5000 chars won't fit in 2000 budget)
+        assert prompt.count("z") < 5000
 
     def test_json_response_schema(self):
         """Prompt includes multi-observation JSON schema."""

@@ -12,10 +12,11 @@ Pipeline:
 1. Read watermark for this session → know where we left off
 2. Read new transcript lines from watermark+1 onward
 3. Parse ALL new user→assistant turns (forward scan)
-4. Score turns and pick the most substantive one
-5. Call Haiku to extract behavioral observations
-6. Store observation via tier2_write
-7. Advance watermark to last line read
+4. Substance gate: total conversation text exceeds char threshold
+5. Build session prompt including ALL turns (budget truncates, not excludes)
+6. Call Haiku to extract 1-3 behavioral observations
+7. Store observations via tier2_write
+8. Advance watermark to last line read
 """
 import json
 import os
@@ -93,7 +94,7 @@ You are analyzing a coding session between a user and an AI assistant.
 ## What Started This Conversation
 {first_user_text}
 
-## Session Activity ({turn_count} substantive turns)
+## Full Conversation ({turn_count} turns)
 {turns_content}
 
 ## All Tools Used
@@ -667,16 +668,19 @@ def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -
 
 def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
                          project_dir: str = "", git_branch: str = "") -> str:
-    """Build a session-level extraction prompt combining multiple turns.
+    """Build a session-level extraction prompt combining ALL turns.
 
-    Budget allocation:
-    1. Each turn's raw weight = len(user_text) + len(assistant_text)
-    2. Each turn's share = max(_MIN_CHARS_PER_TURN, budget * weight / total_weight)
-    3. If too many turns for budget, keep highest-scoring N that fit
-    4. Within each share: ~25% user text, ~75% assistant text
+    Two-pass budget allocation (truncate, never exclude):
+    1. Short turns (user+assistant <= _MIN_CHARS_PER_TURN) pass at full text
+    2. Remaining budget is distributed proportionally among long turns
+    3. Within each long turn's share: ~25% user text, ~75% assistant text
+
+    All turns are always included — budget controls truncation of verbose
+    responses, not exclusion of entire turns. Short turns carry decision
+    signals that Haiku needs to see the full conversation flow.
 
     Args:
-        turns: List of substantive turn dicts from filter_substantive_turns()
+        turns: List of ALL turn dicts from parse_all_turns()
         first_user_text: Opening message from extract_first_user_message()
         budget: Character budget from compute_content_budget()
         project_dir: Current project directory name
@@ -688,26 +692,24 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
     if not turns:
         return ""
 
-    # If too many turns for budget, keep the highest-scoring ones
-    max_turns_for_budget = max(1, budget // _MIN_CHARS_PER_TURN)
-    if len(turns) > max_turns_for_budget:
-        # Score turns the same way as pick_best_turn
-        scored = []
-        for turn in turns:
-            total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
-            unique_tools = len(set(turn.get("tool_names", [])))
-            has_files = 1 if turn.get("relevant_files") else 0
-            score = total_chars + (unique_tools * 100) + (has_files * 200)
-            scored.append((score, turn))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        turns = [t for _, t in scored[:max_turns_for_budget]]
+    # Pass 1: Classify turns as short or long, measure sizes
+    turn_sizes = []
+    short_total = 0
+    long_indices = []
+    long_weights = []
 
-    # Compute weights for proportional allocation
-    weights = []
-    for turn in turns:
-        w = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
-        weights.append(max(w, 1))  # avoid div-by-zero
-    total_weight = sum(weights)
+    for i, turn in enumerate(turns):
+        raw_size = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        turn_sizes.append(raw_size)
+        if raw_size <= _MIN_CHARS_PER_TURN:
+            short_total += raw_size
+        else:
+            long_indices.append(i)
+            long_weights.append(raw_size)
+
+    # Pass 2: Distribute remaining budget among long turns
+    remaining_budget = max(0, budget - short_total)
+    total_long_weight = sum(long_weights) if long_weights else 1
 
     # Build turn content blocks
     all_tools = set()
@@ -715,14 +717,21 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
     total_output = 0
     turn_blocks = []
 
-    for i, (turn, weight) in enumerate(zip(turns, weights)):
-        # Proportional share with floor
-        share = max(_MIN_CHARS_PER_TURN, int(budget * weight / total_weight))
-        user_budget = max(50, share // 4)
-        assistant_budget = share - user_budget
+    for i, turn in enumerate(turns):
+        raw_size = turn_sizes[i]
 
-        user_text = truncate(turn.get("user_text", ""), user_budget)
-        assistant_text = truncate(turn.get("assistant_text", ""), assistant_budget)
+        if raw_size <= _MIN_CHARS_PER_TURN:
+            # Short turn — include at full text (no truncation)
+            user_text = turn.get("user_text", "")
+            assistant_text = turn.get("assistant_text", "")
+        else:
+            # Long turn — proportional share of remaining budget
+            share = max(_MIN_CHARS_PER_TURN, int(remaining_budget * raw_size / total_long_weight))
+            user_budget = max(50, share // 4)
+            assistant_budget = share - user_budget
+            user_text = truncate(turn.get("user_text", ""), user_budget)
+            assistant_text = truncate(turn.get("assistant_text", ""), assistant_budget)
+
         tools = turn.get("tool_names", [])
         tool_str = ", ".join(tools) if tools else "None"
 
@@ -1113,9 +1122,9 @@ def main():
     2. Read new lines from transcript
     3. Parse all turns → find complete user→assistant pairs
     4. Extract first user message (from line 0, for context)
-    5. Filter substantive turns → keep all above threshold
-    6. Compute content budget → scale with output token volume
-    7. Build session prompt → combine turns with budget allocation
+    5. Substance gate → total conversation text exceeds threshold
+    6. Compute content budget from ALL turns
+    7. Build session prompt with ALL turns (budget truncates, never excludes)
     8. Call Haiku → extract 1-3 observations
     9. Normalize response → handle new/legacy schema
     10. Store each observation → persist to Tier 2
@@ -1124,7 +1133,7 @@ def main():
     Watermark advance rules:
     - No new lines: no advance (already current)
     - No complete turns: advance (incomplete data won't improve)
-    - No substantive turns: advance (evaluated, nothing worth extracting)
+    - Below substance gate: advance (too little text for Haiku)
     - Haiku failure: NO advance (retry when Haiku available)
     - Empty observations: advance (Haiku evaluated, nothing interesting)
     - Observations stored: advance
@@ -1175,21 +1184,25 @@ def main():
     # Step 4: Extract first user message (from line 0, independent of watermark)
     first_user_text = extract_first_user_message(transcript_path)
 
-    # Step 5: Filter substantive turns
-    substantive = filter_substantive_turns(turns, min_chars=min_chars)
-
-    if not substantive:
-        print(f"No substantive turns (all below {min_chars} chars)", file=sys.stderr)
+    # Step 5: Substance gate — total conversation text must exceed threshold
+    # This is a cost optimization: don't call Haiku on near-empty sessions.
+    # If the conversation has enough text, Haiku decides what's worth remembering.
+    total_text = sum(
+        len(t.get("user_text", "")) + len(t.get("assistant_text", ""))
+        for t in turns
+    )
+    if total_text < min_chars:
+        print(f"Conversation too short ({total_text} chars < {min_chars})", file=sys.stderr)
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
-    # Step 6: Compute content budget
-    budget = compute_content_budget(substantive)
+    # Step 6: Compute content budget from ALL turns
+    budget = compute_content_budget(turns)
 
-    # Step 7: Build session prompt
+    # Step 7: Build session prompt with ALL turns
     project_dir = os.path.basename(project_path) if project_path else ""
     prompt = build_session_prompt(
-        substantive, first_user_text, budget,
+        turns, first_user_text, budget,
         project_dir=project_dir, git_branch=git_branch,
     )
 
@@ -1215,10 +1228,10 @@ def main():
         sys.exit(0)
 
     # Step 10: Store each observation (capped at max_observations)
-    # Use relevant_files from last substantive turn (already accumulated)
-    relevant_files = substantive[-1].get("relevant_files", []) if substantive else []
+    # Use relevant_files from last turn (already accumulated by parse_all_turns)
+    relevant_files = turns[-1].get("relevant_files", []) if turns else []
     # Use end_line_idx from last turn for tracing
-    absolute_line = substantive[-1].get("end_line_idx", -1) if substantive else -1
+    absolute_line = turns[-1].get("end_line_idx", -1) if turns else -1
 
     stored_count = 0
     for i, obs in enumerate(observations[:max_observations]):
