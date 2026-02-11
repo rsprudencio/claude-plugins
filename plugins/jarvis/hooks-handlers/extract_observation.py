@@ -322,8 +322,8 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
                     importance: float = 0.0, tags: list = None,
                     prompt: str = "", observation_content: str = "",
                     scope: str = "", hook_input: str = "",
-                    raw_lines: list = None, debug: bool = False):
-    """Log full extraction pipeline: raw hook input → transcript → prompt → result.
+                    debug: bool = False):
+    """Log full extraction pipeline: raw hook input → prompt → result.
 
     Logs a structured multi-line block per extraction for complete auditability.
     Each section shows a stage of the pipeline so bugs and drift are visible.
@@ -344,7 +344,6 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
         observation_content: The content Haiku generated (empty if skipped)
         scope: "project" or "global" classification
         hook_input: Raw JSON from Claude Code's stop hook (verbatim stdin)
-        raw_lines: Raw JSONL transcript lines before parsing
         debug: Enable logging (default False)
     """
     if not debug:
@@ -380,15 +379,6 @@ def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
         if hook_input:
             lines.append(f"{C_DIM}{'─' * 37} HOOK INPUT {'─' * 32}{C_RESET}")
             lines.append(hook_input)
-
-        # Log raw transcript JSONL (last user + assistant entries)
-        if raw_lines:
-            lines.append(f"{C_DIM}{'─' * 35} RAW TRANSCRIPT {'─' * 29}{C_RESET}")
-            # Show only the last user and assistant JSONL entries (not all 100 lines)
-            for raw_line in raw_lines[-10:]:
-                lines.append(raw_line)
-            if len(raw_lines) > 10:
-                lines.append(f"  ... ({len(raw_lines)} total lines, showing last 10)")
 
         # Log the prompt built for Haiku
         if prompt:
@@ -701,7 +691,7 @@ def main():
             print("No observation extracted (routine turn)", file=sys.stderr)
             _log_extraction(backend, input_tokens, output_tokens,
                             observation_stored=False, prompt=prompt,
-                            hook_input=hook_input, raw_lines=lines, debug=debug)
+                            hook_input=hook_input, debug=debug)
             sys.exit(0)
 
         # Store the observation
@@ -710,7 +700,7 @@ def main():
             print("Empty observation content, skipping", file=sys.stderr)
             _log_extraction(backend, input_tokens, output_tokens,
                             observation_stored=False, prompt=prompt,
-                            hook_input=hook_input, raw_lines=lines, debug=debug)
+                            hook_input=hook_input, debug=debug)
             sys.exit(0)
 
         importance = float(extraction.get("importance_score", 0.5))
@@ -750,15 +740,13 @@ def main():
                             observation_stored=True, obs_id=obs_id,
                             importance=importance, tags=tags,
                             prompt=prompt, observation_content=content,
-                            scope=scope, hook_input=hook_input,
-                            raw_lines=lines, debug=debug)
+                            scope=scope, hook_input=hook_input, debug=debug)
         else:
             print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
             _log_extraction(backend, input_tokens, output_tokens,
                             observation_stored=False, prompt=prompt,
                             observation_content=content,
-                            hook_input=hook_input, raw_lines=lines,
-                            debug=debug)
+                            hook_input=hook_input, debug=debug)
 
     finally:
         # Always clean up temp file
