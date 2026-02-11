@@ -148,6 +148,7 @@ def get_auto_extract_config() -> dict:
         "mode": "background",
         "min_turn_chars": 200,
         "max_transcript_lines": 500,
+        "max_observations": 3,
         "debug": False,
     }
     memory_config = config.get("memory", {})

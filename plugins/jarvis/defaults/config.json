@@ -12,6 +12,7 @@
       "mode": "background",
       "min_turn_chars": 200,
       "max_transcript_lines": 500,
+      "max_observations": 3,
       "debug": false
     },
     "per_prompt_search": {

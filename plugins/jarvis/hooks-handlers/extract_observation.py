@@ -87,6 +87,54 @@ scope: "project" if the observation is specific to this codebase (e.g., project 
 If the turn is routine or contains nothing worth remembering, set has_observation to false.
 """
 
+SESSION_EXTRACTION_PROMPT = """\
+You are analyzing a coding session between a user and an AI assistant.
+
+## What Started This Conversation
+{first_user_text}
+
+## Session Activity ({turn_count} substantive turns)
+{turns_content}
+
+## All Tools Used
+{all_tools}
+
+## Files Referenced
+{relevant_files}
+
+## Project Context
+Project: {project_dir} | Branch: {git_branch} | {total_token_usage}
+
+Extract observations about:
+- User preferences, workflow patterns, or behavioral tendencies
+- Architectural decisions or technical choices made
+- Project context, structure, or conventions discovered
+- Important patterns or insights that would be useful to remember across sessions
+
+DO NOT extract:
+- Routine file operations or trivial tool calls
+- Temporary debugging or exploratory work
+- Secrets, credentials, or PII
+- Redundant observations (each should capture a distinct insight)
+
+Respond with JSON only:
+{{
+  "observations": [
+    {{
+      "content": "The observation (1-3 sentences, markdown OK)",
+      "importance_score": 0.3-0.8,
+      "tags": ["tag1", "tag2"],
+      "scope": "project" or "global"
+    }}
+  ]
+}}
+
+scope: "project" if the observation is specific to this codebase (e.g., project conventions, file structure, architecture). "global" if it's a universal pattern (e.g., user preference, general workflow habit).
+
+Return 1-3 observations. Each must capture a distinct, non-redundant insight.
+Return an empty array if nothing is worth remembering.
+"""
+
 
 # Tools that don't produce meaningful file path context
 _SKIP_FILE_TOOLS = {"Bash", "WebFetch", "WebSearch", "WebSearch", "AskUserQuestion"}
@@ -96,6 +144,35 @@ _FILE_PATH_KEYS = ("file_path", "relative_path", "path")
 
 # Maximum number of file paths to include
 _MAX_FILE_PATHS = 10
+
+# Session-level extraction constants
+_FIRST_USER_MAX_CHARS = 300       # Cap for first user message context
+_MIN_CHARS_PER_TURN = 150         # Floor allocation per turn in budget
+_BUDGET_BASE = 2000               # Base chars (matches current single-turn behavior)
+_BUDGET_OUTPUT_SCALE = 0.04       # 4% of output tokens as chars (1% * 4 chars/token)
+_BUDGET_HARD_MAX = 8000           # Ceiling on content budget
+_MAX_OBSERVATIONS = 3             # Cap on observations per extraction
+_HAIKU_MAX_TOKENS = 800           # Up from 300 (need room for multi-obs JSON)
+
+
+def _parse_output_tokens(token_usage: str) -> int:
+    """Extract output token count from 'N in, M out' format.
+
+    Args:
+        token_usage: String like "1234 in, 567 out"
+
+    Returns:
+        Output token count, or 0 on parse failure
+    """
+    try:
+        # Format: "1234 in, 567 out"
+        parts = token_usage.split(",")
+        if len(parts) >= 2:
+            out_part = parts[1].strip()  # "567 out"
+            return int(out_part.split()[0])
+    except (ValueError, IndexError):
+        pass
+    return 0
 
 
 def read_watermark(session_id: str) -> int:
@@ -275,6 +352,8 @@ def parse_all_turns(indexed_lines: list[tuple[int, str]]) -> list[dict]:
 def pick_best_turn(turns: list[dict], min_chars: int = 200) -> dict | None:
     """Select the most substantive turn from a list by scoring.
 
+    Deprecated: Use filter_substantive_turns() for multi-turn extraction.
+
     Scoring formula: total_chars + (unique_tools * 100) + (has_files * 200)
 
     Args:
@@ -301,6 +380,89 @@ def pick_best_turn(turns: list[dict], min_chars: int = 200) -> dict | None:
             best = turn
 
     return best
+
+
+def filter_substantive_turns(turns: list[dict], min_chars: int = 200) -> list[dict]:
+    """Return all turns meeting the substance threshold, in order.
+
+    Same char filter as pick_best_turn, but returns ALL matching turns
+    instead of picking a single winner.
+
+    Args:
+        turns: List of turn dicts from parse_all_turns()
+        min_chars: Minimum total characters (user + assistant) to consider
+
+    Returns:
+        List of qualifying turns in original order
+    """
+    result = []
+    for turn in turns:
+        total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        if total_chars >= min_chars:
+            result.append(turn)
+    return result
+
+
+def extract_first_user_message(transcript_path: str, max_scan_lines: int = 50) -> str:
+    """Extract the first user message from the transcript (from line 0).
+
+    Reads from the beginning of the file (independent of watermark)
+    to find what started this conversation.
+
+    Args:
+        transcript_path: Path to the transcript JSONL file
+        max_scan_lines: Maximum lines to scan before giving up
+
+    Returns:
+        First user message text truncated to _FIRST_USER_MAX_CHARS, or "" on any error
+    """
+    try:
+        with open(transcript_path) as f:
+            for i, line in enumerate(f):
+                if i >= max_scan_lines:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if entry.get("type") == "user":
+                    content = entry.get("message", {}).get("content", [])
+                    texts = [
+                        block.get("text", "")
+                        for block in content
+                        if isinstance(block, dict) and block.get("type") == "text"
+                    ]
+                    text = "\n".join(texts).strip()
+                    return text[:_FIRST_USER_MAX_CHARS]
+    except OSError:
+        pass
+    return ""
+
+
+def compute_content_budget(turns: list[dict]) -> int:
+    """Compute character budget for session prompt based on output token volume.
+
+    Formula: min(_BUDGET_BASE + total_output_tokens * _BUDGET_OUTPUT_SCALE, _BUDGET_HARD_MAX)
+
+    Output tokens scale the budget because they're a direct proxy for
+    "how much work happened." Sessions with trivial turns don't deserve
+    a bigger budget just because there are many turns.
+
+    Args:
+        turns: List of substantive turn dicts (each has token_usage field)
+
+    Returns:
+        Character budget for the session prompt content
+    """
+    total_output = 0
+    for turn in turns:
+        total_output += _parse_output_tokens(turn.get("token_usage", ""))
+
+    budget = _BUDGET_BASE + int(total_output * _BUDGET_OUTPUT_SCALE)
+    return min(budget, _BUDGET_HARD_MAX)
 
 
 def extract_file_paths_from_tools(assistant_content: list) -> list[str]:
@@ -503,6 +665,102 @@ def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -
     )
 
 
+def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
+                         project_dir: str = "", git_branch: str = "") -> str:
+    """Build a session-level extraction prompt combining multiple turns.
+
+    Budget allocation:
+    1. Each turn's raw weight = len(user_text) + len(assistant_text)
+    2. Each turn's share = max(_MIN_CHARS_PER_TURN, budget * weight / total_weight)
+    3. If too many turns for budget, keep highest-scoring N that fit
+    4. Within each share: ~25% user text, ~75% assistant text
+
+    Args:
+        turns: List of substantive turn dicts from filter_substantive_turns()
+        first_user_text: Opening message from extract_first_user_message()
+        budget: Character budget from compute_content_budget()
+        project_dir: Current project directory name
+        git_branch: Current git branch name
+
+    Returns:
+        Formatted session extraction prompt string
+    """
+    if not turns:
+        return ""
+
+    # If too many turns for budget, keep the highest-scoring ones
+    max_turns_for_budget = max(1, budget // _MIN_CHARS_PER_TURN)
+    if len(turns) > max_turns_for_budget:
+        # Score turns the same way as pick_best_turn
+        scored = []
+        for turn in turns:
+            total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+            unique_tools = len(set(turn.get("tool_names", [])))
+            has_files = 1 if turn.get("relevant_files") else 0
+            score = total_chars + (unique_tools * 100) + (has_files * 200)
+            scored.append((score, turn))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        turns = [t for _, t in scored[:max_turns_for_budget]]
+
+    # Compute weights for proportional allocation
+    weights = []
+    for turn in turns:
+        w = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        weights.append(max(w, 1))  # avoid div-by-zero
+    total_weight = sum(weights)
+
+    # Build turn content blocks
+    all_tools = set()
+    total_input = 0
+    total_output = 0
+    turn_blocks = []
+
+    for i, (turn, weight) in enumerate(zip(turns, weights)):
+        # Proportional share with floor
+        share = max(_MIN_CHARS_PER_TURN, int(budget * weight / total_weight))
+        user_budget = max(50, share // 4)
+        assistant_budget = share - user_budget
+
+        user_text = truncate(turn.get("user_text", ""), user_budget)
+        assistant_text = truncate(turn.get("assistant_text", ""), assistant_budget)
+        tools = turn.get("tool_names", [])
+        tool_str = ", ".join(tools) if tools else "None"
+
+        block = f"### Turn {i + 1}\nUser: {user_text}\nAssistant: {assistant_text}\nTools: {tool_str}"
+        turn_blocks.append(block)
+
+        # Aggregate metadata
+        all_tools.update(tools)
+        out_tokens = _parse_output_tokens(turn.get("token_usage", ""))
+        in_tokens = 0
+        try:
+            in_tokens = int(turn.get("token_usage", "").split(",")[0].strip().split()[0])
+        except (ValueError, IndexError):
+            pass
+        total_input += in_tokens
+        total_output += out_tokens
+
+    turns_content = "\n\n".join(turn_blocks)
+
+    # Use relevant_files from the last turn (already accumulated by parse_all_turns)
+    last_turn_files = turns[-1].get("relevant_files", []) if turns else []
+    files_list = "\n".join(f"- {f}" for f in last_turn_files) if last_turn_files else "None"
+
+    all_tools_str = ", ".join(sorted(all_tools)) if all_tools else "None"
+    total_usage = f"{total_input} in, {total_output} out"
+
+    return SESSION_EXTRACTION_PROMPT.format(
+        first_user_text=first_user_text or "(not available)",
+        turn_count=len(turns),
+        turns_content=turns_content,
+        all_tools=all_tools_str,
+        relevant_files=files_list,
+        project_dir=project_dir or "unknown",
+        git_branch=git_branch or "unknown",
+        total_token_usage=total_usage,
+    )
+
+
 def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
                     observation_stored: bool = False, obs_id: str = None,
                     importance: float = 0.0, tags: list = None,
@@ -653,7 +911,7 @@ def _call_api_backend(prompt: str) -> tuple[str, int, int] | None:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=HAIKU_MODEL,
-            max_tokens=300,
+            max_tokens=_HAIKU_MAX_TOKENS,
             messages=[{"role": "user", "content": prompt}],
         )
         return (
@@ -809,25 +1067,67 @@ def store_observation(content: str, importance_score: float, tags: list, source_
     )
 
 
+def normalize_extraction_response(parsed: dict | None) -> list[dict]:
+    """Normalize Haiku response into a list of observation dicts.
+
+    Handles both the new multi-observation schema and the legacy single-observation schema
+    for backward compatibility.
+
+    Args:
+        parsed: Parsed JSON dict from Haiku response
+
+    Returns:
+        List of observation dicts (each with content, importance_score, tags, scope).
+        Empty list if nothing valid.
+    """
+    if not parsed or not isinstance(parsed, dict):
+        return []
+
+    # New schema: {"observations": [...]}
+    if "observations" in parsed:
+        obs_list = parsed["observations"]
+        if not isinstance(obs_list, list):
+            return []
+        return [
+            obs for obs in obs_list
+            if isinstance(obs, dict) and obs.get("content", "").strip()
+        ]
+
+    # Legacy schema: {"has_observation": true, "content": ...}
+    if parsed.get("has_observation") and parsed.get("content", "").strip():
+        return [{
+            "content": parsed["content"],
+            "importance_score": parsed.get("importance_score", 0.5),
+            "tags": parsed.get("tags", []),
+            "scope": parsed.get("scope", ""),
+        }]
+
+    return []
+
+
 def main():
-    """Main entry point: watermark-based extraction pipeline.
+    """Main entry point: watermark-based multi-turn extraction pipeline.
 
     Flow:
     1. Read watermark → know where we left off
     2. Read new lines from transcript
     3. Parse all turns → find complete user→assistant pairs
-    4. Pick best turn → select most substantive
-    5. Call Haiku → extract observation
-    6. Store → persist to Tier 2
-    7. Advance watermark → mark position for next invocation
+    4. Extract first user message (from line 0, for context)
+    5. Filter substantive turns → keep all above threshold
+    6. Compute content budget → scale with output token volume
+    7. Build session prompt → combine turns with budget allocation
+    8. Call Haiku → extract 1-3 observations
+    9. Normalize response → handle new/legacy schema
+    10. Store each observation → persist to Tier 2
+    11. Advance watermark → mark position for next invocation
 
     Watermark advance rules:
     - No new lines: no advance (already current)
     - No complete turns: advance (incomplete data won't improve)
-    - No substantive turn: advance (evaluated, nothing worth extracting)
+    - No substantive turns: advance (evaluated, nothing worth extracting)
     - Haiku failure: NO advance (retry when Haiku available)
-    - has_observation false: advance (Haiku evaluated, nothing interesting)
-    - Observation stored: advance
+    - Empty observations: advance (Haiku evaluated, nothing interesting)
+    - Observations stored: advance
     - Storage failure: advance (Haiku already ran, no point retrying)
     """
     # Args: <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]
@@ -850,6 +1150,7 @@ def main():
     debug = config.get("debug", False)
     min_chars = config.get("min_turn_chars", 200)
     max_lines = config.get("max_transcript_lines", 500)
+    max_observations = config.get("max_observations", _MAX_OBSERVATIONS)
 
     # Step 1: Read watermark
     watermark = read_watermark(session_id)
@@ -871,17 +1172,28 @@ def main():
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
-    # Step 4: Pick best turn
-    turn = pick_best_turn(turns, min_chars=min_chars)
+    # Step 4: Extract first user message (from line 0, independent of watermark)
+    first_user_text = extract_first_user_message(transcript_path)
 
-    if turn is None:
-        print(f"No substantive turn (all below {min_chars} chars)", file=sys.stderr)
+    # Step 5: Filter substantive turns
+    substantive = filter_substantive_turns(turns, min_chars=min_chars)
+
+    if not substantive:
+        print(f"No substantive turns (all below {min_chars} chars)", file=sys.stderr)
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
-    # Step 5: Build prompt and call Haiku
+    # Step 6: Compute content budget
+    budget = compute_content_budget(substantive)
+
+    # Step 7: Build session prompt
     project_dir = os.path.basename(project_path) if project_path else ""
-    prompt = build_turn_prompt(turn, project_dir=project_dir, git_branch=git_branch)
+    prompt = build_session_prompt(
+        substantive, first_user_text, budget,
+        project_dir=project_dir, git_branch=git_branch,
+    )
+
+    # Step 8: Call Haiku
     extraction_result = call_haiku(prompt, mode=mode)
 
     if extraction_result is None:
@@ -889,63 +1201,75 @@ def main():
         print("Haiku extraction failed, watermark NOT advanced", file=sys.stderr)
         sys.exit(0)
 
-    extraction, input_tokens, output_tokens, backend = extraction_result
+    raw_extraction, input_tokens, output_tokens, backend = extraction_result
 
-    if not extraction.get("has_observation", False):
-        print("No observation extracted (routine turn)", file=sys.stderr)
+    # Step 9: Normalize response
+    observations = normalize_extraction_response(raw_extraction)
+
+    if not observations:
+        print("No observations extracted (routine session)", file=sys.stderr)
         _log_extraction(backend, input_tokens, output_tokens,
                         observation_stored=False, prompt=prompt,
                         hook_input=hook_input, debug=debug)
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
-    # Step 6: Store the observation
-    content = extraction.get("content", "")
-    if not content:
-        print("Empty observation content, skipping", file=sys.stderr)
-        _log_extraction(backend, input_tokens, output_tokens,
-                        observation_stored=False, prompt=prompt,
-                        hook_input=hook_input, debug=debug)
-        write_watermark(session_id, last_line_read)
-        sys.exit(0)
+    # Step 10: Store each observation (capped at max_observations)
+    # Use relevant_files from last substantive turn (already accumulated)
+    relevant_files = substantive[-1].get("relevant_files", []) if substantive else []
+    # Use end_line_idx from last turn for tracing
+    absolute_line = substantive[-1].get("end_line_idx", -1) if substantive else -1
 
-    importance = float(extraction.get("importance_score", 0.5))
-    importance = max(0.0, min(1.0, importance))  # Clamp to valid range
+    stored_count = 0
+    for i, obs in enumerate(observations[:max_observations]):
+        content = obs.get("content", "").strip()
+        if not content:
+            continue
 
-    tags = extraction.get("tags", [])
-    if not isinstance(tags, list):
-        tags = []
+        importance = float(obs.get("importance_score", 0.5))
+        importance = max(0.0, min(1.0, importance))  # Clamp to valid range
 
-    scope = extraction.get("scope", "")
-    if scope not in ("project", "global"):
-        scope = ""
+        tags = obs.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
 
-    relevant_files = turn.get("relevant_files", [])
-    absolute_line = turn.get("end_line_idx", -1)
+        scope = obs.get("scope", "")
+        if scope not in ("project", "global"):
+            scope = ""
 
-    result = store_observation(
-        content, importance, tags, "auto-extract:stop-hook",
-        project_path=project_path, git_branch=git_branch,
-        relevant_files=relevant_files, scope=scope,
-        session_id=session_id, transcript_line=absolute_line,
-    )
+        result = store_observation(
+            content, importance, tags, "auto-extract:stop-hook",
+            project_path=project_path, git_branch=git_branch,
+            relevant_files=relevant_files, scope=scope,
+            session_id=session_id, transcript_line=absolute_line,
+        )
 
-    if result.get("success"):
-        obs_id = result.get('id', 'unknown')
-        print(f"Stored observation: {obs_id}", file=sys.stderr)
-        _log_extraction(backend, input_tokens, output_tokens,
-                        observation_stored=True, obs_id=obs_id,
-                        importance=importance, tags=tags,
-                        prompt=prompt, observation_content=content,
-                        scope=scope, hook_input=hook_input, debug=debug)
-    else:
-        print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
-        _log_extraction(backend, input_tokens, output_tokens,
-                        observation_stored=False, prompt=prompt,
-                        observation_content=content,
-                        hook_input=hook_input, debug=debug)
+        if result.get("success"):
+            obs_id = result.get('id', 'unknown')
+            stored_count += 1
+            print(f"Stored observation {stored_count}: {obs_id}", file=sys.stderr)
+            # Log prompt + hook_input only for first observation to avoid debug log bloat
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=True, obs_id=obs_id,
+                            importance=importance, tags=tags,
+                            prompt=prompt if i == 0 else "",
+                            observation_content=content,
+                            scope=scope,
+                            hook_input=hook_input if i == 0 else "",
+                            debug=debug)
+        else:
+            print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
+            _log_extraction(backend, input_tokens, output_tokens,
+                            observation_stored=False,
+                            prompt=prompt if i == 0 else "",
+                            observation_content=content,
+                            hook_input=hook_input if i == 0 else "",
+                            debug=debug)
 
-    # Step 7: Advance watermark (even on storage failure — Haiku already ran)
+    if stored_count == 0:
+        print("No observations stored (all empty or failed)", file=sys.stderr)
+
+    # Step 11: Advance watermark (even on storage failure — Haiku already ran)
     write_watermark(session_id, last_line_read)
 
 

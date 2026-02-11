@@ -18,13 +18,25 @@ sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
     WATERMARK_DIR,
+    _BUDGET_BASE,
+    _BUDGET_HARD_MAX,
+    _BUDGET_OUTPUT_SCALE,
+    _FIRST_USER_MAX_CHARS,
+    _HAIKU_MAX_TOKENS,
+    _MIN_CHARS_PER_TURN,
     _parse_haiku_text,
+    _parse_output_tokens,
+    build_session_prompt,
     build_turn_prompt,
     call_haiku,
     call_haiku_api,
     call_haiku_cli,
     check_substance,
+    compute_content_budget,
     extract_file_paths_from_tools,
+    extract_first_user_message,
+    filter_substantive_turns,
+    normalize_extraction_response,
     parse_all_turns,
     parse_transcript_turn,
     pick_best_turn,
@@ -1567,3 +1579,417 @@ class TestRelevantFilesAllTurns:
         # Last assistant has no tool_use, but files from earlier turn should be captured
         assert "/src/config.py" in result["relevant_files"]
         assert "/src/main.py" in result["relevant_files"]
+
+
+# ──────────────────────────────────────────────
+# TestParseOutputTokens
+# ──────────────────────────────────────────────
+
+
+class TestParseOutputTokens:
+    """Tests for _parse_output_tokens() — token usage string parsing."""
+
+    def test_normal_format(self):
+        """Parses standard 'N in, M out' format."""
+        assert _parse_output_tokens("1234 in, 567 out") == 567
+
+    def test_zero_output(self):
+        """Returns 0 for zero output tokens."""
+        assert _parse_output_tokens("100 in, 0 out") == 0
+
+    def test_large_numbers(self):
+        """Handles large token counts."""
+        assert _parse_output_tokens("150000 in, 50000 out") == 50000
+
+    def test_malformed_string(self):
+        """Returns 0 for unparseable strings."""
+        assert _parse_output_tokens("garbage") == 0
+        assert _parse_output_tokens("") == 0
+        assert _parse_output_tokens("no commas here") == 0
+
+    def test_missing_out_part(self):
+        """Returns 0 when 'out' part is missing."""
+        assert _parse_output_tokens("100 in") == 0
+
+
+# ──────────────────────────────────────────────
+# TestFilterSubstantiveTurns
+# ──────────────────────────────────────────────
+
+
+class TestFilterSubstantiveTurns:
+    """Tests for filter_substantive_turns() — multi-turn filtering."""
+
+    def test_returns_all_above_threshold(self):
+        """Returns all turns meeting the character threshold."""
+        turns = [
+            {"user_text": "x" * 100, "assistant_text": "y" * 200},
+            {"user_text": "x" * 50, "assistant_text": "y" * 50},
+            {"user_text": "x" * 150, "assistant_text": "y" * 150},
+        ]
+        result = filter_substantive_turns(turns, min_chars=200)
+        assert len(result) == 2
+        assert result[0] is turns[0]
+        assert result[1] is turns[2]
+
+    def test_preserves_order(self):
+        """Returns turns in original order."""
+        turns = [
+            {"user_text": "a" * 200, "assistant_text": "b" * 200},
+            {"user_text": "c" * 300, "assistant_text": "d" * 300},
+            {"user_text": "e" * 150, "assistant_text": "f" * 150},
+        ]
+        result = filter_substantive_turns(turns, min_chars=200)
+        assert len(result) == 3
+        assert result[0] is turns[0]
+        assert result[1] is turns[1]
+        assert result[2] is turns[2]
+
+    def test_all_below_threshold(self):
+        """Returns empty list when all turns are below threshold."""
+        turns = [
+            {"user_text": "Hi", "assistant_text": "Hello"},
+            {"user_text": "x" * 50, "assistant_text": "y" * 50},
+        ]
+        result = filter_substantive_turns(turns, min_chars=200)
+        assert result == []
+
+    def test_empty_input(self):
+        """Returns empty list for empty input."""
+        assert filter_substantive_turns([], min_chars=200) == []
+
+    def test_custom_threshold(self):
+        """Respects custom min_chars threshold."""
+        turns = [
+            {"user_text": "x" * 60, "assistant_text": "y" * 60},
+        ]
+        assert len(filter_substantive_turns(turns, min_chars=100)) == 1
+        assert len(filter_substantive_turns(turns, min_chars=200)) == 0
+
+    def test_single_qualifying_turn(self):
+        """Returns single qualifying turn."""
+        turns = [
+            {"user_text": "x" * 200, "assistant_text": "y" * 200},
+        ]
+        result = filter_substantive_turns(turns, min_chars=200)
+        assert len(result) == 1
+        assert result[0] is turns[0]
+
+
+# ──────────────────────────────────────────────
+# TestExtractFirstUserMessage
+# ──────────────────────────────────────────────
+
+
+class TestExtractFirstUserMessage:
+    """Tests for extract_first_user_message() — conversation context extraction."""
+
+    def _write_transcript(self, tmp_path, lines):
+        path = tmp_path / "transcript.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        return str(path)
+
+    def test_finds_first_user(self, tmp_path):
+        """Extracts the first user message text."""
+        lines = [
+            json.dumps({"type": "system", "message": {}}),
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello world"}]}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        result = extract_first_user_message(path)
+        assert result == "Hello world"
+
+    def test_truncates_long_message(self, tmp_path):
+        """Truncates message to _FIRST_USER_MAX_CHARS."""
+        long_text = "x" * 500
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": long_text}]}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        result = extract_first_user_message(path)
+        assert len(result) == _FIRST_USER_MAX_CHARS
+
+    def test_missing_file(self, tmp_path):
+        """Returns empty string for nonexistent file."""
+        result = extract_first_user_message(str(tmp_path / "nope.jsonl"))
+        assert result == ""
+
+    def test_no_user_message(self, tmp_path):
+        """Returns empty string when no user message found."""
+        lines = [
+            json.dumps({"type": "system", "message": {}}),
+            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        result = extract_first_user_message(path)
+        assert result == ""
+
+    def test_scan_limit(self, tmp_path):
+        """Stops scanning after max_scan_lines."""
+        # Put system lines before the user message, beyond the scan limit
+        lines = [json.dumps({"type": "system", "message": {}}) for _ in range(10)]
+        lines.append(json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}))
+        path = self._write_transcript(tmp_path, lines)
+        # Scan limit of 5 should not find the user message at line 10
+        result = extract_first_user_message(path, max_scan_lines=5)
+        assert result == ""
+
+    def test_multiline_text_blocks(self, tmp_path):
+        """Joins multiple text blocks in user content."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": [
+                {"type": "text", "text": "Part 1"},
+                {"type": "text", "text": "Part 2"},
+            ]}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        result = extract_first_user_message(path)
+        assert "Part 1" in result
+        assert "Part 2" in result
+
+
+# ──────────────────────────────────────────────
+# TestComputeContentBudget
+# ──────────────────────────────────────────────
+
+
+class TestComputeContentBudget:
+    """Tests for compute_content_budget() — dynamic budget scaling."""
+
+    def test_base_only_small_session(self):
+        """Tiny session gets base budget."""
+        turns = [{"token_usage": "100 in, 100 out"}]
+        budget = compute_content_budget(turns)
+        # 2000 + 100 * 0.04 = 2004
+        assert budget == 2004
+
+    def test_medium_session(self):
+        """Medium session scales proportionally."""
+        turns = [{"token_usage": "10000 in, 5000 out"}]
+        budget = compute_content_budget(turns)
+        # 2000 + 5000 * 0.04 = 2200
+        assert budget == 2200
+
+    def test_large_session(self):
+        """Large session gets more budget."""
+        turns = [{"token_usage": "50000 in, 50000 out"}]
+        budget = compute_content_budget(turns)
+        # 2000 + 50000 * 0.04 = 4000
+        assert budget == 4000
+
+    def test_hard_max_cap(self):
+        """Very large session is capped at _BUDGET_HARD_MAX."""
+        turns = [{"token_usage": "500000 in, 500000 out"}]
+        budget = compute_content_budget(turns)
+        assert budget == _BUDGET_HARD_MAX
+
+    def test_empty_turns(self):
+        """Empty turns list returns base budget."""
+        budget = compute_content_budget([])
+        assert budget == _BUDGET_BASE
+
+    def test_multiple_turns_sum(self):
+        """Output tokens from multiple turns are summed."""
+        turns = [
+            {"token_usage": "100 in, 1000 out"},
+            {"token_usage": "200 in, 2000 out"},
+            {"token_usage": "300 in, 3000 out"},
+        ]
+        budget = compute_content_budget(turns)
+        # 2000 + 6000 * 0.04 = 2240
+        assert budget == 2240
+
+    def test_malformed_token_usage(self):
+        """Malformed token_usage strings treated as 0 output tokens."""
+        turns = [{"token_usage": "garbage"}]
+        budget = compute_content_budget(turns)
+        assert budget == _BUDGET_BASE
+
+
+# ──────────────────────────────────────────────
+# TestBuildSessionPrompt
+# ──────────────────────────────────────────────
+
+
+class TestBuildSessionPrompt:
+    """Tests for build_session_prompt() — session-level prompt construction."""
+
+    def _make_turn(self, user_text="Test user", assistant_text="Test assistant",
+                   tools=None, token_usage="100 in, 50 out", relevant_files=None):
+        return {
+            "user_text": user_text,
+            "assistant_text": assistant_text,
+            "tool_names": tools or [],
+            "token_usage": token_usage,
+            "relevant_files": relevant_files or [],
+        }
+
+    def test_includes_first_user_text(self):
+        """Prompt includes the conversation opener."""
+        turns = [self._make_turn()]
+        prompt = build_session_prompt(turns, "Hello, start here", 2000)
+        assert "Hello, start here" in prompt
+
+    def test_numbered_turns(self):
+        """Each turn gets a numbered heading."""
+        turns = [
+            self._make_turn(user_text="First question"),
+            self._make_turn(user_text="Second question"),
+        ]
+        prompt = build_session_prompt(turns, "", 4000)
+        assert "### Turn 1" in prompt
+        assert "### Turn 2" in prompt
+        assert "First question" in prompt
+        assert "Second question" in prompt
+
+    def test_aggregates_tools(self):
+        """All unique tools from all turns appear in All Tools Used."""
+        turns = [
+            self._make_turn(tools=["Read", "Edit"]),
+            self._make_turn(tools=["Write", "Read"]),
+        ]
+        prompt = build_session_prompt(turns, "", 4000)
+        assert "Edit" in prompt
+        assert "Read" in prompt
+        assert "Write" in prompt
+
+    def test_relevant_files_from_last_turn(self):
+        """Uses relevant_files from the last turn."""
+        turns = [
+            self._make_turn(relevant_files=["/a.py"]),
+            self._make_turn(relevant_files=["/a.py", "/b.py"]),
+        ]
+        prompt = build_session_prompt(turns, "", 4000)
+        assert "- /a.py" in prompt
+        assert "- /b.py" in prompt
+
+    def test_single_turn(self):
+        """Works correctly with a single turn."""
+        turns = [self._make_turn(user_text="Solo question", assistant_text="Solo answer")]
+        prompt = build_session_prompt(turns, "Context", 2000)
+        assert "### Turn 1" in prompt
+        assert "Solo question" in prompt
+        assert "Solo answer" in prompt
+        assert "1 substantive turns" in prompt
+
+    def test_empty_turns(self):
+        """Returns empty string for empty turns list."""
+        assert build_session_prompt([], "", 2000) == ""
+
+    def test_budget_limits_turns(self):
+        """When budget is too small for all turns, keeps highest-scoring."""
+        # With budget 300 and _MIN_CHARS_PER_TURN=150, max 2 turns
+        turns = [
+            self._make_turn(user_text="x" * 100, assistant_text="y" * 100),  # 200 chars
+            self._make_turn(user_text="x" * 300, assistant_text="y" * 300, tools=["Read"]),  # 600 chars + 100 tool = 700 score
+            self._make_turn(user_text="x" * 200, assistant_text="y" * 200),  # 400 chars
+        ]
+        prompt = build_session_prompt(turns, "", 300)
+        # Should only include 2 turns (300 // 150 = 2), picking highest-scoring
+        assert prompt.count("### Turn") == 2
+
+    def test_project_context(self):
+        """Includes project and branch info."""
+        turns = [self._make_turn()]
+        prompt = build_session_prompt(turns, "", 2000, project_dir="my-project", git_branch="feature/x")
+        assert "my-project" in prompt
+        assert "feature/x" in prompt
+
+    def test_json_response_schema(self):
+        """Prompt includes multi-observation JSON schema."""
+        turns = [self._make_turn()]
+        prompt = build_session_prompt(turns, "", 2000)
+        assert '"observations"' in prompt
+        assert "1-3 observations" in prompt
+
+
+# ──────────────────────────────────────────────
+# TestNormalizeExtractionResponse
+# ──────────────────────────────────────────────
+
+
+class TestNormalizeExtractionResponse:
+    """Tests for normalize_extraction_response() — schema normalization."""
+
+    def test_new_schema_with_observations(self):
+        """Handles new multi-observation schema."""
+        parsed = {
+            "observations": [
+                {"content": "First insight", "importance_score": 0.7, "tags": ["test"], "scope": "global"},
+                {"content": "Second insight", "importance_score": 0.5, "tags": [], "scope": "project"},
+            ]
+        }
+        result = normalize_extraction_response(parsed)
+        assert len(result) == 2
+        assert result[0]["content"] == "First insight"
+        assert result[1]["content"] == "Second insight"
+
+    def test_new_schema_empty_array(self):
+        """Handles empty observations array."""
+        parsed = {"observations": []}
+        result = normalize_extraction_response(parsed)
+        assert result == []
+
+    def test_new_schema_filters_empty_content(self):
+        """Filters out observations with empty content."""
+        parsed = {
+            "observations": [
+                {"content": "Good insight", "importance_score": 0.7},
+                {"content": "", "importance_score": 0.5},
+                {"content": "  ", "importance_score": 0.6},
+            ]
+        }
+        result = normalize_extraction_response(parsed)
+        assert len(result) == 1
+        assert result[0]["content"] == "Good insight"
+
+    def test_legacy_schema_with_observation(self):
+        """Handles legacy single-observation schema."""
+        parsed = {
+            "has_observation": True,
+            "content": "Legacy insight",
+            "importance_score": 0.6,
+            "tags": ["legacy"],
+            "scope": "project",
+        }
+        result = normalize_extraction_response(parsed)
+        assert len(result) == 1
+        assert result[0]["content"] == "Legacy insight"
+        assert result[0]["importance_score"] == 0.6
+        assert result[0]["tags"] == ["legacy"]
+        assert result[0]["scope"] == "project"
+
+    def test_legacy_schema_no_observation(self):
+        """Legacy schema with has_observation=false returns empty."""
+        parsed = {"has_observation": False, "content": ""}
+        result = normalize_extraction_response(parsed)
+        assert result == []
+
+    def test_none_input(self):
+        """Returns empty list for None input."""
+        assert normalize_extraction_response(None) == []
+
+    def test_non_dict_input(self):
+        """Returns empty list for non-dict input."""
+        assert normalize_extraction_response("string") == []
+        assert normalize_extraction_response([1, 2]) == []
+
+    def test_observations_not_list(self):
+        """Returns empty when observations is not a list."""
+        parsed = {"observations": "not a list"}
+        result = normalize_extraction_response(parsed)
+        assert result == []
+
+    def test_observations_with_non_dict_items(self):
+        """Filters out non-dict items in observations array."""
+        parsed = {
+            "observations": [
+                {"content": "Good", "importance_score": 0.7},
+                "string item",
+                42,
+            ]
+        }
+        result = normalize_extraction_response(parsed)
+        assert len(result) == 1
+        assert result[0]["content"] == "Good"
