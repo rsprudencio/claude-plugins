@@ -217,6 +217,7 @@ def get_per_prompt_config() -> dict:
         "max_results": 5,
         "max_content_length": 500,
         "debug": False,
+        "passive_retrieval_increment": 0.01,
     }
     memory_config = config.get("memory", {})
     return {**defaults, **memory_config.get("per_prompt_search", {})}

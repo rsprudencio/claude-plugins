@@ -30,7 +30,7 @@ def check_promotion_criteria(metadata: dict) -> dict:
     
     # Extract values from metadata (stored as strings)
     importance_score = float(metadata.get("importance_score", "0.5"))
-    retrieval_count = int(metadata.get("retrieval_count", "0"))
+    retrieval_count = float(metadata.get("retrieval_count", "0"))
     created_at = metadata.get("created_at")
     
     criteria_met = []
@@ -41,7 +41,7 @@ def check_promotion_criteria(metadata: dict) -> dict:
     
     # Criterion 2: High retrieval count
     if retrieval_count > config["retrieval_count_threshold"]:
-        criteria_met.append(f"retrievals {retrieval_count} > {config['retrieval_count_threshold']}")
+        criteria_met.append(f"retrievals {retrieval_count:.2f} > {config['retrieval_count_threshold']}")
     
     # Criterion 3: Age + importance combo
     if created_at:

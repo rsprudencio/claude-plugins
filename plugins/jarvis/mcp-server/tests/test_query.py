@@ -1,11 +1,13 @@
 """Tests for memory query module."""
 import os
 import pytest
+from unittest.mock import patch
 from tools.query import (
     query_vault, doc_read, collection_stats,
     memory_read, memory_stats,  # backward-compatible aliases
     _compute_relevance, _extract_preview, _translate_filter,
-    _display_path
+    _display_path, _increment_retrieval_counts,
+    semantic_context,
 )
 
 
@@ -578,13 +580,161 @@ class TestTierAwareQuery:
         
         # Initial count should be 0
         read_result = tier2_read(doc_id)
-        assert read_result["metadata"]["retrieval_count"] == "1"  # Read increments it
+        assert read_result["metadata"]["retrieval_count"] == "1.0"  # Read increments it
         
         # Query (should increment)
         query_vault("retrieval count")
         
         # Check count increased (read again increments, so should be 3)
         read_result2 = tier2_read(doc_id)
-        assert int(read_result2["metadata"]["retrieval_count"]) >= 2
-        
+        assert float(read_result2["metadata"]["retrieval_count"]) >= 2
+
+        mem._chroma_client = None
+
+
+class TestIncrementRetrievalCountsFractional:
+    """Tests for fractional retrieval count increments."""
+
+    def test_fractional_increment(self, mock_config):
+        """increment=0.01 adds 0.01 to count."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_frac_inc_db")})
+
+        from tools.tier2 import tier2_write
+        write_result = tier2_write(
+            content="Test observation for fractional increment",
+            content_type="observation",
+        )
+        doc_id = write_result["id"]
+
+        collection = mem._get_collection()
+        _increment_retrieval_counts(collection, [doc_id], increment=0.01)
+
+        result = collection.get(ids=[doc_id])
+        assert result["metadatas"][0]["retrieval_count"] == "0.01"
+
+        mem._chroma_client = None
+
+    def test_rounds_to_two_decimals(self, mock_config):
+        """0.01 + 0.01 + 0.01 = 0.03 (no float noise)."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_frac_round_db")})
+
+        from tools.tier2 import tier2_write
+        write_result = tier2_write(
+            content="Test rounding",
+            content_type="observation",
+        )
+        doc_id = write_result["id"]
+
+        collection = mem._get_collection()
+        for _ in range(3):
+            _increment_retrieval_counts(collection, [doc_id], increment=0.01)
+
+        result = collection.get(ids=[doc_id])
+        assert result["metadatas"][0]["retrieval_count"] == "0.03"
+
+        mem._chroma_client = None
+
+    def test_default_increment_is_one(self, mock_config):
+        """No increment arg → adds 1.0 (backward compat)."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_default_inc_db")})
+
+        from tools.tier2 import tier2_write
+        write_result = tier2_write(
+            content="Test default increment",
+            content_type="observation",
+        )
+        doc_id = write_result["id"]
+
+        collection = mem._get_collection()
+        _increment_retrieval_counts(collection, [doc_id])
+
+        result = collection.get(ids=[doc_id])
+        assert result["metadatas"][0]["retrieval_count"] == "1.0"
+
+        mem._chroma_client = None
+
+    def test_skips_tier1_ids(self, mock_config):
+        """Tier 1 (vault::) IDs are not incremented."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_skip_tier1_db")})
+
+        from tools.memory import index_file
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "skip-test.md").write_text("# Skip Test\nContent")
+        index_file("notes/skip-test.md")
+
+        collection = mem._get_collection()
+        # Should not crash on vault:: IDs
+        _increment_retrieval_counts(collection, ["vault::notes/skip-test.md"], increment=0.01)
+
+        # Verify no retrieval_count was added to tier 1 doc
+        result = collection.get(ids=["vault::notes/skip-test.md"])
+        meta = result["metadatas"][0]
+        assert meta.get("retrieval_count") is None or meta.get("retrieval_count") == "0"
+
+        mem._chroma_client = None
+
+
+class TestSemanticContextFractionalBump:
+    """Tests for fractional retrieval bumps in semantic_context()."""
+
+    def test_bumps_fractionally(self, mock_config):
+        """semantic_context() calls increment with configured value."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={
+            "db_path": str(mock_config.vault_path / ".test_sc_frac_db"),
+            "per_prompt_search": {"passive_retrieval_increment": 0.05},
+        })
+
+        from tools.tier2 import tier2_write
+        write_result = tier2_write(
+            content="Observation about career goals and strategic planning",
+            content_type="observation",
+            importance_score=0.8,
+        )
+        doc_id = write_result["id"]
+
+        # Call semantic_context (should fractionally increment)
+        semantic_context("career goals", threshold=0.0)
+
+        # Check retrieval count was bumped
+        collection = mem._get_collection()
+        result = collection.get(ids=[doc_id])
+        count = float(result["metadatas"][0]["retrieval_count"])
+        assert count == pytest.approx(0.05, abs=0.001)
+
+        mem._chroma_client = None
+
+    def test_no_bump_when_zero(self, mock_config):
+        """passive_retrieval_increment=0 → no increment call."""
+        import tools.memory as mem
+        mem._chroma_client = None
+        mock_config.set(memory={
+            "db_path": str(mock_config.vault_path / ".test_sc_zero_db"),
+            "per_prompt_search": {"passive_retrieval_increment": 0},
+        })
+
+        from tools.tier2 import tier2_write
+        write_result = tier2_write(
+            content="Observation about career goals zero increment",
+            content_type="observation",
+            importance_score=0.8,
+        )
+        doc_id = write_result["id"]
+
+        semantic_context("career goals zero increment", threshold=0.0)
+
+        collection = mem._get_collection()
+        result = collection.get(ids=[doc_id])
+        assert result["metadatas"][0]["retrieval_count"] == "0"
+
         mem._chroma_client = None

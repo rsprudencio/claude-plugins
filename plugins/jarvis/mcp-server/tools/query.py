@@ -15,7 +15,7 @@ from .memory import _get_collection
 from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
-from .config import get_expansion_config
+from .config import get_expansion_config, get_per_prompt_config
 
 
 def _compute_relevance(distance: float, importance: str = "medium",
@@ -130,48 +130,54 @@ def _display_path(doc_id: str) -> str:
     return parsed.content_id
 
 
-def _increment_retrieval_counts(collection, doc_ids: list) -> None:
+def _increment_retrieval_counts(collection, doc_ids: list, increment: float = 1.0) -> None:
     """Batch increment retrieval counts for Tier 2 documents.
-    
+
     Best-effort operation: errors are logged but don't block query response.
     Only updates Tier 2 documents (Tier 1 doesn't track retrieval counts).
+
+    Args:
+        collection: ChromaDB collection
+        doc_ids: List of document IDs to increment
+        increment: Amount to add to retrieval_count (default 1.0).
+                   Use fractional values (e.g. 0.01) for passive surfacing.
     """
     if not doc_ids:
         return
-    
+
     try:
         # Filter to only Tier 2 IDs
         tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
         if not tier2_ids:
             return
-        
+
         # Batch get current data
         result = collection.get(ids=tier2_ids, include=["documents", "metadatas"])
-        
+
         # Increment counts
         updated_ids = []
         updated_docs = []
         updated_metas = []
-        
+
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        
+
         for i, doc_id in enumerate(result["ids"]):
             metadata = result["metadatas"][i]
-            retrieval_count = int(metadata.get("retrieval_count", "0"))
-            retrieval_count += 1
-            
+            retrieval_count = float(metadata.get("retrieval_count", "0"))
+            retrieval_count = round(retrieval_count + increment, 2)
+
             updated_metadata = {**metadata}
             updated_metadata["retrieval_count"] = str(retrieval_count)
             updated_metadata["updated_at"] = now_iso
-            
+
             updated_ids.append(doc_id)
             updated_docs.append(result["documents"][i])
             updated_metas.append(updated_metadata)
-        
+
         # Batch upsert
         if updated_ids:
             collection.upsert(ids=updated_ids, documents=updated_docs, metadatas=updated_metas)
-    
+
     except Exception as e:
         # Log but don't fail query
         import logging
@@ -339,7 +345,7 @@ def semantic_context(query: str, max_results: int = 5,
     Optimized for automatic, per-message use. Differs from query_vault():
     - Applies minimum relevance threshold (filters low-scoring results)
     - Returns longer content previews (default 500 chars vs 150)
-    - Does NOT increment retrieval counts (only explicit /recall should)
+    - Fractionally increments retrieval counts (configurable, default 0.01)
     - Filters out sensitive directories (documents/, people/)
     - Returns query_ms timing for performance monitoring
     - Silently returns empty on any error (graceful degradation)
@@ -437,6 +443,14 @@ def semantic_context(query: str, max_results: int = 5,
 
     # Sort by relevance descending, trim to max_results
     deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:max_results]
+
+    # Fractional retrieval bump for passively surfaced results
+    if deduped:
+        per_prompt_config = get_per_prompt_config()
+        passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
+        if passive_increment > 0:
+            surfaced_ids = [entry["doc_id"] for entry in deduped]
+            _increment_retrieval_counts(collection, surfaced_ids, increment=passive_increment)
 
     matches = []
     for entry in deduped:

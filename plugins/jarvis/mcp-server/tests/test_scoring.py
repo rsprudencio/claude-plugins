@@ -125,6 +125,22 @@ class TestRetrievalBonus:
         # Even huge retrieval counts cap at 0.1
         assert _compute_retrieval_bonus(10000) == 0.1
 
+    def test_float_retrieval_count(self):
+        """compute_importance() accepts float retrieval_count."""
+        score = compute_importance(
+            "Test content",
+            vault_type="note",
+            retrieval_count=2.5,
+        )
+        assert 0.0 <= score <= 1.0
+
+    def test_fractional_retrieval_bonus(self):
+        """Fractional retrieval count produces non-zero bonus."""
+        bonus = _compute_retrieval_bonus(0.5)
+        assert bonus > 0.0
+        # Should be less than bonus for 1
+        assert bonus < _compute_retrieval_bonus(1)
+
 
 class TestFrontmatterImportance:
     """Tests for frontmatter importance parsing."""

@@ -42,7 +42,7 @@ def compute_importance(
     vault_type: str = "unknown",
     frontmatter_importance: Optional[str] = None,
     created_at: Optional[str] = None,
-    retrieval_count: int = 0,
+    retrieval_count: float = 0,
     config: Optional[dict] = None,
 ) -> float:
     """Compute importance score for a document.
@@ -113,7 +113,7 @@ def _compute_recency_bonus(created_at: Optional[str], half_life_days: float = 7.
         return 0.0
 
 
-def _compute_retrieval_bonus(retrieval_count: int) -> float:
+def _compute_retrieval_bonus(retrieval_count: float) -> float:
     """Log-scaled bonus from retrieval count.
 
     log2(count + 1) / 10, capped at _RETRIEVAL_BONUS_MAX.

@@ -393,6 +393,7 @@ class TestPerPromptConfig:
         assert config["threshold"] == 0.5
         assert config["max_results"] == 5
         assert config["max_content_length"] == 500
+        assert config["passive_retrieval_increment"] == 0.01
 
     def test_disabled(self, mock_config):
         """Config can disable per-prompt search."""

@@ -206,7 +206,7 @@ def tier2_read(doc_id: str) -> dict:
         
         # Get current retrieval count and increment
         metadata = result["metadatas"][0]
-        retrieval_count = int(metadata.get("retrieval_count", "0"))
+        retrieval_count = float(metadata.get("retrieval_count", "0"))
         retrieval_count += 1
         
         # Update retrieval count and updated_at

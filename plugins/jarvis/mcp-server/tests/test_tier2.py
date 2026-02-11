@@ -158,8 +158,8 @@ class TestTier2Read:
         assert result["id"] == doc_id
         assert result["content"] == "Test observation"
         assert "metadata" in result
-        assert result["metadata"]["retrieval_count"] == "1"
-    
+        assert result["metadata"]["retrieval_count"] == "1.0"
+
     def test_read_increments_count(self, mock_config):
         """Test that reading increments retrieval count."""
         # Write
@@ -168,12 +168,31 @@ class TestTier2Read:
             content_type="observation"
         )
         doc_id = write_result["id"]
-        
+
         # Read multiple times
         for i in range(1, 4):
             result = tier2_read(doc_id)
-            assert result["metadata"]["retrieval_count"] == str(i)
+            assert result["metadata"]["retrieval_count"] == str(float(i))
     
+    def test_read_float_retrieval_count(self, mock_config):
+        """Reads "2.5" → increments to "3.5"."""
+        # Write, then manually set retrieval_count to 2.5
+        write_result = tier2_write(
+            content="Float retrieval test",
+            content_type="observation",
+        )
+        doc_id = write_result["id"]
+
+        collection = _get_collection()
+        result = collection.get(ids=[doc_id])
+        meta = {**result["metadatas"][0]}
+        meta["retrieval_count"] = "2.5"
+        collection.upsert(ids=[doc_id], documents=result["documents"], metadatas=[meta])
+
+        # Read should increment by 1 → 3.5
+        read_result = tier2_read(doc_id)
+        assert read_result["metadata"]["retrieval_count"] == "3.5"
+
     def test_read_not_found(self, mock_config):
         """Test reading non-existent document."""
         result = tier2_read("obs::nonexistent")

@@ -30,7 +30,28 @@ class TestCheckPromotionCriteria:
         }
         result = check_promotion_criteria(metadata)
         assert result["should_promote"]
-        assert "retrievals 5" in result["reason"]
+        assert "retrievals 5.00" in result["reason"]
+
+    def test_float_retrieval_count_triggers(self, mock_config):
+        """Float retrieval count 3.1 triggers promotion (> 3 threshold)."""
+        metadata = {
+            "importance_score": "0.50",
+            "retrieval_count": "3.1",
+            "created_at": "2026-02-01T00:00:00Z"
+        }
+        result = check_promotion_criteria(metadata)
+        assert result["should_promote"]
+        assert "retrievals 3.10" in result["reason"]
+
+    def test_float_retrieval_count_below_threshold(self, mock_config):
+        """Float retrieval count 2.9 does NOT trigger promotion (< 3 threshold)."""
+        metadata = {
+            "importance_score": "0.50",
+            "retrieval_count": "2.9",
+            "created_at": "2026-02-07T00:00:00Z"
+        }
+        result = check_promotion_criteria(metadata)
+        assert not result["should_promote"]
     
     def test_low_both_no_promotion(self, mock_config):
         """Test that low importance and retrieval don't trigger."""

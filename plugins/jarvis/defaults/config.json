@@ -20,7 +20,8 @@
       "threshold": 0.5,
       "max_results": 5,
       "max_content_length": 500,
-      "debug": false
+      "debug": false,
+      "passive_retrieval_increment": 0.01
     },
     "chunking": {
       "enabled": true,

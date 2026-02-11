@@ -484,7 +484,8 @@
       "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.3=aggressive, 0.5=balanced, 0.7=conservative)" },
       "max_results": { "type": "integer", "default": 5, "description": "Maximum memories injected per message (1-10)" },
       "max_content_length": { "type": "integer", "default": 500, "description": "Character limit per memory preview (100-2000)" },
-      "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for per-prompt search" }
+      "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for per-prompt search" },
+      "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" }
     },
 
     "memory_chunking": {
@@ -510,7 +511,7 @@
 
     "promotion": {
       "importance_threshold": { "type": "float", "default": 0.85, "description": "Min importance score for auto-promote" },
-      "retrieval_count_threshold": { "type": "integer", "default": 3, "description": "Min retrieval count for promotion" },
+      "retrieval_count_threshold": { "type": "number", "default": 3, "description": "Min retrieval count for promotion (supports float comparison from fractional increments)" },
       "age_importance_days": { "type": "integer", "default": 30, "description": "Days after which age+importance combo triggers" },
       "age_importance_score": { "type": "float", "default": 0.7, "description": "Importance threshold for aged content" },
       "on_promoted_file_deleted": { "type": "string", "default": "remove", "options": ["remove", "revert_to_chromadb"], "description": "What to do when a promoted vault file is deleted" }

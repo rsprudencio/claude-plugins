@@ -67,7 +67,7 @@ class TestRetrieveById:
         assert result["success"]
         assert result["found"]
         assert result["content"] == "Test observation"
-        assert result["metadata"]["retrieval_count"] == "1"
+        assert result["metadata"]["retrieval_count"] == "1.0"
 
     def test_tier2_id_increments_count(self, mock_config):
         """Multiple reads increment retrieval count."""
@@ -80,7 +80,7 @@ class TestRetrieveById:
         retrieve(id=doc_id)
         retrieve(id=doc_id)
         result = retrieve(id=doc_id)
-        assert result["metadata"]["retrieval_count"] == "3"
+        assert result["metadata"]["retrieval_count"] == "3.0"
 
     def test_pattern_id_routes_to_tier2_read(self, mock_config):
         """pattern:: ID routes to tier2_read."""
