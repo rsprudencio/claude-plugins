@@ -958,12 +958,21 @@ def _call_cli_backend(prompt: str) -> tuple[str, int, int] | None:
         return None
 
     try:
+        # Prevent infinite recursion: --no-session-persistence stops the
+        # spawned claude -p session from writing a transcript, so our Stop
+        # hook has nothing to extract from even if it fires.
+        # JARVIS_EXTRACTING env var is a safety net — hook scripts check it
+        # and exit immediately if set.
+        env = os.environ.copy()
+        env["JARVIS_EXTRACTING"] = "1"
+
         result = subprocess.run(
-            [claude_bin, "-p", "--model", "haiku"],
+            [claude_bin, "-p", "--model", "haiku", "--no-session-persistence"],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
         if result.returncode != 0:
             print(f"Claude CLI exited with code {result.returncode}", file=sys.stderr)

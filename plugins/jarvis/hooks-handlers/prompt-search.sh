@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Anti-recursion guard: skip if called from within an extraction subprocess
+if [ -n "${JARVIS_EXTRACTING:-}" ]; then
+    exit 0
+fi
+
 # Per-Prompt Semantic Search Hook Handler
 #
 # Reads UserPromptSubmit hook JSON from stdin and pipes it to Python

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Anti-recursion guard: skip if called from within an extraction subprocess
+# (claude -p sessions spawned by extract_observation.py inherit this env var)
+if [ -n "${JARVIS_EXTRACTING:-}" ]; then
+    exit 0
+fi
+
 # Auto-Extract Stop Hook Handler
 #
 # Reads Stop hook JSON from stdin, checks config, then routes:
