@@ -89,7 +89,7 @@ class TestPromptFiltering:
             assistant_text="test assistant response",
             tool_names="Read, Edit",
             relevant_files="- /some/file.py",
-            project_dir="my-project",
+            project_name="my-project",
             git_branch="main",
             token_usage="100 in, 50 out",
         )

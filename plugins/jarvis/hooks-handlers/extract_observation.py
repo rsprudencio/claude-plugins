@@ -59,7 +59,7 @@ You are analyzing a conversation turn between a user and an AI assistant working
 {relevant_files}
 
 ## Project Context
-Project: {project_dir}
+Project: {project_name}
 Branch: {git_branch}
 Token usage: {token_usage}
 
@@ -104,7 +104,7 @@ You are analyzing a coding session between a user and an AI assistant.
 {relevant_files}
 
 ## Project Context
-Project: {project_dir} | Branch: {git_branch} | {total_token_usage}
+Project: {project_name} | Branch: {git_branch} | {total_token_usage}
 
 Extract observations about:
 - User preferences, workflow patterns, or behavioral tendencies
@@ -636,12 +636,12 @@ def truncate(text: str, max_chars: int) -> str:
     return text[:max_chars] + "..."
 
 
-def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -> str:
+def build_turn_prompt(turn: dict, project_name: str = "", git_branch: str = "") -> str:
     """Build the extraction prompt for Haiku from parsed turn.
 
     Args:
         turn: Parsed turn dict from parse_transcript_turn
-        project_dir: Current project directory name
+        project_name: Current project directory name
         git_branch: Current git branch name
 
     Returns:
@@ -660,14 +660,14 @@ def build_turn_prompt(turn: dict, project_dir: str = "", git_branch: str = "") -
         assistant_text=assistant_text,
         tool_names=tool_list,
         relevant_files=files_list,
-        project_dir=project_dir or "unknown",
+        project_name=project_name or "unknown",
         git_branch=git_branch or "unknown",
         token_usage=token_usage,
     )
 
 
 def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
-                         project_dir: str = "", git_branch: str = "") -> str:
+                         project_name: str = "", git_branch: str = "") -> str:
     """Build a session-level extraction prompt combining ALL turns.
 
     Two-pass budget allocation (truncate, never exclude):
@@ -683,7 +683,7 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
         turns: List of ALL turn dicts from parse_all_turns()
         first_user_text: Opening message from extract_first_user_message()
         budget: Character budget from compute_content_budget()
-        project_dir: Current project directory name
+        project_name: Current project directory name
         git_branch: Current git branch name
 
     Returns:
@@ -764,7 +764,7 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
         turns_content=turns_content,
         all_tools=all_tools_str,
         relevant_files=files_list,
-        project_dir=project_dir or "unknown",
+        project_name=project_name or "unknown",
         git_branch=git_branch or "unknown",
         total_token_usage=total_usage,
     )
@@ -1209,10 +1209,10 @@ def main():
     budget = compute_content_budget(turns)
 
     # Step 7: Build session prompt with ALL turns
-    project_dir = os.path.basename(project_path) if project_path else ""
+    project_name = os.path.basename(project_path) if project_path else ""
     prompt = build_session_prompt(
         turns, first_user_text, budget,
-        project_dir=project_dir, git_branch=git_branch,
+        project_name=project_name, git_branch=git_branch,
     )
 
     # Step 8: Call Haiku

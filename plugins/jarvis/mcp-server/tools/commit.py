@@ -145,3 +145,42 @@ def get_commit_stats() -> dict:
         "insertions": insertions,
         "deletions": deletions
     }
+
+
+def get_committed_files() -> list[str]:
+    """Get the list of files changed in the most recent commit.
+
+    Returns:
+        List of vault-relative file paths from HEAD~1..HEAD.
+    """
+    success, result = run_git_command(["diff", "--name-only", "HEAD~1", "HEAD"])
+    if not success:
+        return []
+    return [f for f in result.get("stdout", "").strip().split("\n") if f]
+
+
+def reindex_committed_files() -> list[str]:
+    """Reindex any .md files changed in the most recent commit.
+
+    Called after a successful jarvis_commit to keep ChromaDB in sync
+    with vault file changes. Failures are logged but never propagated
+    — indexing must not block the commit response.
+
+    Returns:
+        List of vault-relative paths that were successfully reindexed.
+    """
+    from .memory import index_file
+
+    reindexed = []
+    for f in get_committed_files():
+        if not f.endswith(".md"):
+            continue
+        try:
+            result = index_file(f)
+            if result.get("success"):
+                reindexed.append(f)
+        except Exception as e:
+            logger.warning(f"Failed to reindex {f}: {e}")
+    if reindexed:
+        logger.info(f"Reindexed {len(reindexed)} file(s) after commit")
+    return reindexed

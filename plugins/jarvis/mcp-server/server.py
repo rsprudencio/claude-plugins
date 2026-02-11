@@ -42,7 +42,7 @@ from protocol import (
     format_commit_message,
     VALID_OPERATIONS
 )
-from tools.commit import stage_files, execute_commit, get_commit_stats
+from tools.commit import stage_files, execute_commit, get_commit_stats, reindex_committed_files
 from tools.file_ops import read_vault_file, list_vault_dir, file_exists_in_vault
 from tools.git_ops import (
     parse_last_commit, get_status, push_to_remote, move_files,
@@ -535,14 +535,19 @@ async def handle_commit(args: dict) -> dict:
         return commit_result
 
     stats = get_commit_stats()
-    return {
+    reindexed = reindex_committed_files()
+
+    response = {
         "success": True,
         "commit_hash": commit_result["commit_hash"],
         "protocol_tag": tag_string,
         "files_changed": stats["files_changed"],
         "insertions": stats["insertions"],
-        "deletions": stats["deletions"]
+        "deletions": stats["deletions"],
     }
+    if reindexed:
+        response["reindexed"] = reindexed
+    return response
 
 
 def handle_resolve_path(args: dict) -> dict:
