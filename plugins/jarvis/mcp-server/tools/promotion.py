@@ -147,10 +147,11 @@ def promote(doc_id: str) -> dict:
         # Get promotion directory
         promotion_dir = get_path(path_name, ensure_exists=True)
 
-        # Project-aware nesting: if observation has project_dir, nest under it
-        project_dir_meta = metadata.get("project_dir", "")
-        if project_dir_meta:
-            promotion_dir = os.path.join(promotion_dir, project_dir_meta)
+        # Project-aware nesting: derive project name from project_path
+        project_path_meta = metadata.get("project_path", "")
+        project_name = os.path.basename(project_path_meta) if project_path_meta else ""
+        if project_name:
+            promotion_dir = os.path.join(promotion_dir, project_name)
             os.makedirs(promotion_dir, exist_ok=True)
 
         # Generate filename
@@ -196,8 +197,8 @@ retrieval_count: {metadata.get('retrieval_count', '0')}"""
             frontmatter += f"\nscope: {scope_meta}"
 
         # Add project if present
-        if project_dir_meta:
-            frontmatter += f"\nproject: {project_dir_meta}"
+        if project_name:
+            frontmatter += f"\nproject: {project_name}"
 
         # Add relevant files if present
         files_meta = metadata.get("relevant_files", "")

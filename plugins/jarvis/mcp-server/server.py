@@ -42,7 +42,7 @@ from protocol import (
     format_commit_message,
     VALID_OPERATIONS
 )
-from tools.commit import stage_files, execute_commit, get_commit_stats
+from tools.commit import stage_files, execute_commit, get_commit_stats, reindex_committed_files, commit_user_prologue
 from tools.file_ops import read_vault_file, list_vault_dir, file_exists_in_vault
 from tools.git_ops import (
     parse_last_commit, get_status, push_to_remote, move_files,
@@ -519,6 +519,16 @@ async def handle_commit(args: dict) -> dict:
     if errors:
         return {"success": False, "validation_errors": errors}
 
+    # Auto user prologue: when explicit files are provided and this isn't a
+    # user operation, automatically commit any other dirty vault files as
+    # [JARVIS:U] first.  This keeps the audit trail clean without relying on
+    # the LLM agent to order operations correctly.
+    prologue_result = None
+    if operation != "user" and files:
+        prologue_result = commit_user_prologue(set(files))
+        if prologue_result and not prologue_result.get("success", True):
+            return prologue_result
+
     # Stage
     stage_result = stage_files(files)
     if not stage_result["success"]:
@@ -535,14 +545,23 @@ async def handle_commit(args: dict) -> dict:
         return commit_result
 
     stats = get_commit_stats()
-    return {
+    index_sync = reindex_committed_files()
+
+    response = {
         "success": True,
         "commit_hash": commit_result["commit_hash"],
         "protocol_tag": tag_string,
         "files_changed": stats["files_changed"],
         "insertions": stats["insertions"],
-        "deletions": stats["deletions"]
+        "deletions": stats["deletions"],
     }
+    if prologue_result and prologue_result.get("commit_hash"):
+        response["user_prologue"] = prologue_result
+    if index_sync["reindexed"]:
+        response["reindexed"] = index_sync["reindexed"]
+    if index_sync["unindexed"]:
+        response["unindexed"] = index_sync["unindexed"]
+    return response
 
 
 def handle_resolve_path(args: dict) -> dict:

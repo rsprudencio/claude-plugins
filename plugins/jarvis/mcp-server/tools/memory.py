@@ -388,3 +388,22 @@ def index_file(relative_path: str) -> dict:
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def unindex_file(relative_path: str) -> dict:
+    """Remove a file's chunks from ChromaDB.
+
+    Called when a vault file is deleted to keep the index in sync.
+
+    Args:
+        relative_path: Path relative to vault root
+
+    Returns:
+        Summary dict with success status and number of chunks removed.
+    """
+    try:
+        collection = _get_collection()
+        deleted = _delete_existing_chunks(collection, relative_path)
+        return {"success": True, "deleted_chunks": deleted}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

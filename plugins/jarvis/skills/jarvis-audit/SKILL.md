@@ -10,7 +10,9 @@ Every file operation creates an auditable git commit via `jarvis-audit-agent`.
 
 ## Delegation Pattern
 
-**You never run git commands directly. Always delegate to `jarvis-audit-agent`.**
+**Never run git commands directly in the vault. Always delegate vault commits to `jarvis-audit-agent`.**
+
+Note: This only applies to the vault. Git commands in other repositories are unaffected.
 
 ```json
 {
@@ -23,7 +25,7 @@ Every file operation creates an auditable git commit via `jarvis-audit-agent`.
 
 ## Agent Handles
 
-- Detecting uncommitted user changes (auto-commits as `[JARVIS:U]` first)
+- Auto user prologue: `jarvis_commit` automatically commits dirty files as `[JARVIS:U]` first
 - Protocol-compliant commit formatting
 - All git commands via MCP tools (jarvis_commit, jarvis_status, jarvis_push)
 

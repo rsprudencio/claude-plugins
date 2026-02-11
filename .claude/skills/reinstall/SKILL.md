@@ -76,14 +76,16 @@ fi
 
 ### Step 2: Reinstall All Plugins
 
+**CRITICAL**: All `claude plugin` commands MUST be prefixed with `CLAUDE_CONFIG_DIR=$DETECTED_DIR` to target the correct config directory.
+
 ```bash
-claude plugin marketplace update && \
-claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
-claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
-claude plugin uninstall jarvis-strategic@raph-claude-plugins 2>/dev/null; \
-claude plugin install jarvis@raph-claude-plugins && \
-claude plugin install jarvis-todoist@raph-claude-plugins && \
-claude plugin install jarvis-strategic@raph-claude-plugins
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin marketplace update && \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-strategic@raph-claude-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis@raph-claude-plugins && \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-todoist@raph-claude-plugins && \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-strategic@raph-claude-plugins
 ```
 
 ### Step 3: Verify Installation
@@ -91,7 +93,7 @@ claude plugin install jarvis-strategic@raph-claude-plugins
 ```bash
 echo ""
 echo "Installed plugins:"
-claude plugin list | grep -E "jarvis|todoist|strategic"
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin list | grep -E "jarvis|todoist|strategic"
 echo ""
 echo "Active cache directory: $DETECTED_DIR/plugins/cache/raph-claude-plugins/"
 ls -la "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"

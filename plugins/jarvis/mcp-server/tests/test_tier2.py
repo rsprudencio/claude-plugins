@@ -438,12 +438,12 @@ class TestTier2ExtraMetadata:
         result = tier2_write(
             content="Observation with context",
             content_type="observation",
-            extra_metadata={"project_dir": "jarvis-plugin", "git_branch": "master"},
+            extra_metadata={"project_path": "/home/user/projects/jarvis-plugin", "git_branch": "master"},
         )
         assert result["success"]
 
         read_result = tier2_read(result["id"])
-        assert read_result["metadata"]["project_dir"] == "jarvis-plugin"
+        assert read_result["metadata"]["project_path"] == "/home/user/projects/jarvis-plugin"
         assert read_result["metadata"]["git_branch"] == "master"
 
     def test_extra_metadata_none(self, mock_config):
