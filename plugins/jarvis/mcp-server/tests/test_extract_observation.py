@@ -1891,7 +1891,7 @@ class TestBuildSessionPrompt:
     def test_project_context(self):
         """Includes project and branch info."""
         turns = [self._make_turn()]
-        prompt = build_session_prompt(turns, "", 2000, project_dir="my-project", git_branch="feature/x")
+        prompt = build_session_prompt(turns, "", 2000, project_name="my-project", git_branch="feature/x")
         assert "my-project" in prompt
         assert "feature/x" in prompt
 

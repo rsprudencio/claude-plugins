@@ -326,13 +326,13 @@ class TestPromote:
             content = f.read()
         assert "type: decision" in content
 
-    def test_promote_with_project_dir_nests(self, mock_config):
+    def test_promote_with_project_path_nests(self, mock_config):
         """Project-scoped observation promotes to nested directory."""
         write_result = tier2_write(
             content="Project-specific observation",
             content_type="observation",
             importance_score=0.9,
-            extra_metadata={"project_dir": "my-project"},
+            extra_metadata={"project_path": "/home/user/projects/my-project"},
         )
 
         result = promote(write_result["id"])
@@ -344,7 +344,7 @@ class TestPromote:
         assert os.path.exists(full_path)
         assert "/my-project/" in full_path
 
-    def test_promote_without_project_dir_flat(self, mock_config):
+    def test_promote_without_project_path_flat(self, mock_config):
         """Global observation promotes to flat directory (no nesting)."""
         write_result = tier2_write(
             content="Global observation",
@@ -372,7 +372,7 @@ class TestPromote:
             content_type="observation",
             importance_score=0.9,
             extra_metadata={
-                "project_dir": "jarvis-plugin",
+                "project_path": "/home/user/projects/jarvis-plugin",
                 "scope": "project",
                 "relevant_files": "src/main.py,tests/test_main.py",
             },

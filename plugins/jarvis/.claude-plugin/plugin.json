@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
   "description": "Core Jarvis - vault management, journal entries, git audit trail with JARVIS protocol",
-  "version": "1.21.4",
+  "version": "1.21.6",
   "author": {
     "name": "Raphael Prudencio"
   },

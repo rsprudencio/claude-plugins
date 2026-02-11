@@ -201,11 +201,32 @@ The caller will provide a structured request with these fields:
 
 ## Execution Workflow
 
+### Step 0: User Prologue (MANDATORY)
+
+**Before every commit**, check for pre-existing uncommitted changes:
+
+1. Call `jarvis_status`
+2. Collect all dirty files (unstaged modified + untracked) from the response
+3. Subtract the files in your requested `files` list — those belong to the Jarvis commit
+4. If there are remaining files, these are user-made changes (e.g., Obsidian edits)
+5. Commit them first as a `[JARVIS:U]` operation, passing the **explicit file list**:
+   ```
+   jarvis_commit({
+     "operation": "user",
+     "description": "Manual vault updates",
+     "files": ["path/to/user-edited-file.md", "other/changed-file.md"]
+   })
+   ```
+6. Then proceed with the original requested commit
+
+**Why**: The vault may have been edited outside Jarvis (Obsidian, vim, etc.). These changes must be committed separately with a `[JARVIS:U]` tag before the Jarvis operation commit, preserving clean audit separation.
+
+**IMPORTANT**: Always pass explicit `files` in the user prologue — never omit it. Omitting `files` stages nothing. Including files that belong to the main commit would swallow them into the wrong commit.
+
+**Skip if**: `jarvis_status` shows no uncommitted changes, or all dirty files are already in the requested `files` list.
+
 ### Step 1: Check Status (Optional)
-If you need to verify what will be committed:
-```
-Call jarvis_status
-```
+If you already called `jarvis_status` in Step 0, reuse that result.
 
 ### Step 2: Create Commit
 ```
