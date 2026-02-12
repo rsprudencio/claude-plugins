@@ -9,6 +9,7 @@ from typing import Optional
 
 from .git_common import run_git_command
 from .git_ops import get_status
+from .format_support import is_indexable
 
 logger = logging.getLogger("jarvis-tools.commit")
 
@@ -185,7 +186,7 @@ def reindex_committed_files() -> dict:
     unindexed = []
 
     for f in get_committed_files():
-        if not f.endswith(".md"):
+        if not is_indexable(f):
             continue
         try:
             full_path = os.path.join(vault_path, f) if vault_path else f

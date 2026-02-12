@@ -10,6 +10,7 @@ from typing import Optional
 
 from .config import get_promotion_config
 from .file_ops import write_vault_file
+from .format_support import get_write_extension, generate_frontmatter, get_write_format
 from .memory import _get_collection
 from .namespaces import vault_id, parse_id, get_tier, TIER_CHROMADB, TIER_FILE
 from .paths import get_path
@@ -154,10 +155,11 @@ def promote(doc_id: str) -> dict:
             promotion_dir = os.path.join(promotion_dir, project_name)
             os.makedirs(promotion_dir, exist_ok=True)
 
-        # Generate filename
+        # Generate filename with configured extension
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         name_slug = metadata.get("name", "unnamed").lower().replace(" ", "-")
-        filename = f"{filename_prefix}-{name_slug}-{timestamp}.md"
+        ext = get_write_extension()
+        filename = f"{filename_prefix}-{name_slug}-{timestamp}{ext}"
 
         # Build full path (relative to vault)
         from .config import get_verified_vault_path
@@ -177,44 +179,41 @@ def promote(doc_id: str) -> dict:
                 "reason": "File already exists",
             }
         
-        # Build YAML frontmatter
+        # Build frontmatter/properties in configured format
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        tags = metadata.get("tags", "").split(",") if metadata.get("tags") else []
-        tags_yaml = "\n".join(f"  - {tag.strip()}" for tag in tags if tag.strip())
+        tags = [tag.strip() for tag in metadata.get("tags", "").split(",") if tag.strip()]
+        write_fmt = get_write_format()
 
-        frontmatter = f"""---
-type: {content_type}
-importance: {metadata.get('importance_score', '0.5')}
-original_id: {doc_id}
-promoted_at: {now_iso}
-source: {metadata.get('source', 'unknown')}
-created_at: {metadata.get('created_at', now_iso)}
-retrieval_count: {metadata.get('retrieval_count', '0')}"""
+        fm_dict = {
+            "type": content_type,
+            "importance": metadata.get('importance_score', '0.5'),
+            "original_id": doc_id,
+            "promoted_at": now_iso,
+            "source": metadata.get('source', 'unknown'),
+            "created_at": metadata.get('created_at', now_iso),
+            "retrieval_count": metadata.get('retrieval_count', '0'),
+        }
 
-        # Add scope if present
+        # Add optional fields
         scope_meta = metadata.get("scope", "")
         if scope_meta:
-            frontmatter += f"\nscope: {scope_meta}"
-
-        # Add project if present
+            fm_dict["scope"] = scope_meta
         if project_name:
-            frontmatter += f"\nproject: {project_name}"
+            fm_dict["project"] = project_name
 
-        # Add relevant files if present
         files_meta = metadata.get("relevant_files", "")
         if files_meta:
             files_list = [f.strip() for f in files_meta.split(",") if f.strip()]
             if files_list:
-                files_yaml = "\n".join(f"  - {f}" for f in files_list)
-                frontmatter += f"\nfiles:\n{files_yaml}"
+                fm_dict["files"] = files_list
 
-        if tags_yaml:
-            frontmatter += f"\ntags:\n{tags_yaml}"
+        if tags:
+            fm_dict["tags"] = tags
 
-        frontmatter += "\n---\n\n"
-        
+        frontmatter = generate_frontmatter(fm_dict, write_fmt)
+
         # Combine frontmatter + content
-        file_content = frontmatter + content
+        file_content = frontmatter + "\n" + content
         
         # Write file via write_vault_file (reuse existing vault boundary safety)
         write_result = write_vault_file(relative_path, file_content)

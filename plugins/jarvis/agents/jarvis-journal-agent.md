@@ -1,7 +1,7 @@
 ---
 name: jarvis-journal-agent
 description: Creates context-aware journal entries with vault linking. Handles drafting, vault search, and file writing. Does NOT commit - returns draft for Jarvis approval.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_store, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_store, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths, mcp__plugin_jarvis_core__jarvis_get_format_reference
 model: haiku
 permissionMode: acceptEdits
 ---
@@ -155,8 +155,8 @@ All Write operations MUST be within this vault directory.
 1. Resolve the journal base directory: call `jarvis_resolve_path` with `name="journal_jarvis"` (default: `journal/jarvis`)
 2. Generate 14-digit timestamp: `YYYYMMDDHHMMSS` (current time)
 3. Generate a kebab-case topic slug from the entry content (3-5 words max)
-4. Combine as: `YYYYMMDDHHMMSS-topic-slug.md`
-5. Path: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug].md`
+4. Combine as: `YYYYMMDDHHMMSS-topic-slug[ext]` (where `[ext]` is from `jarvis_get_format_reference()`)
+5. Path: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug][ext]`
 
 **Topic slug rules:**
 - Lowercase kebab-case
@@ -169,17 +169,19 @@ All Write operations MUST be within this vault directory.
 2. Resolve the summaries directory: call `jarvis_resolve_path` with `name="journal_summaries"` (default: `journal/jarvis/{YYYY}/summaries`)
 3. Use simplified filename based on subtype and period:
    - **Weekly**: Calculate ISO week number from the period end date
-     - Format: `weekly-[WW].md` (zero-padded, e.g., `weekly-04.md`)
-     - Path: `{journal_summaries}/weekly-[WW].md`
+     - Format: `weekly-[WW][ext]` (zero-padded, e.g., `weekly-04.md`)
+     - Path: `{journal_summaries}/weekly-[WW][ext]`
    - **Monthly**: Extract month number from period
-     - Format: `monthly-[MM].md` (zero-padded, e.g., `monthly-01.md`)
-     - Path: `{journal_summaries}/monthly-[MM].md`
+     - Format: `monthly-[MM][ext]` (zero-padded, e.g., `monthly-01.md`)
+     - Path: `{journal_summaries}/monthly-[MM][ext]`
    - **Quarterly**: Extract quarter from period
-     - Format: `quarterly-Q[N].md` (e.g., `quarterly-Q1.md`)
-     - Path: `{journal_summaries}/quarterly-Q[N].md`
+     - Format: `quarterly-Q[N][ext]` (e.g., `quarterly-Q1.md`)
+     - Path: `{journal_summaries}/quarterly-Q[N][ext]`
    - **Yearly**: Single file per year
-     - Format: `yearly.md`
-     - Path: `{journal_summaries}/yearly.md`
+     - Format: `yearly[ext]`
+     - Path: `{journal_summaries}/yearly[ext]`
+
+   (Where `[ext]` is the extension from `jarvis_get_format_reference()`, e.g., `.md` or `.org`)
 
 **ISO Week Calculation:**
 - Week 1 is the first week with at least 4 days in January
@@ -270,48 +272,23 @@ Changes made:
 
 ## Entry Format
 
-```yaml
----
-jarvis_id: "YYYYMMDDHHMMSS-topic-slug"
-created: YYYY-MM-DDTHH:MM:SSZ
-modified: YYYY-MM-DDTHH:MM:SSZ
-tags:
-  - jarvis
-  - [type-tag]
-  - [context-tag]
-  - [additional tags]
-type: note | incident-log | idea | reflection | meeting | briefing | summary | analysis
-sentiment: positive | neutral | negative | contemplative
-importance: low | medium | high | critical
-linked_to:
-  - "[[Related Note]]"
-ai_suggested: true
-ai_confidence: 0.XX
-ai_generated: false  # true for AI-generated entries (briefing, summary, analysis)
----
+**IMPORTANT**: Before creating any entry, call `jarvis_get_format_reference()` to get the active format configuration. This returns:
+- `format`: The configured format (`md` or `org`)
+- `extension`: The file extension to use (`.md` or `.org`)
+- `reference`: A complete syntax guide with journal entry template
 
-# [AI-Generated Title]
+**You MUST follow the returned template exactly** for:
+- Metadata block syntax (YAML frontmatter for Markdown, `:PROPERTIES:` drawer for Org-mode)
+- Heading syntax (`#` for Markdown, `*` for Org-mode)
+- Code block syntax (fenced backticks for Markdown, `#+BEGIN_SRC` for Org-mode)
+- Blockquote syntax (`>` for Markdown, `#+BEGIN_QUOTE` for Org-mode)
+- File extension in the generated filename
 
-## Original Input
-> [Raw user input preserved exactly]
+**Always use the extension from the format reference** when generating file paths (e.g., `.md` or `.org`).
 
-## Refined Entry
-
-[Expanded version with context and connections]
-
-### Context & Connections
-- **Related to**: [[Link1]], [[Link2]]
-- **Topics**: #tag1, #tag2
-- **People**: Names mentioned
-- **Systems**: Technical systems involved
-
----
-
-**Jarvis Analysis:**
-- Confidence: XX%
-- Suggested N tags, M links
-- Type: [detected type]
-```
+The entry must include these metadata fields regardless of format:
+- `jarvis_id`, `created`, `modified`, `tags`, `type`, `sentiment`, `importance`
+- `linked_to`, `ai_suggested`, `ai_confidence`, `ai_generated`
 
 ## Entry Types
 
@@ -387,13 +364,13 @@ The base directory is configurable via the `journal_jarvis` path name (default: 
 └── 2027/
 ```
 
-**Path formats:**
-- Regular entries: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug].md`
-- Summary entries: `{journal_summaries}/[type]-[number].md`
-  - Weekly: `weekly-04.md` (ISO week number, zero-padded)
-  - Monthly: `monthly-01.md` (month number, zero-padded)
-  - Quarterly: `quarterly-Q1.md` (Q1, Q2, Q3, Q4)
-  - Yearly: `yearly.md`
+**Path formats** (extension from `jarvis_get_format_reference()`):
+- Regular entries: `{journal_jarvis}/YYYY/MM/[entry_id]-[topic-slug][ext]`
+- Summary entries: `{journal_summaries}/[type]-[number][ext]`
+  - Weekly: `weekly-04[ext]` (ISO week number, zero-padded)
+  - Monthly: `monthly-01[ext]` (month number, zero-padded)
+  - Quarterly: `quarterly-Q1[ext]` (Q1, Q2, Q3, Q4)
+  - Yearly: `yearly[ext]`
 
 Create parent directories if they don't exist.
 

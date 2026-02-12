@@ -255,7 +255,7 @@
         "purpose": "Write any content — vault files, strategic memories, or Tier 2 ephemeral content",
         "routing": "Provide ONE of: id (update existing), relative_path (new vault file), type (new memory/tier2)",
         "params": ["content", "id", "relative_path", "type", "name", "mode (write/append/edit)", "old_string", "new_string", "importance", "tags", "scope", "extra_metadata"],
-        "features": ["Auto-indexes .md files to ChromaDB", "Secret detection on writes", "Namespace-based ID routing"]
+        "features": ["Auto-indexes .md and .org files to ChromaDB", "Secret detection on writes", "Namespace-based ID routing"]
       },
       "jarvis_retrieve": {
         "purpose": "Read or search any content — semantic search, ID lookup, memory read, or listing",
@@ -290,7 +290,7 @@
     "memory_maintenance": {
       "_note": "Index management and health monitoring for ChromaDB.",
       "jarvis_index_vault": {
-        "purpose": "Bulk index all .md files in vault into ChromaDB",
+        "purpose": "Bulk index all .md and .org files in vault into ChromaDB",
         "params": ["force", "directory", "include_sensitive"]
       },
       "jarvis_index_file": {
@@ -319,6 +319,15 @@
       "jarvis_list_paths": {
         "purpose": "List all configured paths with resolved values (diagnostic)",
         "params": []
+      }
+    },
+
+    "format_support": {
+      "jarvis_get_format_reference": {
+        "purpose": "Get the active file format reference (syntax guide + journal template)",
+        "params": [],
+        "returns": ["format (md/org)", "extension (.md/.org)", "reference (full syntax guide)"],
+        "notes": "Call before creating new vault files. Read path always detects format from extension; write path uses configured format."
       }
     },
 
@@ -377,7 +386,7 @@
     "architecture": {
       "tier1_file_backed": {
         "description": "Durable, git-tracked content visible in Obsidian",
-        "storage": "Vault .md files + strategic memory files at .jarvis/strategic/",
+        "storage": "Vault .md/.org files + strategic memory files at .jarvis/strategic/",
         "namespace_prefixes": ["vault::", "memory::"],
         "persistence": "Git-tracked, permanent"
       },
@@ -404,7 +413,7 @@
 
     "features": {
       "semantic_search": "Vector similarity search across all indexed content",
-      "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to ChromaDB",
+      "auto_index": "Every .md/.org vault file written through jarvis_store is auto-indexed to ChromaDB",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
       "promotion": "Tier 2 content meeting importance/retrieval thresholds can be promoted to vault files via jarvis_promote",
       "recency_boost": "Recent content (within configurable days) gets boosted in search ranking"
@@ -536,7 +545,7 @@
     "chromadb": {
       "purpose": "Embedded vector database for semantic search and Tier 2 ephemeral storage",
       "storage": "~/.jarvis/memory_db/ (outside vault to avoid Obsidian Sync pollution)",
-      "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md files"]
+      "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md and .org files", "Configurable file format (Markdown/Org-mode)"]
     },
     "todoist_api": {
       "purpose": "Todoist API access via official SDK for task management (local stdio, no session drops)",

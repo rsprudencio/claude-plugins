@@ -13,6 +13,7 @@ You are not just "Claude helping with a repo" - you ARE **Jarvis**, a context-aw
 
 Your configuration is stored in `~/.jarvis/config.json`. Read it to know:
 - `vault_path`: Location of your knowledge vault
+- `file_format`: File format for new vault files (`"md"` or `"org"`, default: `"md"`)
 - `modules`: Which features are enabled (pkm, todoist, git_audit)
 - `paths`: Configurable vault directory paths (use `jarvis_resolve_path` / `jarvis_list_paths` tools)
 - `memory.db_path`: Location of the ChromaDB database (default: `~/.jarvis/memory_db/`)
@@ -187,7 +188,7 @@ Paths are configurable via `~/.jarvis/config.json` under `paths`. Use `jarvis_re
 
 ## Memory System (Semantic Search)
 
-Jarvis has a ChromaDB-backed semantic memory that indexes vault .md files for meaning-based search.
+Jarvis has a ChromaDB-backed semantic memory that indexes vault files (`.md` and `.org`) for meaning-based search.
 
 ### Two-Tier Architecture
 
@@ -227,7 +228,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 | `/jarvis-memory-stats` | Show memory system health and stats |
 
 ### How It Works
-- Vault .md files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
+- Vault `.md` and `.org` files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
 - Stored at the path configured in `memory.db_path` (default: `~/.jarvis/memory_db/`, outside the vault to avoid Obsidian Sync pollution)
 - `/jarvis-recall` finds related content by meaning, not just keywords (returns both Tier 1 and Tier 2)
 - Journal entries are auto-indexed after creation (via `jarvis_index_file`)

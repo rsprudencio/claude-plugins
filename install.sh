@@ -337,6 +337,27 @@ if [ "$SKIP_CONFIG" != true ]; then
 
     ok "Vault: $VAULT_PATH"
     echo ""
+
+    # File format selection
+    echo -e "  ${BOLD}File Format${NC}"
+    echo "  Choose the format for new vault files (existing files are always readable)."
+    echo ""
+    echo -e "    ${CYAN}[1]${NC} Markdown (.md) — Standard, works with Obsidian (recommended)"
+    echo -e "    ${CYAN}[2]${NC} Org-mode (.org) — For Emacs/Org-mode users"
+    echo ""
+    ask "  Choice [1]: " FORMAT_CHOICE "1"
+
+    case "$FORMAT_CHOICE" in
+        2)
+            FILE_FORMAT="org"
+            ok "Format: Org-mode (.org)"
+            ;;
+        *)
+            FILE_FORMAT="md"
+            ok "Format: Markdown (.md)"
+            ;;
+    esac
+    echo ""
 fi
 
 # Shell integration (always ask, independent of config)
@@ -376,8 +397,9 @@ with open(sys.argv[1]) as f:
 cfg['vault_path'] = sys.argv[2]
 cfg['vault_confirmed'] = True
 cfg['configured_at'] = sys.argv[3]
+cfg['file_format'] = sys.argv[4]
 json.dump(cfg, sys.stdout, indent=2)
-" "$TEMPLATE" "$VAULT_PATH" "$TIMESTAMP" > "$JARVIS_HOME/config.json"
+" "$TEMPLATE" "$VAULT_PATH" "$TIMESTAMP" "${FILE_FORMAT:-md}" > "$JARVIS_HOME/config.json"
     else
         # Fallback: minimal config if template not found in plugin distribution
         cat > "$JARVIS_HOME/config.json" << FALLBACKEOF
@@ -447,9 +469,9 @@ echo -e "${BOLD}📚 Index Vault${NC}"
 echo ""
 
 if [ -d "$VAULT_PATH" ]; then
-    MD_COUNT=$(find "$VAULT_PATH" -name "*.md" -not -path "*/.obsidian/*" -not -path "*/templates/*" -not -path "*/.jarvis/*" 2>/dev/null | wc -l | tr -d ' ')
+    MD_COUNT=$(find "$VAULT_PATH" \( -name "*.md" -o -name "*.org" \) -not -path "*/.obsidian/*" -not -path "*/templates/*" -not -path "*/.jarvis/*" 2>/dev/null | wc -l | tr -d ' ')
     if [ "$MD_COUNT" -gt 5 ]; then
-        info "Found $MD_COUNT .md files in vault"
+        info "Found $MD_COUNT indexable files in vault"
 
         # Offer to index now (only if meaningful content exists)
         ask "  Index now for semantic search? [Y/n]: " INDEX_NOW "Y"
@@ -474,7 +496,7 @@ if [ -d "$VAULT_PATH" ]; then
             info "Skipped — index later by asking Jarvis: 'index my vault'"
         fi
     elif [ "$MD_COUNT" -gt 0 ]; then
-        info "Found $MD_COUNT .md files in vault"
+        info "Found $MD_COUNT indexable files in vault"
         info "Index later: ask Jarvis 'index my vault' or run /jarvis-settings"
         ok "Vault ready"
     else

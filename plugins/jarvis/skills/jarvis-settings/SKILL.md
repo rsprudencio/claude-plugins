@@ -20,6 +20,7 @@ Read `~/.jarvis/config.json` and show a summary:
 Jarvis Configuration
 --------------------
 Vault:        ~/.jarvis/vault/
+File Format:  Markdown (.md)
 Auto-Extract: background (min text: 200 chars)
 Memory DB:    ~/.jarvis/memory_db/ (configurable)
 Shell:        jarvis command in ~/.zshrc
@@ -40,12 +41,12 @@ AskUserQuestion:
       options:
         - label: "Vault path"
           description: "Change where Jarvis stores your knowledge"
+        - label: "File format"
+          description: "Choose Markdown (.md) or Org-mode (.org) for new files"
         - label: "Auto-Extract"
           description: "Configure observation capture from conversations"
         - label: "Advanced settings"
           description: "Promotion thresholds, vault paths, memory tuning"
-        - label: "View full config"
-          description: "Show all settings with current values"
       multiSelect: false
 ```
 
@@ -54,8 +55,9 @@ AskUserQuestion:
 If no config exists, skip the menu and walk through essentials:
 
 1. **Vault path** (Step 3a)
-2. **Auto-Extract mode** (Step 3b) - quick preset selection only
-3. **Shell integration** (Step 3e below)
+2. **File format** (Step 3b) - Markdown or Org-mode
+3. **Auto-Extract mode** (Step 3c) - quick preset selection only
+4. **Shell integration** (Step 3f below)
 4. Write full config with ALL defaults visible
 5. Offer: "Want to explore advanced settings? Or you're good to go."
 
@@ -89,7 +91,30 @@ Scan these locations for Obsidian vaults (contain `.obsidian/`):
 
 After changing vault path: ask if user wants to reindex for semantic search.
 
-### 3b. Auto-Extract
+### 3b. File format
+
+Show current format (`file_format` in config, default: `md`), then ask:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "File format for new vault files? (current: [format])"
+      header: "Format"
+      options:
+        - label: "Markdown (.md) (Recommended)"
+          description: "Standard format, works with Obsidian and most tools"
+        - label: "Org-mode (.org)"
+          description: "For Emacs/Org-mode users. Existing .md files remain readable."
+      multiSelect: false
+```
+
+Map to config values:
+- "Markdown" -> `"md"`
+- "Org-mode" -> `"org"`
+
+Update `file_format` in config. Note: this only affects **new** files. Existing files in either format are always readable and searchable.
+
+### 3c. Auto-Extract
 
 Show current mode, then ask:
 
@@ -141,7 +166,7 @@ Preset mapping:
 - "Conservative" -> `min_turn_chars: 500`
 - "Custom" -> Ask for `min_turn_chars` (int)
 
-### 3c. Advanced settings
+### 3d. Advanced settings
 
 ```
 AskUserQuestion:
@@ -224,13 +249,14 @@ Offer presets:
 
 Config key: `memory.per_prompt_search`
 
-### 3d. View full config
+### 3e. View full config
 
 Pretty-print `~/.jarvis/config.json` grouped by section:
 
 ```
 === Core ===
 vault_path:      ~/.jarvis/vault/
+file_format:     md
 vault_confirmed: true
 configured_at:   2026-02-08T10:30:00Z
 
@@ -269,7 +295,7 @@ notes:                  notes
 
 Highlight any non-default values with a marker. After viewing, return to main menu.
 
-### 3e. Shell integration
+### 3f. Shell integration
 
 If user chose this from advanced, or during first-time flow:
 
@@ -305,6 +331,7 @@ For first-time setup, read the default config template shipped with the plugin:
    - `vault_path` -> user's chosen path
    - `vault_confirmed` -> `true`
    - `configured_at` -> current ISO 8601 timestamp
+   - `file_format` -> user's chosen format (`"md"` or `"org"`)
    - `auto_extract.mode` -> user's chosen mode
 3. Write to `~/.jarvis/config.json`
 

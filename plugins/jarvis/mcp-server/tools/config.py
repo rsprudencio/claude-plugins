@@ -223,6 +223,17 @@ def get_per_prompt_config() -> dict:
     return {**defaults, **memory_config.get("per_prompt_search", {})}
 
 
+def get_file_format() -> str:
+    """Get configured file format for new file creation.
+
+    Returns 'md' or 'org'. Defaults to 'md' if not set or invalid.
+    Config key: file_format (top-level in ~/.jarvis/config.json).
+    """
+    config = get_config()
+    fmt = config.get("file_format", "md")
+    return fmt if fmt in ("md", "org") else "md"
+
+
 def get_expansion_config() -> dict:
     """Get query expansion configuration with defaults.
 

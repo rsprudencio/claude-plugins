@@ -1,12 +1,13 @@
-"""Markdown chunking for granular semantic search.
+"""Document chunking for granular semantic search.
 
-Splits markdown documents into heading-based chunks for more precise
-embeddings. Falls back to paragraph-based splitting for headingless files.
+Splits documents into heading-based chunks for more precise embeddings.
+Supports Markdown and Org-mode formats via format_support module.
+Falls back to paragraph-based splitting for headingless files.
 
 Algorithm:
-1. Strip frontmatter
+1. Strip frontmatter/properties
 2. If total content < min_chunk_chars: return as single chunk
-3. Find H2/H3 positions (code-block aware)
+3. Find heading positions (code-block aware, format-specific)
 4. Split at headings, then split oversized sections at paragraph boundaries
 5. If no headings: split at paragraph boundaries
 6. Merge undersized chunks into predecessor
@@ -42,16 +43,20 @@ _DEFAULT_MAX_CHARS = 1500
 _DEFAULT_HEADING_LEVELS = (2, 3)
 
 
-def chunk_markdown(content: str, config: Optional[dict] = None) -> ChunkResult:
-    """Split a markdown document into heading-based chunks.
+def chunk_document(content: str, config: Optional[dict] = None,
+                   fmt: str = "markdown") -> ChunkResult:
+    """Split a document into heading-based chunks (format-aware).
 
     Args:
-        content: Full markdown document text
+        content: Full document text
         config: Optional overrides for min_chunk_chars, max_chunk_chars, heading_levels
+        fmt: Format string ('markdown' or 'org')
 
     Returns:
         ChunkResult with list of Chunk objects
     """
+    from .format_support import strip_frontmatter, find_heading_positions
+
     config = config or {}
     min_chars = config.get("min_chunk_chars", _DEFAULT_MIN_CHARS)
     max_chars = config.get("max_chunk_chars", _DEFAULT_MAX_CHARS)
@@ -59,7 +64,7 @@ def chunk_markdown(content: str, config: Optional[dict] = None) -> ChunkResult:
     enabled = config.get("enabled", True)
 
     source_chars = len(content)
-    stripped = _strip_frontmatter(content)
+    stripped = strip_frontmatter(content, fmt)
 
     # If disabled or content too short, return as single chunk
     if not enabled or len(stripped.strip()) < min_chars:
@@ -71,8 +76,8 @@ def chunk_markdown(content: str, config: Optional[dict] = None) -> ChunkResult:
             was_chunked=False,
         )
 
-    # Find heading positions
-    positions = _find_heading_positions(stripped, heading_levels)
+    # Find heading positions (format-aware)
+    positions = find_heading_positions(stripped, heading_levels, fmt)
 
     if positions:
         raw_chunks = _split_at_positions(stripped, positions)
@@ -240,3 +245,13 @@ def _merge_small_chunks(
             merged.append((heading, level, text))
 
     return merged
+
+
+# Backward-compatible alias
+def chunk_markdown(content: str, config: Optional[dict] = None) -> ChunkResult:
+    """Split a markdown document into heading-based chunks.
+
+    Backward-compatible wrapper around chunk_document(). New code should
+    use chunk_document() directly with an explicit fmt parameter.
+    """
+    return chunk_document(content, config, fmt="markdown")

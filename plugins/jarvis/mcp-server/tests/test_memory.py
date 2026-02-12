@@ -2,7 +2,7 @@
 import os
 import pytest
 from tools.memory import (
-    _parse_frontmatter, _extract_title, _build_metadata,
+    _parse_frontmatter_for_file, _extract_title_for_file, _build_metadata,
     _should_skip, index_vault, index_file,
 )
 
@@ -12,25 +12,25 @@ class TestParseFrontmatter:
 
     def test_basic_frontmatter(self):
         content = "---\ntype: note\nimportance: high\n---\n# Title\nBody"
-        fm = _parse_frontmatter(content)
+        fm = _parse_frontmatter_for_file(content, "test.md")
         assert fm["type"] == "note"
         assert fm["importance"] == "high"
 
     def test_frontmatter_with_tags_list(self):
         content = "---\ntags:\n  - jarvis\n  - work\n  - python\n---\n# Title"
-        fm = _parse_frontmatter(content)
+        fm = _parse_frontmatter_for_file(content, "test.md")
         assert "tags" in fm
         assert "jarvis" in fm["tags"]
         assert "work" in fm["tags"]
 
     def test_no_frontmatter(self):
         content = "# Just a title\n\nSome body text."
-        fm = _parse_frontmatter(content)
+        fm = _parse_frontmatter_for_file(content, "test.md")
         assert fm == {}
 
     def test_quoted_values(self):
         content = '---\njarvis_id: "20260206143052"\ntitle: "My Note"\n---\n'
-        fm = _parse_frontmatter(content)
+        fm = _parse_frontmatter_for_file(content, "test.md")
         assert fm["jarvis_id"] == "20260206143052"
         assert fm["title"] == "My Note"
 
@@ -40,17 +40,17 @@ class TestExtractTitle:
 
     def test_h1_heading(self):
         content = "---\ntype: note\n---\n# My Great Title\n\nBody here."
-        title = _extract_title(content, "my-file.md")
+        title = _extract_title_for_file(content, "my-file.md")
         assert title == "My Great Title"
 
     def test_fallback_to_filename(self):
         content = "No heading here, just text."
-        title = _extract_title(content, "my-great-note.md")
+        title = _extract_title_for_file(content, "my-great-note.md")
         assert title == "My Great Note"
 
     def test_h2_not_used(self):
         content = "## This is H2, not H1\n\nBody."
-        title = _extract_title(content, "fallback-name.md")
+        title = _extract_title_for_file(content, "fallback-name.md")
         assert title == "Fallback Name"
 
 

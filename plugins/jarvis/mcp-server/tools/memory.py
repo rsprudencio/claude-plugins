@@ -18,10 +18,13 @@ from typing import Optional
 import chromadb
 
 from .config import get_verified_vault_path, get_chunking_config, get_scoring_config
-from .chunking import chunk_markdown
+from .chunking import chunk_document
 from .scoring import compute_importance
 from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
+from .format_support import (
+    detect_format, is_indexable, parse_frontmatter, extract_title, INDEXABLE_EXTENSIONS,
+)
 
 logger = logging.getLogger("jarvis-tools")
 
@@ -51,30 +54,16 @@ def _get_collection() -> chromadb.Collection:
     )
 
 
-def _parse_frontmatter(content: str) -> dict:
-    """Extract YAML frontmatter from markdown content."""
-    match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
-    if not match:
-        return {}
-    fm = {}
-    for line in match.group(1).split('\n'):
-        if ':' in line and not line.strip().startswith('-'):
-            key, _, value = line.partition(':')
-            fm[key.strip()] = value.strip().strip('"').strip("'")
-    # Extract list-style tags
-    tag_match = re.search(r'tags:\s*\n((?:\s+-\s+.*\n)*)', match.group(1) + '\n')
-    if tag_match:
-        tags = re.findall(r'-\s+(.+)', tag_match.group(1))
-        fm['tags'] = ','.join(t.strip().strip('"').strip("'") for t in tags)
-    return fm
+def _parse_frontmatter_for_file(content: str, filename: str) -> dict:
+    """Extract frontmatter/properties from content, detecting format from filename."""
+    fmt = detect_format(filename)
+    return parse_frontmatter(content, fmt)
 
 
-def _extract_title(content: str, filename: str) -> str:
-    """Get title from first H1 heading or filename."""
-    match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
-    if match:
-        return match.group(1).strip()
-    return Path(filename).stem.replace('-', ' ').title()
+def _extract_title_for_file(content: str, filename: str) -> str:
+    """Get title from content, detecting format from filename."""
+    fmt = detect_format(filename)
+    return extract_title(content, filename, fmt)
 
 
 def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
@@ -184,8 +173,9 @@ def _index_single_file(collection, content: str, frontmatter: dict,
     metadata['title'] = title
     metadata['parent_file'] = relative_path
 
-    # Chunk the document
-    chunk_result = chunk_markdown(content, chunking_config)
+    # Chunk the document (format-aware)
+    fmt = detect_format(relative_path)
+    chunk_result = chunk_document(content, chunking_config, fmt=fmt)
 
     # Shared scoring inputs (file-level)
     scoring_cfg = scoring_config if scoring_config.get("enabled", True) else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}}
@@ -269,8 +259,12 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
         except Exception:
             pass
 
-    # Collect files
-    md_files = glob.glob(os.path.join(search_path, '**', '*.md'), recursive=True)
+    # Collect indexable files (all supported formats)
+    indexable_files = []
+    for ext in INDEXABLE_EXTENSIONS:
+        indexable_files.extend(
+            glob.glob(os.path.join(search_path, '**', f'*{ext}'), recursive=True)
+        )
 
     files_indexed = 0
     chunks_total = 0
@@ -280,7 +274,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
     batch_docs = []
     batch_meta = []
 
-    for filepath in md_files:
+    for filepath in indexable_files:
         relative = os.path.relpath(filepath, vault_path)
 
         if _should_skip(relative, include_sensitive):
@@ -303,8 +297,8 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             if force:
                 _delete_existing_chunks(collection, relative)
 
-            frontmatter = _parse_frontmatter(content)
-            title = _extract_title(content, os.path.basename(filepath))
+            frontmatter = _parse_frontmatter_for_file(content, filepath)
+            title = _extract_title_for_file(content, os.path.basename(filepath))
 
             ids, docs, metas, n_chunks = _index_single_file(
                 collection, content, frontmatter, relative, title,
@@ -369,8 +363,8 @@ def index_file(relative_path: str) -> dict:
         # Clean up old chunks/legacy doc before re-indexing
         _delete_existing_chunks(collection, relative_path)
 
-        frontmatter = _parse_frontmatter(content)
-        title = _extract_title(content, os.path.basename(filepath))
+        frontmatter = _parse_frontmatter_for_file(content, relative_path)
+        title = _extract_title_for_file(content, relative_path)
 
         ids, docs, metas, n_chunks = _index_single_file(
             collection, content, frontmatter, relative_path, title,

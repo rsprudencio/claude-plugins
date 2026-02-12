@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from .namespaces import TIER2_TYPES, parse_id, get_tier, TIER_CHROMADB
+from .format_support import is_indexable
 
 logger = logging.getLogger("jarvis-tools")
 
@@ -162,8 +163,8 @@ def _store_vault_file(relative_path, content, mode, old_string, new_string,
     else:
         return {"success": False, "error": f"Invalid mode: '{mode}'. Use: write, append, edit"}
 
-    # Auto-index .md files to ChromaDB
-    if result.get("success") and auto_index and relative_path.endswith(".md"):
+    # Auto-index supported files (.md, .org) to ChromaDB
+    if result.get("success") and auto_index and is_indexable(relative_path):
         try:
             from .memory import index_file
             index_result = index_file(relative_path)

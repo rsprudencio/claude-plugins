@@ -2,7 +2,7 @@
 
 A plugin marketplace that turns Claude Code into **Jarvis** — a context-aware personal assistant with a knowledge vault, semantic memory, and strategic awareness.
 
-Jarvis manages a folder of markdown files (your "vault") as a personal knowledge base. It journals your thoughts, tracks your goals, searches by meaning, and learns from your conversations — all with a git-audited trail.
+Jarvis manages a folder of Markdown or Org-mode files (your "vault") as a personal knowledge base. It journals your thoughts, tracks your goals, searches by meaning, and learns from your conversations — all with a git-audited trail.
 
 ---
 
@@ -158,7 +158,7 @@ Python-based MCP server providing vault filesystem, git operations, semantic mem
 Jarvis has a two-tier semantic memory powered by ChromaDB:
 
 **Tier 1 — File-Backed (Permanent)**
-Your vault markdown files and strategic memories. Git-tracked, visible in Obsidian, searchable via `/jarvis-recall`.
+Your vault files (`.md` or `.org`) and strategic memories. Git-tracked, visible in Obsidian/Emacs, searchable via `/jarvis-recall`.
 
 **Tier 2 — Ephemeral (Auto-Generated)**
 Observations captured from your conversations, patterns, summaries. Lives in ChromaDB only. Review with `/jarvis-promote` — valuable items get promoted to permanent vault files.
@@ -218,7 +218,8 @@ All configuration lives in `~/.jarvis/config.json`. The installer writes a full 
 Run `/jarvis-settings` anytime to update configuration through a guided menu.
 
 Key config sections:
-- **vault_path** — Where your markdown files live
+- **vault_path** — Where your vault files live
+- **file_format** — `"md"` (Markdown, default) or `"org"` (Org-mode) for new files
 - **memory.auto_extract** — Observation capture mode and thresholds
 - **promotion** — When ephemeral content gets promoted to vault files
 - **paths** — Vault directory layout (all customizable)
@@ -351,4 +352,4 @@ See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**v1.15.0** | [Issues](https://github.com/rsprudencio/claude-plugins/issues) | [Changelog](CLAUDE.md#version-history)
+**v1.23.0** | [Issues](https://github.com/rsprudencio/claude-plugins/issues) | [Changelog](CLAUDE.md#version-history)

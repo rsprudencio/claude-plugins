@@ -307,14 +307,16 @@ Include suggestion in output `sensitive_suggestion` field. **Do NOT search these
    - Example: `["journal/", "notes/"]` → search only these
 
 3. **Date filter**: Extract date from file path for journal entries
-   - Journal path format: `{journal_jarvis}/YYYY/MM/[id]-[slug].md` (resolve `journal_jarvis` path via `jarvis_resolve_path`)
+   - Journal path format: `{journal_jarvis}/YYYY/MM/[id]-[slug][ext]` (resolve `journal_jarvis` path via `jarvis_resolve_path`)
    - Parse YYYY-MM from path, compare to date range
    - For other files: use file modification time as fallback
+
+**Note on file formats**: Vault files may be `.md` (Markdown) or `.org` (Org-mode). When globbing for files, use patterns like `**/*.{md,org}` or search for both extensions. Both formats are fully indexed and searchable.
 
 ### Step 4: Execute Search
 
 1. Use **Grep** for text search (if `search_text` provided)
-2. Use **Glob** for pattern matching (e.g., `journal/jarvis/2026/**/*.md`)
+2. Use **Glob** for pattern matching — include both `.md` and `.org` extensions
 3. Use **Read** to extract frontmatter and content for filtering
 4. Apply filters:
    - `entry_types`: Match against frontmatter `type` field

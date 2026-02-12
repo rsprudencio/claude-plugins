@@ -23,6 +23,9 @@ Tools - Memory Maintenance:
 
 Tools - Path Configuration:
 - jarvis_resolve_path, jarvis_list_paths
+
+Tools - Format Support:
+- jarvis_get_format_reference
 """
 import asyncio
 import json
@@ -416,6 +419,11 @@ TOOLS = [
             "required": ["doc_id"]
         }
     ),
+    Tool(
+        name="jarvis_get_format_reference",
+        description="Get the active file format reference (syntax guide + journal entry template). Returns the format guide content and configured extension. Call this before creating new vault files to know the correct syntax.",
+        inputSchema={"type": "object", "properties": {}}
+    ),
 ]
 
 
@@ -482,6 +490,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "jarvis_promote": lambda args: promote(
             doc_id=args.get("doc_id", "")
         ),
+        "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
     }
 
     try:
@@ -599,6 +608,40 @@ def handle_list_paths() -> dict:
         "vault_path": get_vault_path(),
         "warnings": warnings,
         **result,
+    }
+
+
+def handle_get_format_reference() -> dict:
+    """Handle jarvis_get_format_reference.
+
+    Reads the configured file format and returns the corresponding
+    syntax reference guide with extension info.
+    """
+    from tools.config import get_file_format
+    import os
+
+    fmt = get_file_format()
+    ext = ".org" if fmt == "org" else ".md"
+    ref_filename = "org.md" if fmt == "org" else "markdown.md"
+
+    # Look for format reference in plugin defaults
+    ref_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..", "defaults", "formats", ref_filename
+    )
+    ref_path = os.path.normpath(ref_path)
+
+    if os.path.isfile(ref_path):
+        with open(ref_path, 'r', encoding='utf-8') as f:
+            reference_content = f.read()
+    else:
+        reference_content = f"Format reference file not found: {ref_path}"
+
+    return {
+        "success": True,
+        "format": fmt,
+        "extension": ext,
+        "reference": reference_content,
     }
 
 

@@ -16,6 +16,13 @@ from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
 from .config import get_expansion_config, get_per_prompt_config
+from .format_support import detect_format
+
+
+def _detect_format_from_entry(entry: dict) -> str:
+    """Detect format from a query result entry's parent_file path."""
+    parent_file = entry.get("parent_file", "")
+    return detect_format(parent_file) if parent_file else "markdown"
 
 
 def _compute_relevance(distance: float, importance: str = "medium",
@@ -55,15 +62,21 @@ def _compute_relevance(distance: float, importance: str = "medium",
     return max(0.0, min(1.0, base + boost + recency_boost))
 
 
-def _extract_preview(content: str, max_len: int = 150) -> str:
+def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") -> str:
     """Extract a clean preview from document content.
 
-    Strips YAML frontmatter and truncates at a word boundary.
+    Strips frontmatter/properties and leading headings, format-aware.
     """
-    # Strip frontmatter
-    stripped = re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, count=1, flags=re.DOTALL)
-    # Strip leading headings and whitespace
-    stripped = re.sub(r'^#+\s+.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+    from .format_support import strip_frontmatter
+
+    stripped = strip_frontmatter(content, fmt)
+    # Strip leading headings (both # and * styles)
+    if fmt == "org":
+        stripped = re.sub(r'^\*+\s+.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+        # Strip #+TITLE lines
+        stripped = re.sub(r'^#\+TITLE:.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+    else:
+        stripped = re.sub(r'^#+\s+.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
     # Collapse whitespace
     stripped = re.sub(r'\s+', ' ', stripped).strip()
 
@@ -287,7 +300,8 @@ def query_vault(query: str, n_results: int = 5,
     for rank, entry in enumerate(deduped, start=1):
         meta = entry["metadata"]
         doc_id = entry["doc_id"]
-        preview = _extract_preview(entry["document"]) if entry["document"] else ""
+        entry_fmt = _detect_format_from_entry(entry)
+        preview = _extract_preview(entry["document"], fmt=entry_fmt) if entry["document"] else ""
         title = meta.get("title", doc_id)
         doc_type = meta.get("vault_type") or meta.get("type", "unknown")
         doc_importance = meta.get("importance", "medium")
@@ -455,7 +469,8 @@ def semantic_context(query: str, max_results: int = 5,
     matches = []
     for entry in deduped:
         meta = entry["metadata"]
-        content = _extract_preview(entry["document"], max_len=max_content_length) if entry["document"] else ""
+        entry_fmt = _detect_format_from_entry(entry)
+        content = _extract_preview(entry["document"], max_len=max_content_length, fmt=entry_fmt) if entry["document"] else ""
         doc_type = meta.get("vault_type") or meta.get("type", "unknown")
         chunk_heading = meta.get("chunk_heading", "")
 
