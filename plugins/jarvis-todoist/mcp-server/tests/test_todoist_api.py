@@ -58,12 +58,11 @@ def make_project(**kwargs):
 
 
 def make_due(**kwargs):
-    """Create a mock Due object."""
+    """Create a mock Due object matching SDK's Due dataclass."""
     defaults = {
-        "date": str(date.today()),
+        "date": date.today(),
         "string": "today",
         "is_recurring": False,
-        "datetime": None,
         "timezone": None,
     }
     defaults.update(kwargs)
@@ -214,7 +213,7 @@ class TestFindTasks:
         mock_api.get_tasks.assert_called_once_with(section_id="sec123")
 
     def test_find_with_due_date(self, mock_api):
-        due = make_due(date="2026-02-15", string="Feb 15")
+        due = make_due(date=date(2026, 2, 15), string="Feb 15")
         tasks = [make_task(id="1", due=due)]
         mock_api.get_tasks.return_value = iter([tasks])
 

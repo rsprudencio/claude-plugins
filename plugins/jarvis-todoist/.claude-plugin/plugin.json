@@ -1,7 +1,7 @@
 {
   "name": "jarvis-todoist",
   "description": "Todoist integration with built-in REST API - task management analyst (requires jarvis)",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "author": {
     "name": "Raphael Prudencio"
   },

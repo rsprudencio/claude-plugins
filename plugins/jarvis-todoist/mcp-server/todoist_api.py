@@ -109,10 +109,9 @@ def _task_to_dict(task) -> dict:
     }
     if task.due:
         result["due"] = {
-            "date": task.due.date,
+            "date": str(task.due.date),
             "string": task.due.string,
             "is_recurring": task.due.is_recurring,
-            "datetime": task.due.datetime,
             "timezone": task.due.timezone,
         }
     else:
