@@ -107,7 +107,7 @@ claude              # Then type /jarvis:jarvis to activate mid-session
 | Plugin | What | Install |
 |--------|------|---------|
 | **jarvis** (core) | Vault management, journals, git audit, semantic memory, auto-extract | Required |
-| **jarvis-todoist** | Smart task routing, inbox capture, Todoist sync | Optional (needs [Todoist MCP](https://todoist.com)) |
+| **jarvis-todoist** | Smart task routing, inbox capture, Todoist sync | Optional (needs [API token](https://app.todoist.com/app/settings/integrations/developer)) |
 | **jarvis-strategic** | Orient briefings, catch-up, summaries, pattern analysis | Optional |
 
 ### 14 Skills (Slash Commands)
