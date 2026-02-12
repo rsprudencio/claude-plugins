@@ -17,14 +17,14 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.22.0",
+      "version": "1.22.1",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
     "jarvis-todoist": {
-      "version": "1.4.0",
-      "description": "Todoist integration with built-in REST API (local stdio MCP, no external HTTP dependency)",
+      "version": "1.4.2",
+      "description": "Todoist integration via official SDK (local stdio MCP, no external HTTP dependency)",
       "provides": ["agents/todoist", "skills/todoist", "mcp/todoist-api"],
       "requires": ["jarvis"]
     },
@@ -570,7 +570,7 @@
       "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md files"]
     },
     "todoist_api": {
-      "purpose": "Todoist REST API access for task management (local stdio, no session drops)",
+      "purpose": "Todoist API access via official SDK for task management (local stdio, no session drops)",
       "transport": "stdio (via jarvis-todoist plugin MCP server)",
       "config": "API token in ~/.jarvis/config.json → todoist.api_token",
       "tools": ["find_tasks", "find_tasks_by_date", "complete_tasks", "update_tasks", "add_tasks", "delete_object", "user_info", "find_projects", "add_projects"]

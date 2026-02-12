@@ -2,8 +2,8 @@
 
 ## Architecture
 
-This plugin includes a built-in MCP server that wraps the Todoist REST API v2 directly.
-No external HTTP MCP (ai.todoist.net) is needed — the local stdio transport never drops sessions.
+This plugin includes a built-in MCP server that wraps the Todoist API via the official
+`todoist-api-python` SDK. No external HTTP MCP is needed — the local stdio transport never drops sessions.
 
 **Configuration**: API token must be set in `~/.jarvis/config.json` → `todoist.api_token`.
 Get your token at https://app.todoist.com/app/settings/integrations/developer

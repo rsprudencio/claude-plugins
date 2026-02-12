@@ -12,16 +12,15 @@ from .namespaces import get_tier, TIER_CHROMADB
 
 def _remove_vault_file(id: str, confirm: bool = False) -> dict:
     """Delete a vault file from disk and clean its ChromaDB index entries."""
-    from .config import get_verified_vault_path
+    from .file_ops import validate_vault_path
     from .memory import _get_collection, _delete_existing_chunks
 
     file_path = id[7:].split("#chunk-")[0]  # strip vault:: and #chunk-N
 
-    vault_path, error = get_verified_vault_path()
-    if error:
+    valid, full_path, error = validate_vault_path(file_path)
+    if not valid:
         return {"success": False, "error": error}
 
-    full_path = os.path.join(vault_path, file_path)
     if not os.path.exists(full_path):
         return {
             "success": False,

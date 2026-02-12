@@ -81,6 +81,19 @@ class TestRemoveById:
         assert "name=" in result["error"]
 
 
+    def test_delete_vault_path_traversal_blocked(self, mock_config):
+        """Path traversal in vault ID is rejected by validate_vault_path."""
+        result = remove(id="vault::../../etc/passwd", confirm=True)
+        assert not result["success"]
+        assert "escapes vault boundary" in result["error"]
+
+    def test_delete_vault_path_traversal_no_confirm(self, mock_config):
+        """Path traversal is blocked even before the confirm gate."""
+        result = remove(id="vault::../secret.txt")
+        assert not result["success"]
+        assert "escapes vault boundary" in result["error"]
+
+
 class TestRemoveByName:
     """Test name-based memory deletion."""
 
