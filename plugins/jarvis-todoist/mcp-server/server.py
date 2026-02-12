@@ -2,9 +2,9 @@
 """
 Jarvis Todoist API MCP Server
 
-Local stdio MCP server wrapping Todoist REST API v2.
-Eliminates dependency on external HTTP MCP (ai.todoist.net/mcp)
-which drops sessions during idle periods.
+Local stdio MCP server wrapping the Todoist API via the official
+todoist-api-python SDK. Eliminates dependency on external HTTP MCP
+(ai.todoist.net/mcp) which drops sessions during idle periods.
 
 Tools:
 - find_tasks, find_tasks_by_date

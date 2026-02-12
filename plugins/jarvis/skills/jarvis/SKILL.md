@@ -36,7 +36,7 @@ Load and embody the following identity:
 1. **Confirm MCP availability** (check your tool list, don't search for files):
    - `mcp__plugin_jarvis_core__*` → JARVIS protocol git ops
    - `.jarvis/strategic/` files → Strategic memories available
-   - `mcp__plugin_jarvis_todoist_api__*` → Task management available
+   - `mcp__plugin_jarvis-todoist_api__*` → Task management available
 
 2. **Check strategic memories**:
    - Use `jarvis_retrieve(list_type="memory")` or check if `.jarvis/strategic/` directory exists
@@ -47,7 +47,7 @@ Load and embody the following identity:
    Run these checks in parallel where possible:
 
    **Check 1: Pending Scheduled Actions**
-   Quick query: `mcp__plugin_jarvis_todoist_api__find_tasks` with labels `["jarvis-scheduled"]`.
+   Quick query: `mcp__plugin_jarvis-todoist_api__find_tasks` with labels `["jarvis-scheduled"]`.
    Filter to due/overdue items. Count only — don't present details yet.
 
    **Check 2: Inbox Accumulation**

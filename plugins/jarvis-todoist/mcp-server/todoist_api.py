@@ -1,7 +1,7 @@
 """
-Todoist REST API client for Jarvis.
+Todoist API client for Jarvis.
 
-Sync httpx client wrapping Todoist REST API v2 and Sync API v9.
+Uses the official todoist-api-python SDK for API access.
 Reads API token from ~/.jarvis/config.json → todoist.api_token.
 """
 import json
@@ -9,15 +9,11 @@ import logging
 import os
 from datetime import date, timedelta
 
-import httpx
+import requests
 
 logger = logging.getLogger("jarvis-todoist-api")
 
-REST_BASE = "https://api.todoist.com/rest/v2"
-SYNC_URL = "https://api.todoist.com/sync/v9/sync"
-TIMEOUT = 30.0
-
-_client: httpx.Client | None = None
+_api = None
 _inbox_id: str | None = None
 
 
@@ -41,19 +37,14 @@ def _get_token() -> str:
     return token
 
 
-def _get_client() -> httpx.Client:
-    """Lazy singleton httpx.Client with bearer token from config."""
-    global _client
-    if _client is None:
+def _get_api():
+    """Lazy singleton TodoistAPI client."""
+    global _api
+    if _api is None:
+        from todoist_api_python.api import TodoistAPI
         token = _get_token()
-        _client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            timeout=TIMEOUT,
-        )
-    return _client
+        _api = TodoistAPI(token)
+    return _api
 
 
 def _resolve_inbox_id() -> str:
@@ -62,46 +53,35 @@ def _resolve_inbox_id() -> str:
     if _inbox_id is not None:
         return _inbox_id
 
-    client = _get_client()
-    resp = client.get(f"{REST_BASE}/projects")
-    resp.raise_for_status()
-    projects = resp.json()
-
-    for project in projects:
-        if project.get("is_inbox_project"):
-            _inbox_id = project["id"]
-            return _inbox_id
+    api = _get_api()
+    for page in api.get_projects():
+        for project in page:
+            if project.is_inbox_project:
+                _inbox_id = project.id
+                return _inbox_id
 
     raise ValueError("Could not find inbox project in Todoist")
 
 
 def _handle_error(e: Exception) -> dict:
     """Convert exceptions to standardized error responses."""
-    if isinstance(e, httpx.HTTPStatusError):
-        status = e.response.status_code
-        error_map = {
-            401: "Unauthorized - check your API token",
-            403: "Forbidden - insufficient permissions",
-            404: "Not found",
-            429: "Rate limited - too many requests, try again later",
-        }
-        msg = error_map.get(status, f"HTTP {status}: {e.response.text[:200]}")
-        result = {"success": False, "error": msg, "status_code": status}
-        if status == 429:
-            retry_after = e.response.headers.get("Retry-After")
-            if retry_after:
-                result["retry_after_seconds"] = int(retry_after)
-        return result
-    elif isinstance(e, httpx.TimeoutException):
-        return {"success": False, "error": "Request timed out"}
-    elif isinstance(e, httpx.ConnectError):
-        return {"success": False, "error": "Could not connect to Todoist API"}
-    elif isinstance(e, httpx.RequestError):
-        return {"success": False, "error": f"Request error: {str(e)}"}
-    elif isinstance(e, ValueError):
-        return {"success": False, "error": str(e)}
-    else:
-        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+    error_str = str(e)
+    if isinstance(e, ValueError):
+        return {"success": False, "error": error_str}
+
+    # The SDK raises Exception with HTTP status info
+    if "401" in error_str:
+        return {"success": False, "error": "Unauthorized - check your API token", "status_code": 401}
+    elif "403" in error_str:
+        return {"success": False, "error": "Forbidden - insufficient permissions", "status_code": 403}
+    elif "404" in error_str:
+        return {"success": False, "error": "Not found", "status_code": 404}
+    elif "429" in error_str:
+        return {"success": False, "error": "Rate limited - too many requests, try again later", "status_code": 429}
+    elif "410" in error_str:
+        return {"success": False, "error": "API endpoint deprecated - update todoist-api-python", "status_code": 410}
+
+    return {"success": False, "error": f"Todoist API error: {error_str}"}
 
 
 def _resolve_project_id(project_id: str | None) -> str | None:
@@ -109,6 +89,77 @@ def _resolve_project_id(project_id: str | None) -> str | None:
     if project_id and project_id.lower() == "inbox":
         return _resolve_inbox_id()
     return project_id
+
+
+def _task_to_dict(task) -> dict:
+    """Convert a Task object to a JSON-serializable dict."""
+    result = {
+        "id": task.id,
+        "content": task.content,
+        "description": task.description,
+        "labels": task.labels,
+        "priority": task.priority,
+        "order": task.order,
+        "project_id": task.project_id,
+        "section_id": task.section_id,
+        "parent_id": task.parent_id,
+        "creator_id": task.creator_id,
+        "is_completed": task.is_completed,
+        "url": task.url,
+    }
+    if task.due:
+        result["due"] = {
+            "date": task.due.date,
+            "string": task.due.string,
+            "is_recurring": task.due.is_recurring,
+            "datetime": task.due.datetime,
+            "timezone": task.due.timezone,
+        }
+    else:
+        result["due"] = None
+    if task.duration:
+        result["duration"] = {
+            "amount": task.duration.amount,
+            "unit": task.duration.unit,
+        }
+    else:
+        result["duration"] = None
+    return result
+
+
+def _project_to_dict(project) -> dict:
+    """Convert a Project object to a JSON-serializable dict."""
+    return {
+        "id": project.id,
+        "name": project.name,
+        "color": project.color,
+        "is_inbox_project": project.is_inbox_project,
+        "is_favorite": project.is_favorite,
+        "view_style": project.view_style,
+        "parent_id": project.parent_id,
+        "order": project.order,
+        "url": project.url,
+    }
+
+
+def _parse_duration(dur_str: str) -> tuple[int, str] | None:
+    """Parse duration string (e.g., '2h', '90m', '2h30m') to (amount, unit)."""
+    minutes = 0
+    if "h" in dur_str:
+        parts = dur_str.split("h")
+        hours_part = parts[0].strip()
+        if "." in hours_part:
+            minutes += int(float(hours_part) * 60)
+        else:
+            minutes += int(hours_part) * 60
+        if len(parts) > 1 and parts[1].strip().rstrip("m"):
+            minutes += int(parts[1].strip().rstrip("m"))
+    elif "m" in dur_str:
+        minutes += int(dur_str.rstrip("m"))
+    return (minutes, "minute") if minutes > 0 else None
+
+
+PRIORITY_MAP = {"p1": 4, "p2": 3, "p3": 2, "p4": 1}
 
 
 # ---------------------------------------------------------------------------
@@ -125,51 +176,39 @@ def find_tasks(
 ) -> dict:
     """Find tasks by project, labels, or search text."""
     try:
-        client = _get_client()
+        api = _get_api()
         resolved_project = _resolve_project_id(project_id)
 
-        # Build filter string for the API
-        filter_parts = []
+        # Build kwargs for get_tasks
+        kwargs = {}
         if resolved_project:
-            filter_parts.append(f"#project_id:{resolved_project}")
+            kwargs["project_id"] = resolved_project
         if section_id:
-            filter_parts.append(f"/section_id:{section_id}")
-        if labels:
-            for label in labels:
-                filter_parts.append(f"@{label}")
+            kwargs["section_id"] = section_id
+        if labels and len(labels) == 1:
+            kwargs["label"] = labels[0]
 
-        # Use /tasks endpoint with optional filter
-        params = {}
-        if resolved_project and not labels and not search_text:
-            # Simple project filter - use project_id param directly
-            params["project_id"] = resolved_project
-        elif section_id and not labels and not search_text:
-            params["section_id"] = section_id
-        elif labels and not resolved_project and not search_text:
-            # Label filter - use label param
-            params["label"] = labels[0] if len(labels) == 1 else labels[0]
+        tasks = []
+        for page in api.get_tasks(**kwargs):
+            tasks.extend(page)
+            if len(tasks) >= limit * 2:  # fetch enough for client-side filtering
+                break
 
-        resp = client.get(f"{REST_BASE}/tasks", params=params)
-        resp.raise_for_status()
-        tasks = resp.json()
-
-        # Client-side label filtering (API label param is single-label only)
+        # Client-side label filtering (API supports single label only)
         if labels:
             label_set = set(labels)
-            tasks = [t for t in tasks if label_set.issubset(set(t.get("labels", [])))]
+            tasks = [t for t in tasks if label_set.issubset(set(t.labels))]
 
         if search_text:
             search_lower = search_text.lower()
             tasks = [
                 t for t in tasks
-                if search_lower in t.get("content", "").lower()
-                or search_lower in t.get("description", "").lower()
+                if search_lower in t.content.lower()
+                or search_lower in (t.description or "").lower()
             ]
 
-        # Apply limit
         tasks = tasks[:limit]
-
-        return {"success": True, "tasks": tasks, "count": len(tasks)}
+        return {"success": True, "tasks": [_task_to_dict(t) for t in tasks], "count": len(tasks)}
 
     except Exception as e:
         return _handle_error(e)
@@ -184,7 +223,7 @@ def find_tasks_by_date(
 ) -> dict:
     """Find tasks by date range with overdue handling."""
     try:
-        client = _get_client()
+        api = _get_api()
 
         # Resolve start date
         if start_date == "today":
@@ -208,21 +247,20 @@ def find_tasks_by_date(
             else:
                 filter_str = f"due before: {end + timedelta(days=1)} & due after: {start - timedelta(days=1)}"
 
-        params = {"filter": filter_str}
-        resp = client.get(f"{REST_BASE}/tasks", params=params)
-        resp.raise_for_status()
-        tasks = resp.json()
+        tasks = []
+        for page in api.filter_tasks(query=filter_str):
+            tasks.extend(page)
 
         # Client-side label filter
         if labels:
             label_set = set(labels)
-            tasks = [t for t in tasks if label_set.issubset(set(t.get("labels", [])))]
+            tasks = [t for t in tasks if label_set.issubset(set(t.labels))]
 
         tasks = tasks[:limit]
 
         return {
             "success": True,
-            "tasks": tasks,
+            "tasks": [_task_to_dict(t) for t in tasks],
             "count": len(tasks),
             "filter": filter_str,
         }
@@ -235,61 +273,53 @@ def add_tasks(tasks: list[dict]) -> dict:
     """Create one or more tasks. Each dict may have: content, description,
     dueString, priority, labels, projectId, sectionId, parentId, deadlineDate, duration."""
     try:
-        client = _get_client()
+        api = _get_api()
         created = []
         errors = []
 
         for i, task in enumerate(tasks):
             try:
-                body = {"content": task["content"]}
+                kwargs = {"content": task["content"]}
 
-                # Map fields to Todoist REST API names
-                field_map = {
-                    "description": "description",
-                    "dueString": "due_string",
-                    "priority": "priority",
-                    "labels": "labels",
-                    "parentId": "parent_id",
-                    "sectionId": "section_id",
-                    "deadlineDate": "deadline_date",
-                    "duration": "duration",
-                    "order": "order",
-                }
-                for src, dst in field_map.items():
-                    if src in task and task[src] is not None:
-                        body[dst] = task[src]
+                if task.get("description"):
+                    kwargs["description"] = task["description"]
+                if task.get("dueString"):
+                    kwargs["due_string"] = task["dueString"]
+                if task.get("labels"):
+                    kwargs["labels"] = task["labels"]
+                if task.get("parentId"):
+                    kwargs["parent_id"] = task["parentId"]
+                if task.get("sectionId"):
+                    kwargs["section_id"] = task["sectionId"]
+                if task.get("order") is not None:
+                    kwargs["order"] = task["order"]
 
                 # Handle projectId with inbox resolution
-                if "projectId" in task and task["projectId"]:
-                    body["project_id"] = _resolve_project_id(task["projectId"])
+                if task.get("projectId"):
+                    kwargs["project_id"] = _resolve_project_id(task["projectId"])
 
-                # Convert priority: p1=4, p2=3, p3=2, p4=1 (Todoist inverts)
-                if "priority" in body and isinstance(body["priority"], str):
-                    priority_map = {"p1": 4, "p2": 3, "p3": 2, "p4": 1}
-                    body["priority"] = priority_map.get(body["priority"], 1)
+                # Convert priority: p1=4, p2=3, p3=2, p4=1
+                if task.get("priority"):
+                    p = task["priority"]
+                    kwargs["priority"] = PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
+
+                # Handle deadlineDate
+                if task.get("deadlineDate"):
+                    kwargs["deadline_date"] = date.fromisoformat(task["deadlineDate"])
 
                 # Handle duration format (e.g., "2h", "90m", "2h30m")
-                if "duration" in body and isinstance(body["duration"], str):
-                    dur_str = body["duration"]
-                    minutes = 0
-                    if "h" in dur_str:
-                        parts = dur_str.split("h")
-                        hours_part = parts[0].strip()
-                        if "." in hours_part:
-                            minutes += int(float(hours_part) * 60)
-                        else:
-                            minutes += int(hours_part) * 60
-                        if len(parts) > 1 and parts[1].strip().rstrip("m"):
-                            minutes += int(parts[1].strip().rstrip("m"))
-                    elif "m" in dur_str:
-                        minutes += int(dur_str.rstrip("m"))
-                    if minutes > 0:
-                        body["duration"] = minutes
-                        body["duration_unit"] = "minute"
+                if task.get("duration"):
+                    if isinstance(task["duration"], str):
+                        parsed = _parse_duration(task["duration"])
+                        if parsed:
+                            kwargs["duration"] = parsed[0]
+                            kwargs["duration_unit"] = parsed[1]
+                    else:
+                        kwargs["duration"] = task["duration"]
+                        kwargs["duration_unit"] = "minute"
 
-                resp = client.post(f"{REST_BASE}/tasks", json=body)
-                resp.raise_for_status()
-                created.append(resp.json())
+                result = api.add_task(**kwargs)
+                created.append(_task_to_dict(result))
 
             except Exception as e:
                 err = _handle_error(e)
@@ -314,14 +344,13 @@ def add_tasks(tasks: list[dict]) -> dict:
 def complete_tasks(ids: list[str]) -> dict:
     """Complete (close) one or more tasks by ID."""
     try:
-        client = _get_client()
+        api = _get_api()
         completed = []
         errors = []
 
         for task_id in ids:
             try:
-                resp = client.post(f"{REST_BASE}/tasks/{task_id}/close")
-                resp.raise_for_status()
+                api.complete_task(task_id)
                 completed.append(task_id)
             except Exception as e:
                 err = _handle_error(e)
@@ -344,65 +373,52 @@ def complete_tasks(ids: list[str]) -> dict:
 def update_tasks(tasks: list[dict]) -> dict:
     """Update one or more tasks. Each dict must have 'id' plus fields to update."""
     try:
-        client = _get_client()
+        api = _get_api()
         updated = []
         errors = []
 
         for task in tasks:
             try:
                 task_id = task["id"]
-                body = {}
+                kwargs = {}
 
-                field_map = {
-                    "content": "content",
-                    "description": "description",
-                    "dueString": "due_string",
-                    "priority": "priority",
-                    "labels": "labels",
-                    "parentId": "parent_id",
-                    "sectionId": "section_id",
-                    "deadlineDate": "deadline_date",
-                    "duration": "duration",
-                    "order": "order",
-                }
-                for src, dst in field_map.items():
-                    if src in task:
-                        body[dst] = task[src]
-
-                if "projectId" in task:
-                    body["project_id"] = _resolve_project_id(task["projectId"])
+                if "content" in task:
+                    kwargs["content"] = task["content"]
+                if "description" in task:
+                    kwargs["description"] = task["description"]
+                if "dueString" in task:
+                    kwargs["due_string"] = task["dueString"]
+                if "labels" in task:
+                    kwargs["labels"] = task["labels"]
+                if "order" in task:
+                    kwargs["order"] = task["order"]
 
                 # Convert priority string to int
-                if "priority" in body and isinstance(body["priority"], str):
-                    priority_map = {"p1": 4, "p2": 3, "p3": 2, "p4": 1}
-                    body["priority"] = priority_map.get(body["priority"], 1)
+                if "priority" in task:
+                    p = task["priority"]
+                    kwargs["priority"] = PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
 
                 # Handle deadlineDate removal
-                if body.get("deadline_date") == "remove":
-                    body["deadline_date"] = None
+                if "deadlineDate" in task:
+                    dd = task["deadlineDate"]
+                    if dd == "remove":
+                        kwargs["deadline_date"] = None
+                    else:
+                        kwargs["deadline_date"] = date.fromisoformat(dd)
 
-                # Handle duration format
-                if "duration" in body and isinstance(body["duration"], str):
-                    dur_str = body["duration"]
-                    minutes = 0
-                    if "h" in dur_str:
-                        parts = dur_str.split("h")
-                        hours_part = parts[0].strip()
-                        if "." in hours_part:
-                            minutes += int(float(hours_part) * 60)
-                        else:
-                            minutes += int(hours_part) * 60
-                        if len(parts) > 1 and parts[1].strip().rstrip("m"):
-                            minutes += int(parts[1].strip().rstrip("m"))
-                    elif "m" in dur_str:
-                        minutes += int(dur_str.rstrip("m"))
-                    if minutes > 0:
-                        body["duration"] = minutes
-                        body["duration_unit"] = "minute"
+                # Handle duration
+                if "duration" in task:
+                    if isinstance(task["duration"], str):
+                        parsed = _parse_duration(task["duration"])
+                        if parsed:
+                            kwargs["duration"] = parsed[0]
+                            kwargs["duration_unit"] = parsed[1]
+                    else:
+                        kwargs["duration"] = task["duration"]
+                        kwargs["duration_unit"] = "minute"
 
-                resp = client.post(f"{REST_BASE}/tasks/{task_id}", json=body)
-                resp.raise_for_status()
-                updated.append(resp.json())
+                result = api.update_task(task_id, **kwargs)
+                updated.append(_task_to_dict(result))
 
             except Exception as e:
                 err = _handle_error(e)
@@ -425,14 +441,18 @@ def update_tasks(tasks: list[dict]) -> dict:
 def delete_object(object_type: str, object_id: str) -> dict:
     """Delete a task, project, section, or comment."""
     try:
-        client = _get_client()
-        valid_types = {"task": "tasks", "project": "projects", "section": "sections", "comment": "comments"}
-        endpoint = valid_types.get(object_type)
-        if not endpoint:
-            return {"success": False, "error": f"Invalid type '{object_type}'. Valid: {', '.join(valid_types.keys())}"}
+        api = _get_api()
+        valid_types = {"task", "project", "section", "comment"}
+        if object_type not in valid_types:
+            return {"success": False, "error": f"Invalid type '{object_type}'. Valid: {', '.join(sorted(valid_types))}"}
 
-        resp = client.delete(f"{REST_BASE}/{endpoint}/{object_id}")
-        resp.raise_for_status()
+        delete_map = {
+            "task": api.delete_task,
+            "project": api.delete_project,
+            "section": api.delete_section,
+            "comment": api.delete_comment,
+        }
+        delete_map[object_type](object_id)
         return {"success": True, "deleted_type": object_type, "deleted_id": object_id}
 
     except Exception as e:
@@ -440,16 +460,20 @@ def delete_object(object_type: str, object_id: str) -> dict:
 
 
 def user_info() -> dict:
-    """Get user info via Todoist Sync API v9."""
+    """Get user info via Todoist API.
+
+    The SDK doesn't expose a user_info method, so we call the
+    /api/v1/user endpoint directly using requests.
+    """
     try:
-        client = _get_client()
-        resp = client.post(
-            SYNC_URL,
-            json={"sync_token": "*", "resource_types": ["user"]},
+        token = _get_token()
+        response = requests.get(
+            "https://api.todoist.com/api/v1/user",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        user = data.get("user", {})
+        response.raise_for_status()
+        user = response.json()
 
         return {
             "success": True,
@@ -470,16 +494,20 @@ def user_info() -> dict:
 def find_projects(search: str | None = None) -> dict:
     """List all projects, optionally filter by name."""
     try:
-        client = _get_client()
-        resp = client.get(f"{REST_BASE}/projects")
-        resp.raise_for_status()
-        projects = resp.json()
+        api = _get_api()
+        projects = []
+        for page in api.get_projects():
+            projects.extend(page)
 
         if search:
             search_lower = search.lower()
-            projects = [p for p in projects if search_lower in p.get("name", "").lower()]
+            projects = [p for p in projects if search_lower in p.name.lower()]
 
-        return {"success": True, "projects": projects, "count": len(projects)}
+        return {
+            "success": True,
+            "projects": [_project_to_dict(p) for p in projects],
+            "count": len(projects),
+        }
 
     except Exception as e:
         return _handle_error(e)
@@ -488,24 +516,23 @@ def find_projects(search: str | None = None) -> dict:
 def add_projects(projects: list[dict]) -> dict:
     """Create one or more projects. Each dict may have: name, parentId, viewStyle, isFavorite."""
     try:
-        client = _get_client()
+        api = _get_api()
         created = []
         errors = []
 
         for i, project in enumerate(projects):
             try:
-                body = {"name": project["name"]}
+                kwargs = {"name": project["name"]}
 
                 if "parentId" in project:
-                    body["parent_id"] = project["parentId"]
+                    kwargs["parent_id"] = project["parentId"]
                 if "viewStyle" in project:
-                    body["view_style"] = project["viewStyle"]
+                    kwargs["view_style"] = project["viewStyle"]
                 if "isFavorite" in project:
-                    body["is_favorite"] = project["isFavorite"]
+                    kwargs["is_favorite"] = project["isFavorite"]
 
-                resp = client.post(f"{REST_BASE}/projects", json=body)
-                resp.raise_for_status()
-                created.append(resp.json())
+                result = api.add_project(**kwargs)
+                created.append(_project_to_dict(result))
 
             except Exception as e:
                 err = _handle_error(e)
@@ -528,6 +555,6 @@ def add_projects(projects: list[dict]) -> dict:
 
 def reset_client():
     """Reset the client and cached state. Used for testing."""
-    global _client, _inbox_id
-    _client = None
+    global _api, _inbox_id
+    _api = None
     _inbox_id = None

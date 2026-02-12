@@ -43,7 +43,7 @@ Parse the user's request and create a Todoist recurring task:
 2. Parse the recurrence ("weekly", "every Monday", "daily at 9am")
 3. Create the task:
    ```
-   Use mcp__plugin_jarvis_todoist_api__add_tasks:
+   Use mcp__plugin_jarvis-todoist_api__add_tasks:
    - content: "[Description from user]"
    - labels: ["jarvis-scheduled", "jarvis-action:[action]"]
    - dueString: "[natural language recurrence]"
@@ -68,7 +68,7 @@ Created. Next due: Sunday Feb 9 at 7:00 PM.
 Query all tasks with the `jarvis-scheduled` label and present as a table:
 
 ```
-Use mcp__plugin_jarvis_todoist_api__find_tasks:
+Use mcp__plugin_jarvis-todoist_api__find_tasks:
 - labels: ["jarvis-scheduled"]
 - limit: 50
 ```
@@ -88,7 +88,7 @@ Present results:
 **Delete** the Todoist task (do NOT complete — completing triggers recurrence):
 
 ```
-Use mcp__plugin_jarvis_todoist_api__delete_object:
+Use mcp__plugin_jarvis-todoist_api__delete_object:
 - type: "task"
 - id: "[task_id]"
 ```

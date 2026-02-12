@@ -302,7 +302,7 @@ This is configured via `memory.per_prompt_search` in `~/.jarvis/config.json` (en
 
 When you first engage with the user in a session, run these quick checks (direct tool calls, in parallel):
 
-1. **Scheduled actions**: `mcp__plugin_jarvis_todoist_api__find_tasks` with labels `["jarvis-scheduled"]` — count due/overdue items
+1. **Scheduled actions**: `mcp__plugin_jarvis-todoist_api__find_tasks` with labels `["jarvis-scheduled"]` — count due/overdue items
 2. **Inbox accumulation**: `mcp__plugin_jarvis_core__jarvis_list_vault_dir` on the `inbox` path (resolve via `jarvis_resolve_path`) — note file count
 3. **Journal recency**: `mcp__plugin_jarvis_core__jarvis_query_history` with `operation=create`, `limit=1` — note if >3 days
 
