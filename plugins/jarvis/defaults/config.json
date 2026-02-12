@@ -49,6 +49,9 @@
     "age_importance_score": 0.7,
     "on_promoted_file_deleted": "remove"
   },
+  "todoist": {
+    "api_token": ""
+  },
   "paths": {
     "journal_jarvis": "journal/jarvis",
     "journal_daily": "journal/daily",

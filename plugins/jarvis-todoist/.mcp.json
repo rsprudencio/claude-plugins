@@ -1,0 +1,6 @@
+{
+  "api": {
+    "command": "uvx",
+    "args": ["--from", "${CLAUDE_PLUGIN_ROOT}/mcp-server", "jarvis-todoist-api"]
+  }
+}

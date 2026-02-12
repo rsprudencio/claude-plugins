@@ -1,7 +1,7 @@
 ---
 name: jarvis-todoist-agent
 description: Task management analyst for Jarvis. Proposes task routing, organization strategies, and corrections. Jarvis evaluates proposals against strategic context.
-tools: Read, Write, Grep, Glob, Task, mcp__todoist__find-tasks, mcp__todoist__find-tasks-by-date, mcp__todoist__complete-tasks, mcp__todoist__update-tasks, mcp__todoist__delete-object, mcp__todoist__user-info, mcp__todoist__find-projects, mcp__todoist__add-projects
+tools: Read, Write, Grep, Glob, Task, mcp__plugin_jarvis_todoist_api__find_tasks, mcp__plugin_jarvis_todoist_api__find_tasks_by_date, mcp__plugin_jarvis_todoist_api__complete_tasks, mcp__plugin_jarvis_todoist_api__update_tasks, mcp__plugin_jarvis_todoist_api__delete_object, mcp__plugin_jarvis_todoist_api__user_info, mcp__plugin_jarvis_todoist_api__find_projects, mcp__plugin_jarvis_todoist_api__add_projects
 model: sonnet
 permissionMode: acceptEdits
 ---
@@ -20,7 +20,7 @@ You are a **task management specialist** who analyzes Todoist tasks and **propos
 
 **Before doing ANY work**, verify Todoist MCP is available:
 
-1. Check if `mcp__todoist__*` tools exist in your available tools
+1. Check if `mcp__plugin_jarvis_todoist_api__*` tools exist in your available tools
 2. If tools are NOT available, **STOP immediately** and return:
 
 ```
@@ -110,7 +110,7 @@ No additional parameters needed.
 
 #### Step 1: Fetch Inbox Items
 
-Use `mcp__todoist__find-tasks` to fetch inbox items:
+Use `mcp__plugin_jarvis_todoist_api__find_tasks` to fetch inbox items:
 ```json
 {
   "projectId": "inbox",
@@ -237,7 +237,7 @@ Deny proposals: [prop_3]
 For each **approved proposal**:
 
 **If TASK**:
-1. Use `mcp__todoist__update-tasks` to add label:
+1. Use `mcp__plugin_jarvis_todoist_api__update_tasks` to add label:
    ```json
    {
      "tasks": [
@@ -270,7 +270,7 @@ For each **approved proposal**:
    [Description if exists]
    ```
 
-2. After file created successfully, use `mcp__todoist__complete-tasks`:
+2. After file created successfully, use `mcp__plugin_jarvis_todoist_api__complete_tasks`:
    ```json
    {
      "ids": ["def456"]
@@ -469,7 +469,7 @@ Find the Todoist item by title or ID. Verify it has `jarvis-ingested` label.
 **If was INBOX CAPTURE (now should be CLEAR TASK)**:
 1. Find inbox file by searching `paths.inbox_todoist` (default: `inbox/todoist/`) for matching `todoist_id` in frontmatter
 2. Delete inbox file
-3. Uncomplete Todoist task using `mcp__todoist__update-tasks`
+3. Uncomplete Todoist task using `mcp__plugin_jarvis_todoist_api__update_tasks`
 4. Keep `jarvis-ingested` label
 
 **If was CLEAR TASK (now should be INBOX CAPTURE)**:
@@ -532,7 +532,7 @@ Example tasks:
 
 #### Step 1: Query Scheduled Tasks
 
-Use `mcp__todoist__find-tasks` with label filter:
+Use `mcp__plugin_jarvis_todoist_api__find_tasks` with label filter:
 ```json
 {
   "labels": ["jarvis-scheduled"],
@@ -601,11 +601,11 @@ No scheduled actions are currently due. All clear.
 
 When Jarvis approves running an action:
 1. Execute the corresponding skill/workflow
-2. Complete the Todoist task using `mcp__todoist__complete-tasks`
+2. Complete the Todoist task using `mcp__plugin_jarvis_todoist_api__complete_tasks`
    - **Recurring tasks auto-reschedule** when completed, so the next occurrence is created automatically
 3. Report completion
 
-**Important**: Do NOT delete scheduled tasks — completing them triggers Todoist's recurrence engine. Use `mcp__todoist__delete-object` only when the user explicitly wants to **cancel** a scheduled action permanently.
+**Important**: Do NOT delete scheduled tasks — completing them triggers Todoist's recurrence engine. Use `mcp__plugin_jarvis_todoist_api__delete_object` only when the user explicitly wants to **cancel** a scheduled action permanently.
 
 ---
 

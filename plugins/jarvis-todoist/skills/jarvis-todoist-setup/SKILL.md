@@ -66,10 +66,10 @@ Then re-ask the setup mode question (without the "explain" option).
 
 Fetch in parallel:
 
-1. **User info**: `mcp__todoist__user-info` - Get plan type (Free/Pro/Business)
-2. **Projects**: `mcp__todoist__find-projects` - Get all existing projects
-3. **Inbox tasks**: `mcp__todoist__find-tasks` with `projectId: "inbox"`, `limit: 100`
-4. **Recent tasks from all projects**: `mcp__todoist__find-tasks-by-date` with `startDate: "today"`, `daysCount: 30`
+1. **User info**: `mcp__plugin_jarvis_todoist_api__user_info` - Get plan type (Free/Pro/Business)
+2. **Projects**: `mcp__plugin_jarvis_todoist_api__find_projects` - Get all existing projects
+3. **Inbox tasks**: `mcp__plugin_jarvis_todoist_api__find_tasks` with `projectId: "inbox"`, `limit: 100`
+4. **Recent tasks from all projects**: `mcp__plugin_jarvis_todoist_api__find_tasks_by_date` with `startDate: "today"`, `daysCount: 30`
 
 ### Project Limit Check
 
@@ -219,7 +219,7 @@ options:
     description: "Route to Inbox instead"
 ```
 
-Use `mcp__todoist__add-projects` to create approved projects.
+Use `mcp__plugin_jarvis_todoist_api__add_projects` to create approved projects.
 
 ---
 

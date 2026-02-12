@@ -1,11 +1,11 @@
 [project]
-name = "jarvis-tools"
-version = "1.22.0"
-description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
+name = "jarvis-todoist-api"
+version = "1.4.0"
+description = "Todoist REST API tools for Jarvis"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
-    "chromadb>=0.5.0",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-jarvis-tools = "server:main_sync"
+jarvis-todoist-api = "server:main_sync"
 
 [build-system]
 requires = ["hatchling"]

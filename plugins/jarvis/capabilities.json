@@ -17,16 +17,16 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.19.0",
+      "version": "1.22.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
     "jarvis-todoist": {
-      "version": "1.3.0",
-      "description": "Todoist integration with smart task routing and inbox capture",
-      "provides": ["agents/todoist", "skills/todoist"],
-      "requires": ["jarvis", "todoist-mcp"]
+      "version": "1.4.0",
+      "description": "Todoist integration with built-in REST API (local stdio MCP, no external HTTP dependency)",
+      "provides": ["agents/todoist", "skills/todoist", "mcp/todoist-api"],
+      "requires": ["jarvis"]
     },
     "jarvis-strategic": {
       "version": "1.1.0",
@@ -569,10 +569,11 @@
       "storage": "~/.jarvis/memory_db/ (outside vault to avoid Obsidian Sync pollution)",
       "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md files"]
     },
-    "todoist_mcp": {
-      "purpose": "Todoist API access for task management",
-      "endpoint": "HTTP MCP at ai.todoist.net/mcp",
-      "tools": ["find-tasks", "find-tasks-by-date", "complete-tasks", "update-tasks", "add-tasks", "user-info", "find-projects", "add-projects", "find-sections", "add-sections", "find-comments", "add-comments", "manage-assignments", "find-activity", "get-overview", "search", "fetch"]
+    "todoist_api": {
+      "purpose": "Todoist REST API access for task management (local stdio, no session drops)",
+      "transport": "stdio (via jarvis-todoist plugin MCP server)",
+      "config": "API token in ~/.jarvis/config.json → todoist.api_token",
+      "tools": ["find_tasks", "find_tasks_by_date", "complete_tasks", "update_tasks", "add_tasks", "delete_object", "user_info", "find_projects", "add_projects"]
     }
   },
 
