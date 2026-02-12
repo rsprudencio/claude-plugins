@@ -627,7 +627,7 @@ def handle_get_format_reference() -> dict:
     # Look for format reference in plugin defaults
     ref_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "..", "defaults", "formats", ref_filename
+        "defaults", "formats", ref_filename
     )
     ref_path = os.path.normpath(ref_path)
 
