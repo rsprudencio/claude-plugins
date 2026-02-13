@@ -408,6 +408,90 @@ class TestSemanticContext:
         sources = [m["source"] for m in result["matches"]]
         assert sources.count("notes/goals.md") <= 1
 
+    def test_budget_split_mixed_tiers(self, mock_config):
+        """Budget splits 50/50 between tier2 (full) and vault (reference) content."""
+        from tools.memory import _get_collection
+        from tools.query import semantic_context
+
+        collection = _get_collection()
+
+        # Add 5 vault files (~120 chars each as references = 600 chars)
+        vault_ids = [f"vault::notes/goal{i}.md" for i in range(5)]
+        vault_docs = [f"Career goal document about leadership topic {i}" for i in range(5)]
+        vault_metas = [
+            {"type": "vault", "vault_type": "note", "namespace": "vault::",
+             "directory": "notes", "title": f"Goal {i}", "importance": "high",
+             "parent_file": f"notes/goal{i}.md"}
+            for i in range(5)
+        ]
+
+        # Add 3 tier2 observations (~300 chars each = 900 chars)
+        obs_ids = [f"obs::{1770000000000 + i}" for i in range(3)]
+        obs_docs = [
+            f"User career preference observation number {i}: "
+            + "detailed information about work habits and goals. " * 4
+            for i in range(3)
+        ]
+        obs_metas = [
+            {"type": "observation", "namespace": "obs::",
+             "importance": "high"}
+            for _ in range(3)
+        ]
+
+        collection.add(
+            ids=vault_ids + obs_ids,
+            documents=vault_docs + obs_docs,
+            metadatas=vault_metas + obs_metas,
+        )
+
+        # Budget=2000: half=1000 per side
+        # Vault side: 1000/120 ≈ 8 refs (enough for all 5)
+        # Tier2 side: 1000/~300 ≈ 3 obs (enough for all 3)
+        result = semantic_context("career goals leadership", budget=2000, threshold=0.0)
+        matches = result["matches"]
+
+        vault_matches = [m for m in matches if m.get("display_mode") == "reference"]
+        tier2_matches = [m for m in matches if m.get("display_mode") == "full"]
+
+        # Both tiers should be represented
+        assert len(vault_matches) > 0, "Expected vault references in results"
+        assert len(tier2_matches) > 0, "Expected tier2 full content in results"
+
+        # Budget tracking should report usage for both halves
+        budget_used = result.get("budget_used", {})
+        assert budget_used.get("tier2", 0) > 0, "Expected tier2 budget usage"
+        assert budget_used.get("vault", 0) > 0, "Expected vault budget usage"
+        assert budget_used["tier2"] + budget_used["vault"] <= 2000
+
+    def test_budget_overflow_from_empty_half(self, mock_config):
+        """Unused budget from one half overflows to the other."""
+        from tools.memory import _get_collection
+        from tools.query import semantic_context
+
+        collection = _get_collection()
+
+        # Add ONLY vault files (no tier2) — all budget should be available for vault
+        vault_ids = [f"vault::notes/item{i}.md" for i in range(50)]
+        vault_docs = [f"Important career topic and leadership content {i}" for i in range(50)]
+        vault_metas = [
+            {"type": "vault", "vault_type": "note", "namespace": "vault::",
+             "directory": "notes", "title": f"Item {i}", "importance": "high",
+             "parent_file": f"notes/item{i}.md"}
+            for i in range(50)
+        ]
+        collection.add(ids=vault_ids, documents=vault_docs, metadatas=vault_metas)
+
+        # Budget=1200: half=600. Vault refs cost ~120 each.
+        # Without overflow: 600/120 = 5 vault refs
+        # With overflow: (600+600)/120 = 10 vault refs
+        result = semantic_context("career leadership", budget=1200, threshold=0.0)
+        vault_matches = [m for m in result["matches"] if m.get("display_mode") == "reference"]
+
+        # Should get more than 5 (the non-overflow limit) because tier2 half is unused
+        assert len(vault_matches) > 5, (
+            f"Expected >5 vault refs with overflow, got {len(vault_matches)}"
+        )
+
 
 # --- Per-Prompt Config Tests ---
 
