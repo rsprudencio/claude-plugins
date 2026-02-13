@@ -3,11 +3,11 @@ import pytest
 from tools.namespaces import (
     vault_id, global_memory_id, project_memory_id, memory_namespace,
     observation_id, pattern_id, summary_id, code_id,
-    learning_id, decision_id,
+    learning_id, decision_id, worklog_id,
     parse_id, ParsedId, _slugify, ContentType,
     NAMESPACE_VAULT, NAMESPACE_MEMORY_GLOBAL, NAMESPACE_OBS,
     NAMESPACE_PATTERN, NAMESPACE_SUMMARY, NAMESPACE_CODE,
-    NAMESPACE_LEARNING, NAMESPACE_DECISION,
+    NAMESPACE_LEARNING, NAMESPACE_DECISION, NAMESPACE_WORKLOG,
     ALL_TYPES, TIER2_TYPES,
 )
 
@@ -298,8 +298,8 @@ class TestConstants:
         assert ContentType.LEARNING == "learning"
         assert ContentType.DECISION == "decision"
 
-    def test_all_types_has_eleven(self):
-        assert len(ALL_TYPES) == 11
+    def test_all_types_count(self):
+        assert len(ALL_TYPES) == 12
         assert "vault" in ALL_TYPES
         assert "memory" in ALL_TYPES
         assert "observation" in ALL_TYPES
@@ -313,7 +313,7 @@ class TestConstants:
         assert "decision" in ALL_TYPES
 
     def test_tier2_types(self):
-        assert len(TIER2_TYPES) == 9
+        assert len(TIER2_TYPES) == 10
         assert "vault" not in TIER2_TYPES
         assert "memory" not in TIER2_TYPES
         assert "observation" in TIER2_TYPES
@@ -357,8 +357,8 @@ class TestNewNamespaceConstants:
         assert ContentType.LEARNING == "learning"
         assert ContentType.DECISION == "decision"
 
-    def test_all_types_has_eleven(self):
-        assert len(ALL_TYPES) == 11
+    def test_all_types_count(self):
+        assert len(ALL_TYPES) == 12
         assert "relationship" in ALL_TYPES
         assert "hint" in ALL_TYPES
         assert "plan" in ALL_TYPES
@@ -492,3 +492,42 @@ class TestParseIdNewNamespaces:
         assert parsed.namespace == "decision"
         assert parsed.full_prefix == "decision::"
         assert parsed.content_id == "use-python"
+
+    def test_parse_worklog_id(self):
+        parsed = parse_id("worklog::1738857000000")
+        assert parsed.namespace == "worklog"
+        assert parsed.full_prefix == "worklog::"
+        assert parsed.content_id == "1738857000000"
+
+
+class TestWorklogId:
+    """Tests for worklog ID generation."""
+
+    def test_explicit_timestamp(self):
+        assert worklog_id(1738857000000) == "worklog::1738857000000"
+
+    def test_auto_timestamp(self):
+        wid = worklog_id()
+        assert wid.startswith("worklog::")
+        ts = int(wid.split("::")[1])
+        assert ts > 0
+
+    def test_namespace_constant(self):
+        assert NAMESPACE_WORKLOG == "worklog::"
+
+    def test_content_type_value(self):
+        assert ContentType.WORKLOG == "worklog"
+
+    def test_worklog_in_all_types(self):
+        assert "worklog" in ALL_TYPES
+
+    def test_worklog_in_tier2_types(self):
+        assert "worklog" in TIER2_TYPES
+
+    def test_tier2_prefix_includes_worklog(self):
+        from tools.namespaces import TIER_2_PREFIXES
+        assert "worklog::" in TIER_2_PREFIXES
+
+    def test_get_tier_worklog(self):
+        from tools.namespaces import get_tier, TIER_CHROMADB
+        assert get_tier("worklog::1738857000000") == TIER_CHROMADB

@@ -28,6 +28,7 @@ NAMESPACE_HINT = "hint::"
 NAMESPACE_PLAN = "plan::"
 NAMESPACE_LEARNING = "learning::"
 NAMESPACE_DECISION = "decision::"
+NAMESPACE_WORKLOG = "worklog::"
 
 # Content type enum (for metadata 'type' field)
 # Using (str, Enum) so values work as plain strings in ChromaDB metadata,
@@ -46,6 +47,7 @@ class ContentType(str, Enum):
     RELATIONSHIP = "relationship"  # Entity relationship mapping
     HINT = "hint"                  # Contextual suggestion
     PLAN = "plan"                  # Strategy or task plan
+    WORKLOG = "worklog"            # Intent-focused activity record (what user worked on)
 
 
 ALL_TYPES = [t.value for t in ContentType]
@@ -56,7 +58,7 @@ TIER2_TYPES = [t.value for t in ContentType if t not in (ContentType.VAULT, Cont
 TIER_FILE = "file"
 TIER_CHROMADB = "chromadb"
 TIER_1_PREFIXES = frozenset({"vault::", "memory::"})
-TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::"})
+TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::", "worklog::"})
 
 
 # --- ID Generators ---
@@ -140,6 +142,13 @@ def decision_id(name: str) -> str:
     return f"decision::{_slugify(name)}"
 
 
+def worklog_id(timestamp_ms: Optional[int] = None) -> str:
+    """Generate a worklog ID from epoch milliseconds."""
+    if timestamp_ms is None:
+        timestamp_ms = int(time.time() * 1000)
+    return f"worklog::{timestamp_ms}"
+
+
 # --- Tier Detection ---
 
 def get_tier(doc_id: str) -> str:
@@ -169,7 +178,7 @@ def get_tier(doc_id: str) -> str:
 @dataclass
 class ParsedId:
     """Decomposed document ID."""
-    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision"
+    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision", "worklog"
     full_prefix: str     # "vault::", "memory::global::", "obs::", etc.
     content_id: str      # The part after the prefix
     tier: str = TIER_FILE  # "file" or "chromadb"
@@ -227,6 +236,9 @@ def parse_id(doc_id: str) -> ParsedId:
 
     if doc_id.startswith("decision::"):
         return ParsedId("decision", "decision::", doc_id[10:], tier)
+
+    if doc_id.startswith("worklog::"):
+        return ParsedId("worklog", "worklog::", doc_id[9:], tier)
 
     # Bare path without namespace prefix — default to vault
     return ParsedId("vault", "vault::", doc_id, tier)

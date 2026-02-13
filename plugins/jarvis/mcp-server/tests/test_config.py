@@ -186,6 +186,27 @@ class TestGetDebugInfo:
         assert info["config_contents"].get("vault_path") is None
 
 
+class TestWorklogConfig:
+    """Tests for worklog configuration getter."""
+
+    def test_defaults(self, mock_config):
+        """Should return defaults when not configured."""
+        from tools.config import get_worklog_config
+
+        config = get_worklog_config()
+        assert config["enabled"] is True
+        assert config["dedup_threshold"] == 0.7
+
+    def test_override_from_config(self, mock_config):
+        """Should merge user config over defaults."""
+        from tools.config import get_worklog_config
+
+        mock_config.set(memory={"worklog": {"enabled": False, "dedup_threshold": 0.8}})
+        config = get_worklog_config()
+        assert config["enabled"] is False
+        assert config["dedup_threshold"] == 0.8
+
+
 class TestMcpTransportConfig:
     """Tests for MCP transport configuration getters."""
 

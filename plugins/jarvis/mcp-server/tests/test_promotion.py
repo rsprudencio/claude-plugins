@@ -326,6 +326,25 @@ class TestPromote:
             content = f.read()
         assert "type: decision" in content
 
+    def test_promote_worklog(self, mock_config):
+        """Test promoting a worklog."""
+        write_result = tier2_write(
+            content="Adding Docker containerization for Jarvis MCP servers",
+            content_type="worklog",
+            importance_score=0.9,
+            extra_metadata={"workstream": "Jarvis Plugin", "activity_type": "coding"},
+        )
+
+        result = promote(write_result["id"])
+        assert result["success"]
+        assert "worklog" in result["promoted_path"]
+
+        # Verify file content
+        full_path = os.path.join(mock_config.vault_path, result["promoted_path"])
+        with open(full_path) as f:
+            content = f.read()
+        assert "type: worklog" in content
+
     def test_promote_with_project_path_nests(self, mock_config):
         """Project-scoped observation promotes to nested directory."""
         write_result = tier2_write(

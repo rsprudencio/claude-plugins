@@ -105,6 +105,14 @@
       "plugin": "jarvis"
     },
 
+    "jarvis-worklog": {
+      "command": "/jarvis:jarvis-worklog",
+      "triggers": ["worklog", "what did I work on", "work summary", "weekly activity"],
+      "description": "Review auto-captured worklog entries grouped by workstream",
+      "what_it_does": "Queries worklog Tier 2 entries by date range (default: today), groups by workstream, shows timeline of activities. Can create journal entries from worklog data.",
+      "plugin": "jarvis"
+    },
+
     "jarvis-schedule": {
       "command": "/jarvis:jarvis-schedule",
       "triggers": ["schedule", "scheduled actions"],
@@ -390,8 +398,8 @@
     },
 
     "content_types": {
-      "_count": 11,
-      "types": ["vault", "memory", "observation", "pattern", "learning", "decision", "summary", "code", "relationship", "hint", "plan"]
+      "_count": 12,
+      "types": ["vault", "memory", "observation", "pattern", "learning", "decision", "summary", "code", "relationship", "hint", "plan", "worklog"]
     },
 
     "unified_api": {
@@ -430,7 +438,8 @@
       "extraction": {
         "model": "Haiku (fast, ~$0.001-0.01 per extraction)",
         "focus": "User preferences, architectural decisions, workflow patterns, project context, behavioral insights",
-        "output": "Tier 2 observation with importance score, tags, and project context metadata (project_dir, git_branch)"
+        "output": "Tier 2 observation with importance score, tags, and project context metadata (project_dir, git_branch)",
+        "worklog": "Single worklog entry per extraction capturing what the user was working on, categorized by workstream"
       }
     }
   },
@@ -444,6 +453,7 @@
       ".jarvis/memories/patterns/": "Promoted patterns from Tier 2",
       ".jarvis/memories/learnings/": "Promoted learnings from Tier 2",
       ".jarvis/memories/decisions/": "Promoted decisions from Tier 2",
+      ".jarvis/memories/worklogs/": "Promoted worklogs from Tier 2",
       "journal/daily/": "User's daily notes",
       "notes/": "Main knowledge base (open access)",
       "work/": "Work-related content (open access)",
@@ -511,6 +521,11 @@
       "max_expansion_terms": { "type": "integer", "default": 5, "description": "Cap on added terms per query" },
       "synonyms": { "type": "object", "default": {}, "description": "Override/extend trigger->terms mappings" },
       "intent_patterns": { "type": "array", "default": [], "description": "Custom intent detection patterns" }
+    },
+
+    "memory_worklog": {
+      "enabled": { "type": "boolean", "default": true, "description": "Enable worklog extraction alongside observations" },
+      "dedup_threshold": { "type": "float", "default": 0.7, "description": "Jaccard word-overlap threshold for dedup within a session (0.0-1.0)" }
     },
 
     "promotion": {
@@ -617,6 +632,10 @@
       "description": "Review and promote auto-captured observations",
       "steps": ["Say '/jarvis-promote' to browse Tier 2 content", "Preview items of interest", "Promote valuable observations to permanent vault files", "Check health with '/jarvis-memory-stats'"]
     },
+    "worklog_review": {
+      "description": "Review what you worked on today or this week",
+      "steps": ["Say '/jarvis-worklog' to see today's activity", "Review workstream-grouped entries", "Optionally create a journal entry from worklog data"]
+    },
     "ad_hoc_research": {
       "description": "Search vault for information on a topic",
       "steps": ["Ask Jarvis to find information", "Explorer agent searches vault (keyword + semantic)", "Results presented with sources"]
@@ -659,7 +678,8 @@
       "Keep strategic memories updated — they're Jarvis's long-term context at .jarvis/strategic/",
       "Use specific entry types (incident-log, learning, idea) for better categorization",
       "Use /jarvis-recall for semantic search — finds related content by meaning, not just keywords",
-      "Auto-extract passively captures observations from your conversations — review with /jarvis-promote"
+      "Auto-extract passively captures observations from your conversations — review with /jarvis-promote",
+      "Worklog entries auto-track what you work on — review with /jarvis-worklog to see your day's activity"
     ],
     "performance": [
       "Jarvis delegates to sub-agents to preserve main context window",

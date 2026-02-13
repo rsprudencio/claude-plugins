@@ -495,3 +495,83 @@ class TestTier2Upsert:
 
         read_result = tier2_read(doc_id)
         assert float(read_result["metadata"]["importance_score"]) == 0.9
+
+
+class TestTier2Worklog:
+    """Test worklog content type."""
+
+    def test_write_worklog(self, mock_config):
+        """Test writing a worklog entry."""
+        result = tier2_write(
+            content="Adding Docker containerization for Jarvis MCP servers",
+            content_type="worklog",
+            extra_metadata={"workstream": "Jarvis Plugin", "activity_type": "coding"},
+        )
+        assert result["success"]
+        assert "worklog::" in result["id"]
+        assert result["content_type"] == "worklog"
+
+    def test_worklog_metadata(self, mock_config):
+        """Test worklog metadata is stored correctly."""
+        result = tier2_write(
+            content="Debugging VMPulse alerts",
+            content_type="worklog",
+            extra_metadata={
+                "workstream": "VMPulse",
+                "activity_type": "debugging",
+                "session_id": "test-session-123",
+            },
+            session_id="test-session-123",
+        )
+        assert result["success"]
+
+        read_result = tier2_read(result["id"])
+        assert read_result["metadata"]["workstream"] == "VMPulse"
+        assert read_result["metadata"]["activity_type"] == "debugging"
+        assert read_result["metadata"]["session_id"] == "test-session-123"
+
+    def test_worklog_in_valid_types(self):
+        """Test that worklog is in VALID_CONTENT_TYPES."""
+        from tools.tier2 import VALID_CONTENT_TYPES
+        assert "worklog" in VALID_CONTENT_TYPES
+
+    def test_list_worklogs_by_session_id(self, mock_config):
+        """Test filtering worklogs by session_id."""
+        # Write two worklogs with different session IDs
+        tier2_write(
+            content="Task A",
+            content_type="worklog",
+            session_id="session-1",
+            extra_metadata={"workstream": "misc", "activity_type": "coding"},
+        )
+        tier2_write(
+            content="Task B",
+            content_type="worklog",
+            session_id="session-2",
+            extra_metadata={"workstream": "misc", "activity_type": "coding"},
+        )
+
+        # Filter by session-1
+        result = tier2_list(content_type="worklog", session_id="session-1")
+        assert result["success"]
+        assert result["total"] == 1
+        assert result["documents"][0]["content"] == "Task A"
+
+    def test_list_worklogs_no_session_filter(self, mock_config):
+        """Test listing all worklogs without session filter."""
+        tier2_write(
+            content="Task X",
+            content_type="worklog",
+            session_id="s1",
+            extra_metadata={"workstream": "misc", "activity_type": "coding"},
+        )
+        tier2_write(
+            content="Task Y",
+            content_type="worklog",
+            session_id="s2",
+            extra_metadata={"workstream": "misc", "activity_type": "coding"},
+        )
+
+        result = tier2_list(content_type="worklog")
+        assert result["success"]
+        assert result["total"] == 2

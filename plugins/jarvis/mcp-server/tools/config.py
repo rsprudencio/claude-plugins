@@ -291,6 +291,24 @@ def get_expansion_config() -> dict:
 
 
 
+def get_worklog_config() -> dict:
+    """Get worklog configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Whether worklog extraction is active (default True)
+    - dedup_threshold: Jaccard word-overlap threshold for dedup (default 0.7)
+
+    Config lives at memory.worklog in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "dedup_threshold": 0.7,
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("worklog", {})}
+
+
 def get_mcp_transport() -> str:
     """Get MCP transport mode. Returns 'local', 'container', or 'remote'."""
     return get_config().get("mcp_transport", "local")

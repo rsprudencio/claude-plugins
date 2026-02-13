@@ -42,6 +42,10 @@
       "max_expansion_terms": 5,
       "synonyms": {},
       "intent_patterns": []
+    },
+    "worklog": {
+      "enabled": true,
+      "dedup_threshold": 0.7
     }
   },
   "promotion": {
@@ -70,6 +74,7 @@
     "patterns_promoted": ".jarvis/memories/patterns",
     "summaries_promoted": ".jarvis/memories/summaries",
     "learnings_promoted": ".jarvis/memories/learnings",
-    "decisions_promoted": ".jarvis/memories/decisions"
+    "decisions_promoted": ".jarvis/memories/decisions",
+    "worklogs_promoted": ".jarvis/memories/worklogs"
   }
 }

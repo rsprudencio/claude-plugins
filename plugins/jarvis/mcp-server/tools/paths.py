@@ -33,6 +33,7 @@ _VAULT_RELATIVE_DEFAULTS = {
     "summaries_promoted": ".jarvis/memories/summaries",
     "learnings_promoted": ".jarvis/memories/learnings",
     "decisions_promoted": ".jarvis/memories/decisions",
+    "worklogs_promoted": ".jarvis/memories/worklogs",
 }
 
 _ABSOLUTE_DEFAULTS = {

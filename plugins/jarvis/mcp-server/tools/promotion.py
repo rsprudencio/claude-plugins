@@ -139,6 +139,9 @@ def promote(doc_id: str) -> dict:
         elif content_type == "decision":
             path_name = "decisions_promoted"
             filename_prefix = "decision"
+        elif content_type == "worklog":
+            path_name = "worklogs_promoted"
+            filename_prefix = "worklog"
         else:
             return {
                 "success": False,

@@ -106,6 +106,10 @@ You are analyzing a coding session between a user and an AI assistant.
 ## Project Context
 Project: {project_name} | Branch: {git_branch} | {total_token_usage}
 
+---
+
+TASK 1: Extract OBSERVATIONS (behavioral insights)
+
 Extract observations about:
 - User preferences, workflow patterns, or behavioral tendencies
 - Architectural decisions or technical choices made
@@ -118,6 +122,34 @@ DO NOT extract:
 - Secrets, credentials, or PII
 - Redundant observations (each should capture a distinct insight)
 
+---
+
+TASK 2: Extract WORKLOG entry (what the user was working on)
+
+Infer what the user is trying to achieve in this session. Focus on their
+intent and goals, not just mechanical actions.
+
+## Known Workstreams
+{known_workstreams}
+
+For the primary task the user worked on, create a worklog entry:
+- task_summary: What they were trying to achieve (1 sentence, intent-focused)
+- workstream: Match to a known workstream above, or suggest a new descriptive name. Use "misc" for one-off tasks.
+- activity_type: coding | debugging | reviewing | configuring | planning | discussing | researching | other
+
+Examples of good vs bad task_summaries:
+- GOOD: "Investigating VMPulse log errors after cluster-2 alerts"
+- BAD:  "Read log files and ran grep"
+- GOOD: "Adding Docker containerization for Jarvis MCP servers"
+- BAD:  "Edited Dockerfile and entrypoint.sh"
+
+DO NOT create a worklog entry for:
+- Quick one-off questions or lookups (e.g., "what's the alias for netstat")
+- Conversations about Jarvis itself (meta/config work)
+- Trivial file reads with no meaningful follow-up
+
+---
+
 Respond with JSON only:
 {{
   "observations": [
@@ -127,13 +159,21 @@ Respond with JSON only:
       "tags": ["tag1", "tag2"],
       "scope": "project" or "global"
     }}
-  ]
+  ],
+  "worklog": {{
+    "task_summary": "One-sentence intent-focused description",
+    "workstream": "ProjectName or misc",
+    "activity_type": "coding|debugging|...|other",
+    "tags": ["tag1", "tag2"]
+  }}
 }}
 
 scope: "project" if the observation is specific to this codebase (e.g., project conventions, file structure, architecture). "global" if it's a universal pattern (e.g., user preference, general workflow habit).
 
 Return 1-3 observations. Each must capture a distinct, non-redundant insight.
-Return an empty array if nothing is worth remembering.
+Return an empty observations array if nothing is worth remembering.
+Return ONE worklog object or null (not an array).
+Set worklog to null if this was a quick question, meta-work, or nothing meaningful.
 """
 
 
@@ -153,7 +193,13 @@ _BUDGET_BASE = 2000               # Base chars (matches current single-turn beha
 _BUDGET_OUTPUT_SCALE = 0.04       # 4% of output tokens as chars (1% * 4 chars/token)
 _BUDGET_HARD_MAX = 8000           # Ceiling on content budget
 _MAX_OBSERVATIONS = 3             # Cap on observations per extraction
-_HAIKU_MAX_TOKENS = 800           # Up from 300 (need room for multi-obs JSON)
+_MAX_WORKLOGS = 1                 # One worklog per extraction (single primary task)
+_HAIKU_MAX_TOKENS = 1000          # Up from 800 (room for worklog in same response)
+_WORKLOG_ACTIVITY_TYPES = frozenset({
+    "coding", "debugging", "reviewing", "configuring",
+    "planning", "discussing", "researching", "other",
+})
+_WORKLOG_DEDUP_THRESHOLD = 0.7    # Jaccard word-overlap threshold for dedup
 
 
 def _parse_output_tokens(token_usage: str) -> int:
@@ -667,7 +713,8 @@ def build_turn_prompt(turn: dict, project_name: str = "", git_branch: str = "") 
 
 
 def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
-                         project_name: str = "", git_branch: str = "") -> str:
+                         project_name: str = "", git_branch: str = "",
+                         workstreams: list[str] | None = None) -> str:
     """Build a session-level extraction prompt combining ALL turns.
 
     Two-pass budget allocation (truncate, never exclude):
@@ -685,6 +732,7 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
         budget: Character budget from compute_content_budget()
         project_name: Current project directory name
         git_branch: Current git branch name
+        workstreams: Known workstream names for categorization (or None)
 
     Returns:
         Formatted session extraction prompt string
@@ -758,6 +806,12 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
     all_tools_str = ", ".join(sorted(all_tools)) if all_tools else "None"
     total_usage = f"{total_input} in, {total_output} out"
 
+    # Format known workstreams for the prompt
+    if workstreams:
+        workstreams_str = ", ".join(workstreams)
+    else:
+        workstreams_str = "None yet (suggest appropriate names)"
+
     return SESSION_EXTRACTION_PROMPT.format(
         first_user_text=first_user_text or "(not available)",
         turn_count=len(turns),
@@ -767,6 +821,7 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
         project_name=project_name or "unknown",
         git_branch=git_branch or "unknown",
         total_token_usage=total_usage,
+        known_workstreams=workstreams_str,
     )
 
 
@@ -1123,6 +1178,194 @@ def normalize_extraction_response(parsed: dict | None) -> list[dict]:
     return []
 
 
+def normalize_worklog_response(parsed: dict | None) -> list[dict]:
+    """Normalize Haiku response into a list of worklog dicts (max 1 element).
+
+    Extracts the `worklog` object (singular) from the parsed JSON.
+    Also accepts `worklogs` array for robustness (takes first element).
+
+    Args:
+        parsed: Parsed JSON dict from Haiku response
+
+    Returns:
+        Single-element list [worklog_dict] if valid, empty [] otherwise.
+        Returns a list for consistency with the observation pipeline loop pattern.
+    """
+    if not parsed or not isinstance(parsed, dict):
+        return []
+
+    wl = parsed.get("worklog")
+
+    # Also accept "worklogs" array for robustness
+    if wl is None:
+        worklogs_list = parsed.get("worklogs")
+        if isinstance(worklogs_list, list) and worklogs_list:
+            wl = worklogs_list[0]
+
+    if not isinstance(wl, dict):
+        return []
+
+    # Validate: requires task_summary (non-empty string)
+    task_summary = wl.get("task_summary", "")
+    if not isinstance(task_summary, str) or not task_summary.strip():
+        return []
+
+    # Validate and default activity_type
+    activity_type = wl.get("activity_type", "other")
+    if activity_type not in _WORKLOG_ACTIVITY_TYPES:
+        activity_type = "other"
+
+    # Default workstream to "misc" if missing/empty
+    workstream = wl.get("workstream", "misc")
+    if not isinstance(workstream, str) or not workstream.strip():
+        workstream = "misc"
+
+    # Default tags
+    tags = wl.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+
+    return [{
+        "task_summary": task_summary.strip(),
+        "workstream": workstream.strip(),
+        "activity_type": activity_type,
+        "tags": tags,
+    }]
+
+
+def worklog_jaccard_similarity(text_a: str, text_b: str) -> float:
+    """Compute Jaccard word-overlap similarity between two texts.
+
+    Args:
+        text_a: First text
+        text_b: Second text
+
+    Returns:
+        Jaccard similarity (0.0-1.0), 0.0 if both empty
+    """
+    words_a = set(text_a.lower().split())
+    words_b = set(text_b.lower().split())
+    if not words_a and not words_b:
+        return 0.0
+    intersection = words_a & words_b
+    union = words_a | words_b
+    return len(intersection) / len(union)
+
+
+def is_duplicate_worklog(task_summary: str, session_id: str) -> bool:
+    """Check if a similar worklog already exists for this session.
+
+    Queries ChromaDB for existing worklogs in the same session,
+    then computes Jaccard similarity against each.
+
+    Args:
+        task_summary: Proposed worklog text
+        session_id: Claude Code session ID
+
+    Returns:
+        True if a similar worklog exists (skip storing), False otherwise
+    """
+    from tools.tier2 import tier2_list
+
+    result = tier2_list(
+        content_type="worklog",
+        session_id=session_id,
+        sort_by="created_at_desc",
+    )
+
+    if not result.get("success") or not result.get("documents"):
+        return False
+
+    for doc in result["documents"]:
+        existing_content = doc.get("content", "")
+        similarity = worklog_jaccard_similarity(task_summary, existing_content)
+        if similarity >= _WORKLOG_DEDUP_THRESHOLD:
+            return True
+
+    return False
+
+
+def discover_workstreams(limit: int = 30) -> list[str]:
+    """Discover known workstream names from recent worklog entries.
+
+    Queries ChromaDB for recent worklogs and extracts unique workstream
+    values from metadata.
+
+    Args:
+        limit: Maximum number of recent worklogs to scan (default 30)
+
+    Returns:
+        Sorted list of unique workstream names
+    """
+    from tools.tier2 import tier2_list
+
+    result = tier2_list(
+        content_type="worklog",
+        limit=limit,
+        sort_by="created_at_desc",
+    )
+
+    if not result.get("success") or not result.get("documents"):
+        return []
+
+    workstreams = set()
+    for doc in result["documents"]:
+        ws = doc.get("metadata", {}).get("workstream", "")
+        if ws and ws != "misc":
+            workstreams.add(ws)
+
+    return sorted(workstreams)
+
+
+def store_worklog(task_summary: str, workstream: str, activity_type: str,
+                  tags: list, source_label: str,
+                  project_path: str = "", git_branch: str = "",
+                  relevant_files: list | None = None,
+                  session_id: str = "", transcript_line: int = -1) -> dict:
+    """Store a worklog entry via tier2_write.
+
+    Args:
+        task_summary: What the user was working on (intent-focused)
+        workstream: Workstream category (e.g., "VMPulse", "misc")
+        activity_type: Type of activity (coding, debugging, etc.)
+        tags: List of tags
+        source_label: Source identifier
+        project_path: Full path to project directory
+        git_branch: Current git branch name
+        relevant_files: List of file paths referenced
+        session_id: Claude Code session ID
+        transcript_line: Absolute line index in transcript JSONL
+
+    Returns:
+        Result dict from tier2_write
+    """
+    from tools.tier2 import tier2_write
+
+    extra = {"workstream": workstream, "activity_type": activity_type}
+    if project_path:
+        project_dir = os.path.basename(project_path)
+        extra["project_path"] = project_path
+        extra["project_dir"] = project_dir
+    if git_branch:
+        extra["git_branch"] = git_branch
+    if relevant_files:
+        extra["relevant_files"] = ",".join(relevant_files)
+    if session_id:
+        extra["session_id"] = session_id
+    if transcript_line >= 0:
+        extra["transcript_line"] = str(transcript_line)
+
+    return tier2_write(
+        content=task_summary,
+        content_type="worklog",
+        importance_score=0.5,  # Worklogs are equally important; ordering is temporal
+        source=source_label,
+        tags=tags,
+        extra_metadata=extra,
+        skip_secret_scan=False,
+    )
+
+
 def main():
     """Main entry point: watermark-based multi-turn extraction pipeline.
 
@@ -1163,12 +1406,16 @@ def main():
     sys.path.insert(0, mcp_server_dir)
 
     # Load config for thresholds
-    from tools.config import get_auto_extract_config
+    from tools.config import get_auto_extract_config, get_worklog_config
     config = get_auto_extract_config()
     debug = config.get("debug", False)
     min_chars = config.get("min_turn_chars", 200)
     max_lines = config.get("max_transcript_lines", 500)
     max_observations = config.get("max_observations", _MAX_OBSERVATIONS)
+
+    # Worklog config
+    worklog_config = get_worklog_config()
+    worklog_enabled = worklog_config.get("enabled", True)
 
     # Step 1: Read watermark
     watermark = read_watermark(session_id)
@@ -1208,11 +1455,20 @@ def main():
     # Step 6: Compute content budget from ALL turns
     budget = compute_content_budget(turns)
 
+    # Step 6b: Discover known workstreams for categorization
+    workstreams = []
+    if worklog_enabled:
+        try:
+            workstreams = discover_workstreams()
+        except Exception:
+            pass  # Non-critical — prompt will say "None yet"
+
     # Step 7: Build session prompt with ALL turns
     project_name = os.path.basename(project_path) if project_path else ""
     prompt = build_session_prompt(
         turns, first_user_text, budget,
         project_name=project_name, git_branch=git_branch,
+        workstreams=workstreams if worklog_enabled else None,
     )
 
     # Step 8: Call Haiku
@@ -1225,11 +1481,16 @@ def main():
 
     raw_extraction, input_tokens, output_tokens, backend = extraction_result
 
-    # Step 9: Normalize response
+    # Step 9: Normalize response (observations)
     observations = normalize_extraction_response(raw_extraction)
 
-    if not observations:
-        print("No observations extracted (routine session)", file=sys.stderr)
+    # Step 9b: Normalize worklog from same Haiku response (max 1)
+    worklogs = []
+    if worklog_enabled:
+        worklogs = normalize_worklog_response(raw_extraction)
+
+    if not observations and not worklogs:
+        print("No observations or worklogs extracted (routine session)", file=sys.stderr)
         _log_extraction(backend, input_tokens, output_tokens,
                         observation_stored=False, prompt=prompt,
                         hook_input=hook_input, debug=debug)
@@ -1288,8 +1549,29 @@ def main():
                             hook_input=hook_input if i == 0 else "",
                             debug=debug)
 
-    if stored_count == 0:
+    if stored_count == 0 and observations:
         print("No observations stored (all empty or failed)", file=sys.stderr)
+
+    # Step 10b: Store worklog entry (if not a duplicate)
+    if worklogs:
+        wl = worklogs[0]  # Max 1 worklog per extraction
+        if not is_duplicate_worklog(wl["task_summary"], session_id):
+            wl_result = store_worklog(
+                task_summary=wl["task_summary"],
+                workstream=wl["workstream"],
+                activity_type=wl["activity_type"],
+                tags=wl.get("tags", []),
+                source_label="auto-extract:stop-hook:worklog",
+                project_path=project_path, git_branch=git_branch,
+                relevant_files=relevant_files, session_id=session_id,
+                transcript_line=absolute_line,
+            )
+            if wl_result.get("success"):
+                print(f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]", file=sys.stderr)
+            else:
+                print(f"Failed to store worklog: {wl_result.get('error')}", file=sys.stderr)
+        else:
+            print("Worklog skipped (duplicate in session)", file=sys.stderr)
 
     # Step 11: Advance watermark (even on storage failure — Haiku already ran)
     write_watermark(session_id, last_line_read)

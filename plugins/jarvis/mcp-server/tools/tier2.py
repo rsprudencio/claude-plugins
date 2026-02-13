@@ -14,9 +14,10 @@ from .memory import _get_collection
 from .namespaces import (
     ContentType,
     observation_id, pattern_id, summary_id, code_id,
-    relationship_id, hint_id, plan_id, learning_id, decision_id,
+    relationship_id, hint_id, plan_id, learning_id, decision_id, worklog_id,
     NAMESPACE_OBS, NAMESPACE_PATTERN, NAMESPACE_SUMMARY, NAMESPACE_CODE,
     NAMESPACE_REL, NAMESPACE_HINT, NAMESPACE_PLAN, NAMESPACE_LEARNING, NAMESPACE_DECISION,
+    NAMESPACE_WORKLOG,
 )
 from .secret_scan import scan_for_secrets
 
@@ -24,7 +25,7 @@ logger = logging.getLogger("jarvis-tools")
 
 VALID_CONTENT_TYPES = (
     "observation", "pattern", "summary", "code",
-    "relationship", "hint", "plan", "learning", "decision"
+    "relationship", "hint", "plan", "learning", "decision", "worklog"
 )
 
 # Map content_type string to (ContentType enum, NAMESPACE constant, ID generator)
@@ -38,6 +39,7 @@ _TYPE_MAP = {
     "plan": (ContentType.PLAN, NAMESPACE_PLAN, plan_id),
     "learning": (ContentType.LEARNING, NAMESPACE_LEARNING, learning_id),
     "decision": (ContentType.DECISION, NAMESPACE_DECISION, decision_id),
+    "worklog": (ContentType.WORKLOG, NAMESPACE_WORKLOG, worklog_id),
 }
 
 
@@ -139,6 +141,8 @@ def tier2_write(
         doc_id = id_gen()  # Auto-generates timestamp
     elif content_type == "decision":
         doc_id = id_gen(name)
+    elif content_type == "worklog":
+        doc_id = id_gen()  # Auto-generates timestamp
     else:
         return {"success": False, "error": f"Unknown content_type: {content_type}"}
     
@@ -247,6 +251,7 @@ def tier2_list(
     source: Optional[str] = None,
     limit: int = 20,
     sort_by: str = "importance_desc",
+    session_id: Optional[str] = None,
 ) -> dict:
     """List Tier 2 documents with optional filtering and sorting.
 
@@ -257,6 +262,7 @@ def tier2_list(
         limit: Maximum number of results (default 20)
         sort_by: Sort order. One of: importance_desc (default),
                  importance_asc, created_at_desc, created_at_asc, none
+        session_id: Filter by session_id (useful for dedup within a session)
 
     Returns:
         Result dict with success, documents, total
@@ -279,7 +285,10 @@ def tier2_list(
         
         if source:
             conditions.append({"source": source})
-        
+
+        if session_id:
+            conditions.append({"session_id": session_id})
+
         # Construct where clause
         if len(conditions) == 1:
             where = conditions[0]

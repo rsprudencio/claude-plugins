@@ -217,6 +217,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - `plan` - Task plans and strategies
 - `learning` - Lessons learned and key takeaways
 - `decision` - Architectural or strategic decisions made
+- `worklog` - Intent-focused activity records (what user worked on)
 
 **Promotion**: Tier 2 content meeting importance/retrieval thresholds can be promoted to Tier 1 (file-backed) via `jarvis_promote` tool.
 
@@ -225,6 +226,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 |-------|-------------|
 | `/jarvis-recall <query>` | Semantic search across vault content |
 | `/jarvis-promote` | Browse and promote Tier 2 content to permanent files |
+| `/jarvis-worklog` | Review what you worked on today/this week |
 | `/jarvis-memory-stats` | Show memory system health and stats |
 
 ### How It Works
