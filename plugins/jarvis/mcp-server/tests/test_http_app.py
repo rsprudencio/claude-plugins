@@ -2,10 +2,18 @@
 
 Uses Starlette's TestClient which works with any ASGI callable,
 including our raw ASGI app (not just Starlette apps).
+
+These tests require the MCP Streamable HTTP SDK module, which is only
+available in the Docker environment. They are skipped locally.
 """
 import importlib
 
 import pytest
+
+pytest.importorskip(
+    "mcp.server.streamable_http_manager",
+    reason="Streamable HTTP module only available in Docker environment",
+)
 from starlette.testclient import TestClient
 
 

@@ -36,6 +36,42 @@ if [ "$found_core" = false ]; then
     exit 1
 fi
 
+# If container/remote mode, ensure the server is reachable before launching
+JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
+JARVIS_CONFIG="$JARVIS_HOME/config.json"
+if [ -f "$JARVIS_CONFIG" ]; then
+    transport=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_transport','local'))" 2>/dev/null || echo "local")
+
+    if [ "$transport" = "container" ]; then
+        if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+            compose_file="$JARVIS_HOME/docker-compose.yml"
+            if [ -f "$compose_file" ]; then
+                echo "Starting Jarvis container..."
+                docker compose -f "$compose_file" up -d 2>&1
+                # Wait for health (up to 15s)
+                for i in $(seq 1 15); do
+                    if curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+                        echo "Container is healthy."
+                        break
+                    fi
+                    sleep 1
+                done
+                if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+                    echo "Warning: Container started but health check failed."
+                    echo "Check: docker compose -f $compose_file logs"
+                fi
+            else
+                echo "Warning: Container mode but no docker-compose.yml found at $compose_file"
+            fi
+        fi
+    elif [ "$transport" = "remote" ]; then
+        remote_url=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_remote_url',''))" 2>/dev/null || echo "")
+        if [ -n "$remote_url" ] && ! curl -sf "${remote_url}:8741/health" > /dev/null 2>&1; then
+            echo "Warning: Remote server not reachable at ${remote_url}:8741"
+        fi
+    fi
+fi
+
 # Build extra args
 extra_args=()
 if [ -f "$settings_file" ]; then
