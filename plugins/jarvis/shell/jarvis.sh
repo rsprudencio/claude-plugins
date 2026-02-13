@@ -36,10 +36,60 @@ if [ "$found_core" = false ]; then
     exit 1
 fi
 
-# If container/remote mode, ensure the server is reachable before launching
+# Reconcile .mcp.json in plugin cache to match config's mcp_transport.
+# This self-heals after reinstalls/auto-updates that reset .mcp.json to defaults.
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
 JARVIS_CONFIG="$JARVIS_HOME/config.json"
 if [ -f "$JARVIS_CONFIG" ]; then
+    python3 -c "
+import json, sys, os
+
+config_path = sys.argv[1]
+plugin_paths_raw = sys.argv[2]
+
+with open(config_path) as f:
+    cfg = json.load(f)
+transport = cfg.get('mcp_transport', 'local')
+remote_url = cfg.get('mcp_remote_url', '').rstrip('/')
+
+# Plugin name -> (mcp_key, entry_point, port)
+PLUGIN_MAP = {
+    'jarvis': ('core', 'jarvis-tools', '8741'),
+    'jarvis-todoist': ('api', 'jarvis-todoist-api', '8742'),
+}
+
+for line in plugin_paths_raw.strip().splitlines():
+    if '|' not in line:
+        continue
+    name, path = line.split('|', 1)
+    if name not in PLUGIN_MAP:
+        continue
+    mcp_key, entry, port = PLUGIN_MAP[name]
+    mcp_file = os.path.join(path, '.mcp.json')
+    if not os.path.exists(mcp_file):
+        continue
+
+    # Build expected config
+    if transport == 'local':
+        expected = {mcp_key: {'command': 'uvx', 'args': ['--from', '\${CLAUDE_PLUGIN_ROOT}/mcp-server', entry]}}
+    elif transport == 'container':
+        expected = {mcp_key: {'type': 'http', 'url': f'http://localhost:{port}/mcp'}}
+    elif transport == 'remote' and remote_url:
+        expected = {mcp_key: {'type': 'http', 'url': f'{remote_url}:{port}/mcp'}}
+    else:
+        continue
+
+    # Check and fix if mismatched
+    with open(mcp_file) as f:
+        current = json.load(f)
+    if current != expected:
+        with open(mcp_file, 'w') as f:
+            json.dump(expected, f, indent=2)
+            f.write('\n')
+        print(f'Synced {name} plugin to {transport} transport')
+" "$JARVIS_CONFIG" "$plugin_paths" 2>/dev/null || true
+
+    # Read transport mode for container auto-start
     transport=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_transport','local'))" 2>/dev/null || echo "local")
 
     if [ "$transport" = "container" ]; then
