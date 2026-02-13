@@ -41,27 +41,42 @@ AskUserQuestion:
 
 Call `mcp__plugin_jarvis_core__jarvis_retrieve` with `list_type="tier2"`, `sort_by="importance_desc"`, and appropriate filters:
 
-- "Show all" → `{"list_type": "tier2", "limit": 20, "sort_by": "importance_desc"}`
-- "Observations only" → `{"list_type": "tier2", "type_filter": "observation", "limit": 20, "sort_by": "importance_desc"}`
-- "Patterns only" → `{"list_type": "tier2", "type_filter": "pattern", "limit": 20, "sort_by": "importance_desc"}`
-- "High importance" → `{"list_type": "tier2", "min_importance": 0.7, "limit": 20, "sort_by": "importance_desc"}`
+- "Show all" → `{"list_type": "tier2", "limit": 10, "sort_by": "importance_desc"}`
+- "Observations only" → `{"list_type": "tier2", "type_filter": "observation", "limit": 10, "sort_by": "importance_desc"}`
+- "Patterns only" → `{"list_type": "tier2", "type_filter": "pattern", "limit": 10, "sort_by": "importance_desc"}`
+- "High importance" → `{"list_type": "tier2", "min_importance": 0.7, "limit": 10, "sort_by": "importance_desc"}`
 
-Present results as a numbered table:
+**IMPORTANT: Always show full content for each item.** Do NOT truncate to a preview. Display each item as a full entry with all metadata:
 
 ```
-Tier 2 Content (N items, sorted by importance):
+Tier 2 Content (N total items, top 10 by importance):
 
- #  | Type        | Imp.  | Project         | Age  | Preview
-----|-------------|-------|-----------------|------|-----------------------------
- 1* | pattern     | 0.88  | jarvis-plugin   | 12d  | User prefers kebab-case...
- 2* | summary     | 0.72  | jarvis-plugin   | 8d   | Week focused on memory...
- 3  | observation | 0.65  | (global)        | 3d   | OAuth flow uses PKCE with...
- 4  | observation | 0.45  | my-app          | 1d   | Vault structure has 3 main...
+---
+
+#1* `obs::1770843911190` | observation | imp: 0.95 | retr: 0.20 | vmpulse | 2d
+
+> [Full content of the observation, no truncation]
+
+Tags: `tag1, tag2, tag3`
+
+---
+
+#2  `learning::1770850909025` | learning | imp: 0.85 | retr: 0.09 | (global) | 4d
+
+> [Full content of the learning, no truncation]
+
+Tags: `tag1, tag2`
+
+---
 
 * = Meets promotion criteria
 ```
 
-**Project column**: Show `project_dir` from metadata, or `(global)` if absent.
+**Always include retrieval count** (`retr:` field) — this is critical for understanding how often each item is being surfaced in per-prompt search.
+
+**Project column**: Extract project name from `project_path` metadata (last path component), or show `(global)` if absent.
+
+**Calculate age** from `created_at` metadata field vs current time.
 
 Then ask what to do next:
 
@@ -72,7 +87,9 @@ AskUserQuestion:
       header: "Action"
       options:
         - label: "Preview an item"
-          description: "View full content and promotion criteria"
+          description: "View full promotion criteria evaluation"
+        - label: "Delete items"
+          description: "Remove specific items by number"
         - label: "Auto-promote eligible"
           description: "Promote all items marked with *"
         - label: "Done"
@@ -80,7 +97,7 @@ AskUserQuestion:
       multiSelect: false
 ```
 
-If "Preview an item", ask user which number. If "Auto-promote eligible", proceed to auto-promote mode (Step 5).
+If "Preview an item", ask user which number. If "Auto-promote eligible", proceed to auto-promote mode (Step 5). If "Delete items", ask which numbers to delete.
 
 **To determine promotion eligibility for the `*` marker**, evaluate each item against:
 - Importance >= 0.85 (default, from `~/.jarvis/config.json` → `promotion.importance_threshold`)
@@ -88,10 +105,6 @@ If "Preview an item", ask user which number. If "Auto-promote eligible", proceed
 - Age >= 30 days AND importance >= 0.7 (from `promotion.age_importance_days` + `promotion.age_importance_score`)
 
 Any ONE criterion met = eligible.
-
-**Calculate age** from `created_at` metadata field vs current time.
-
-**Preview text**: First 60 characters of content, trimmed to last word boundary, with `...` suffix.
 
 ### 3. Preview mode
 
