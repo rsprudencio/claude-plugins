@@ -7,11 +7,27 @@ from typing import Tuple
 _config_cache = None
 
 
+def _resolve_jarvis_home() -> Path:
+    """Resolve the Jarvis home directory.
+
+    Checks JARVIS_HOME env var first, falls back to ~/.jarvis.
+    """
+    env_home = os.environ.get("JARVIS_HOME")
+    if env_home:
+        return Path(env_home)
+    return Path.home() / ".jarvis"
+
+
 def get_config() -> dict:
-    """Load config from ~/.jarvis/config.json with caching."""
+    """Load config from $JARVIS_HOME/config.json with caching.
+
+    Config path resolution order:
+    1. JARVIS_HOME env var (for Docker)
+    2. ~/.jarvis/config.json (default)
+    """
     global _config_cache
     if _config_cache is None:
-        config_path = Path.home() / ".jarvis" / "config.json"
+        config_path = _resolve_jarvis_home() / "config.json"
         if config_path.exists():
             with open(config_path) as f:
                 _config_cache = json.load(f)
@@ -27,11 +43,19 @@ def clear_config_cache():
 
 
 def get_vault_path() -> str:
-    """Get vault_path from config, falling back to cwd if not set.
+    """Get vault_path, checking env var first, then config, then cwd.
+
+    Resolution order:
+    1. JARVIS_VAULT_PATH env var (for Docker)
+    2. vault_path in config.json
+    3. Current working directory (fallback)
 
     WARNING: This does NOT verify config integrity. For secure operations,
     use get_verified_vault_path() instead.
     """
+    env_vault = os.environ.get("JARVIS_VAULT_PATH")
+    if env_vault and os.path.isdir(env_vault):
+        return env_vault
     config = get_config()
     vault_path = config.get("vault_path")
     if vault_path:
@@ -43,13 +67,23 @@ def verify_config() -> Tuple[bool, str]:
     """Verify config exists and was set up properly.
 
     Checks:
-    1. vault_path is configured
-    2. vault_confirmed flag is set (setup was run)
+    1. vault_path is configured (via env var or config)
+    2. vault_confirmed flag is set (setup was run) — skipped in Docker mode
     3. Vault directory exists
+
+    Docker mode: When JARVIS_VAULT_PATH env var is set, skip the
+    vault_confirmed check since Docker config is managed externally.
 
     Returns:
         Tuple of (is_valid, error_message). If valid, error_message is empty.
     """
+    # In Docker mode (env var set), use env var directly
+    env_vault = os.environ.get("JARVIS_VAULT_PATH")
+    if env_vault:
+        if not os.path.isdir(env_vault):
+            return False, f"Vault directory not found: {env_vault}"
+        return True, ""
+
     config = get_config()
 
     # Check vault_path exists
@@ -75,13 +109,15 @@ def get_verified_vault_path() -> Tuple[str, str]:
     1. Setup was run (vault_confirmed is set)
     2. Vault directory exists
 
+    Uses get_vault_path() which respects JARVIS_VAULT_PATH env var.
+
     Returns:
         Tuple of (vault_path, error). If error, vault_path is empty.
     """
     valid, error = verify_config()
     if not valid:
         return "", error
-    return os.path.expanduser(get_config()["vault_path"]), ""
+    return get_vault_path(), ""
 
 
 def get_memory_config() -> dict:
@@ -260,7 +296,7 @@ def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     from .auto_extract_config import check_prerequisites
 
-    config_path = Path.home() / ".jarvis" / "config.json"
+    config_path = _resolve_jarvis_home() / "config.json"
     return {
         "config_path": str(config_path),
         "config_exists": config_path.exists(),
@@ -268,5 +304,7 @@ def get_debug_info() -> dict:
         "resolved_vault_path": get_vault_path(),
         "cwd": os.getcwd(),
         "home": str(Path.home()),
+        "jarvis_home": str(_resolve_jarvis_home()),
+        "docker_mode": bool(os.environ.get("JARVIS_VAULT_PATH")),
         "auto_extract": check_prerequisites(get_auto_extract_config()),
     }

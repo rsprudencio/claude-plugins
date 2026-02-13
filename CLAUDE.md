@@ -271,9 +271,37 @@ The plugin is split into 3 independent plugins in a single marketplace:
 | `plugins/jarvis-todoist/agents/*.md` | Todoist agent definition |
 | `plugins/jarvis-todoist/skills/*/SKILL.md` | Todoist skill workflows |
 | `plugins/jarvis-strategic/skills/*/SKILL.md` | Strategic skill workflows |
+| `docker/Dockerfile` | Multi-stage Docker image build |
+| `docker/entrypoint.sh` | Process manager for containerized servers |
+| `docker/docker-compose.yml` | Compose template for dev/reference |
+| `.github/workflows/docker-publish.yml` | CI: build & push to GHCR on tags |
+| `.github/workflows/docker-test.yml` | CI: test Docker image on PRs |
+
+### Docker Development
+
+Both MCP servers have `http_app.py` alongside `server.py` — thin ASGI wrappers using `StreamableHTTPSessionManager` from MCP SDK. Key facts:
+
+- **Transport:** Streamable HTTP with `json_response=True` (not SSE)
+- **Architecture:** Raw ASGI app (no Starlette) to avoid `/mcp` → `/mcp/` 307 redirects
+- **Ports:** jarvis-core on 8741, jarvis-todoist on 8742
+- **Config:** `JARVIS_HOME` and `JARVIS_VAULT_PATH` env vars override config.json paths
+
+```bash
+# Build locally
+docker build -f docker/Dockerfile -t jarvis-local .
+
+# Run integration tests (requires image built)
+python3 -m pytest docker/tests/ -v
+
+# Test manually
+docker run -d -p 8741:8741 -v /tmp/vault:/vault -v ~/.jarvis:/config \
+  -e JARVIS_HOME=/config -e JARVIS_VAULT_PATH=/vault jarvis-local
+curl http://localhost:8741/health
+```
 
 ### Version History
 
+- **1.24.0** - Docker distribution: Streamable HTTP transport layer (`http_app.py` raw ASGI wrappers with `json_response=True`, no Starlette to avoid 307 redirects), multi-stage Dockerfile (Python 3.12 + uv deps + git/curl runtime), `entrypoint.sh` process manager (health checks, graceful shutdown, conditional Todoist), docker-compose.yml, `JARVIS_HOME`/`JARVIS_VAULT_PATH`/`TODOIST_API_TOKEN` env var overrides in config.py + paths.py + todoist_api.py, Docker option in `install.sh` (detection, compose generation, container management helper), GitHub Actions CI/CD (docker-publish on tags for multi-platform amd64+arm64, docker-test on PRs), `get_verified_vault_path()` bug fix (now uses `get_vault_path()` to respect env vars), 12 new files + 7 modified, 5 http_app tests + 7 Docker integration tests (1143 total across both plugins). jarvis-todoist bumped to v1.5.0.
 - **1.23.0** - Configurable file format support (Markdown / Org-mode): new `format_support.py` central abstraction module, `file_format` config key (`"md"` or `"org"`), Org-mode parsers (`:PROPERTIES:` drawers, `*` headings, `#+BEGIN_SRC` blocks), `jarvis_get_format_reference` MCP tool for agents to load format templates at runtime, format-aware indexing/chunking/querying across 10 source files, installer + settings format selection, format reference files (`defaults/formats/`), 40+ new tests (1055 total)
 - **1.22.1** - Fix Todoist tool name prefix (underscore → hyphen to match Claude Code plugin name resolution across 5 files); bump jarvis-todoist to v1.4.2 (1057 total tests)
 - **1.22.0** - Native Todoist API: add dedicated MCP server to jarvis-todoist plugin via official `todoist-api-python` SDK (local stdio, no session drops), eliminate external HTTP MCP dependency (ai.todoist.net/mcp), 9 tools (find_tasks, find_tasks_by_date, add_tasks, complete_tasks, update_tasks, delete_object, user_info, find_projects, add_projects), SDK singleton + cached inbox resolution, tool name migration across 5 files (agent, 3 skills, system-prompt), `todoist.api_token` config key in defaults/config.json, 68 todoist tests + 989 core tests (1057 total). jarvis-todoist bumped to v1.4.2.

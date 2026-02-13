@@ -17,13 +17,13 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.22.1",
+      "version": "1.24.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
     "jarvis-todoist": {
-      "version": "1.4.2",
+      "version": "1.5.0",
       "description": "Todoist integration via official SDK (local stdio MCP, no external HTTP dependency)",
       "provides": ["agents/todoist", "skills/todoist", "mcp/todoist-api"],
       "requires": ["jarvis"]
@@ -617,6 +617,33 @@
     "ad_hoc_research": {
       "description": "Search vault for information on a topic",
       "steps": ["Ask Jarvis to find information", "Explorer agent searches vault (keyword + semantic)", "Results presented with sources"]
+    }
+  },
+
+  "deployment": {
+    "native": {
+      "transport": "stdio",
+      "description": "Default — MCP server runs locally via uvx",
+      "requirements": ["Python 3.10+", "uv/uvx", "git"],
+      "mcp_config": "Automatic via plugin .mcp.json"
+    },
+    "docker": {
+      "transport": "streamable-http",
+      "description": "MCP server runs in Docker container, connects via HTTP",
+      "image": "ghcr.io/rsprudencio/jarvis:latest",
+      "ports": {"jarvis-core": 8741, "jarvis-todoist": 8742},
+      "requirements": ["Docker", "docker compose"],
+      "mcp_config": {
+        "jarvis-core": {"type": "http", "url": "http://localhost:8741/mcp"},
+        "jarvis-todoist-api": {"type": "http", "url": "http://localhost:8742/mcp"}
+      },
+      "volumes": {
+        "/vault": "User's Obsidian/markdown vault",
+        "/config": "~/.jarvis/ (config.json + ChromaDB + state)"
+      },
+      "env_vars": ["JARVIS_HOME", "JARVIS_VAULT_PATH", "TODOIST_API_TOKEN", "JARVIS_AUTOCRLF"],
+      "management": "~/.jarvis/jarvis-docker.sh {start|stop|restart|logs|status|update}",
+      "note": "Plugin install still required for skills, agents, and system prompt. Only MCP transport changes."
     }
   },
 

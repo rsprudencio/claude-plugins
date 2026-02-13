@@ -184,3 +184,114 @@ class TestGetDebugInfo:
         assert isinstance(info["config_contents"], dict)
         # Should not have vault_path configured
         assert info["config_contents"].get("vault_path") is None
+
+
+class TestEnvVarOverrides:
+    """Tests for JARVIS_HOME and JARVIS_VAULT_PATH environment variable overrides."""
+
+    def test_jarvis_home_overrides_config_path(self, tmp_path, monkeypatch):
+        """JARVIS_HOME env var should override default ~/.jarvis config path."""
+        from tools import config as config_module
+
+        config_module._config_cache = None
+
+        # Create config in custom JARVIS_HOME
+        jarvis_home = tmp_path / "custom_jarvis"
+        jarvis_home.mkdir()
+        config_file = jarvis_home / "config.json"
+        config_file.write_text('{"vault_path": "/custom/vault", "vault_confirmed": true}')
+
+        monkeypatch.setenv("JARVIS_HOME", str(jarvis_home))
+
+        config = config_module.get_config()
+        assert config["vault_path"] == "/custom/vault"
+
+        config_module._config_cache = None
+
+    def test_jarvis_vault_path_overrides_config(self, tmp_path, mock_config, monkeypatch):
+        """JARVIS_VAULT_PATH env var should override vault_path from config."""
+        from tools.config import get_vault_path
+
+        # Create an actual directory for the env var to point to
+        custom_vault = tmp_path / "docker_vault"
+        custom_vault.mkdir()
+
+        monkeypatch.setenv("JARVIS_VAULT_PATH", str(custom_vault))
+
+        path = get_vault_path()
+        assert path == str(custom_vault)
+
+    def test_jarvis_vault_path_skips_nonexistent_dir(self, mock_config, monkeypatch):
+        """JARVIS_VAULT_PATH should be ignored if directory doesn't exist."""
+        from tools.config import get_vault_path
+
+        monkeypatch.setenv("JARVIS_VAULT_PATH", "/nonexistent/docker/vault/12345")
+
+        # Should fall back to config vault_path
+        path = get_vault_path()
+        assert path == str(mock_config.vault_path)
+
+    def test_docker_mode_skips_vault_confirmed(self, tmp_path, mock_config, monkeypatch):
+        """In Docker mode (JARVIS_VAULT_PATH set), vault_confirmed is not required."""
+        from tools.config import verify_config
+
+        # Remove vault_confirmed
+        mock_config.delete_key("vault_confirmed")
+
+        # Set JARVIS_VAULT_PATH to an existing directory
+        custom_vault = tmp_path / "docker_vault"
+        custom_vault.mkdir()
+        monkeypatch.setenv("JARVIS_VAULT_PATH", str(custom_vault))
+
+        valid, error = verify_config()
+        assert valid is True
+        assert error == ""
+
+    def test_docker_mode_verify_checks_directory_exists(self, monkeypatch):
+        """In Docker mode, verify_config should still check that the directory exists."""
+        from tools.config import verify_config
+
+        monkeypatch.setenv("JARVIS_VAULT_PATH", "/nonexistent/docker/vault/12345")
+
+        valid, error = verify_config()
+        assert valid is False
+        assert "not found" in error.lower()
+
+    def test_debug_info_shows_docker_mode(self, tmp_path, mock_config, monkeypatch):
+        """get_debug_info should report docker_mode when env var is set."""
+        from tools.config import get_debug_info
+
+        custom_vault = tmp_path / "docker_vault"
+        custom_vault.mkdir()
+        monkeypatch.setenv("JARVIS_VAULT_PATH", str(custom_vault))
+
+        info = get_debug_info()
+        assert info["docker_mode"] is True
+
+    def test_debug_info_shows_no_docker_mode(self, mock_config, monkeypatch):
+        """get_debug_info should report docker_mode=False normally."""
+        from tools.config import get_debug_info
+
+        monkeypatch.delenv("JARVIS_VAULT_PATH", raising=False)
+
+        info = get_debug_info()
+        assert info["docker_mode"] is False
+
+    def test_resolve_jarvis_home_default(self, monkeypatch):
+        """_resolve_jarvis_home should default to ~/.jarvis."""
+        from tools.config import _resolve_jarvis_home
+        from pathlib import Path
+
+        monkeypatch.delenv("JARVIS_HOME", raising=False)
+
+        result = _resolve_jarvis_home()
+        assert result == Path.home() / ".jarvis"
+
+    def test_resolve_jarvis_home_env_override(self, tmp_path, monkeypatch):
+        """_resolve_jarvis_home should use JARVIS_HOME when set."""
+        from tools.config import _resolve_jarvis_home
+
+        monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "custom"))
+
+        result = _resolve_jarvis_home()
+        assert str(result) == str(tmp_path / "custom")

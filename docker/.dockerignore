@@ -1,0 +1,33 @@
+# Python artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.venv/
+**/*.egg-info/
+
+# Tests (not needed in runtime image)
+**/tests/
+**/.pytest_cache/
+
+# Git
+.git/
+.gitignore
+
+# IDE / Editor
+.serena/
+.vscode/
+.idea/
+
+# Documentation (not needed in runtime)
+docs/
+roadmaps/
+*.md
+!plugins/jarvis/mcp-server/defaults/**/*.md
+
+# Build artifacts
+dist/
+build/
+
+# Dev files
+tmp-*
+peon.sh

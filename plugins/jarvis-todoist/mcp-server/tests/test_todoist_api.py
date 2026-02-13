@@ -92,9 +92,8 @@ def mock_config(tmp_path):
     config = {"todoist": {"api_token": "test-token-abc123"}}
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config))
-    with patch.dict(os.environ, {}):
-        with patch("todoist_api.os.path.expanduser", return_value=str(config_path)):
-            yield config_path
+    with patch.dict(os.environ, {"JARVIS_HOME": str(tmp_path)}, clear=False):
+        yield config_path
 
 
 @pytest.fixture
@@ -120,22 +119,22 @@ class TestConfig:
         assert token == "test-token-abc123"
 
     def test_get_token_missing_config(self, tmp_path):
-        missing = str(tmp_path / "nonexistent.json")
-        with patch("todoist_api.os.path.expanduser", return_value=missing):
+        missing_dir = str(tmp_path / "nonexistent_dir")
+        with patch.dict(os.environ, {"JARVIS_HOME": missing_dir}, clear=False):
             with pytest.raises(ValueError, match="config not found"):
                 todoist_api._get_token()
 
     def test_get_token_empty_token(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps({"todoist": {"api_token": ""}}))
-        with patch("todoist_api.os.path.expanduser", return_value=str(config_path)):
+        with patch.dict(os.environ, {"JARVIS_HOME": str(tmp_path)}, clear=False):
             with pytest.raises(ValueError, match="No Todoist API token"):
                 todoist_api._get_token()
 
     def test_get_token_no_todoist_section(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps({"vault_path": "/tmp"}))
-        with patch("todoist_api.os.path.expanduser", return_value=str(config_path)):
+        with patch.dict(os.environ, {"JARVIS_HOME": str(tmp_path)}, clear=False):
             with pytest.raises(ValueError, match="No Todoist API token"):
                 todoist_api._get_token()
 
@@ -595,7 +594,7 @@ class TestErrorHandling:
     def test_no_token_returns_error(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps({}))
-        with patch("todoist_api.os.path.expanduser", return_value=str(config_path)):
+        with patch.dict(os.environ, {"JARVIS_HOME": str(tmp_path)}, clear=False):
             result = todoist_api.find_tasks()
             assert result["success"] is False
             assert "No Todoist API token" in result["error"]
@@ -677,7 +676,7 @@ class TestUserInfo:
     def test_user_info_no_token(self, tmp_path):
         config_path = tmp_path / "config.json"
         config_path.write_text(json.dumps({}))
-        with patch("todoist_api.os.path.expanduser", return_value=str(config_path)):
+        with patch.dict(os.environ, {"JARVIS_HOME": str(tmp_path)}, clear=False):
             result = todoist_api.user_info()
             assert result["success"] is False
             assert "No Todoist API token" in result["error"]
@@ -745,3 +744,53 @@ class TestServerHandlers:
         import server
         handler = server.HANDLERS.get("nonexistent")
         assert handler is None
+
+
+class TestTokenEnvVarOverride:
+    """Tests for TODOIST_API_TOKEN environment variable override."""
+
+    def test_env_var_takes_priority(self, monkeypatch):
+        """TODOIST_API_TOKEN env var should be used over config file."""
+        todoist_api.reset_client()
+        monkeypatch.setenv("TODOIST_API_TOKEN", "test-token-from-env")
+        token = todoist_api._get_token()
+        assert token == "test-token-from-env"
+
+    def test_falls_back_to_config(self, tmp_path, monkeypatch):
+        """Without env var, should read from config file."""
+        todoist_api.reset_client()
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+
+        jarvis_home = tmp_path / ".jarvis"
+        jarvis_home.mkdir()
+        config = {"todoist": {"api_token": "config-token"}}
+        (jarvis_home / "config.json").write_text(json.dumps(config))
+        monkeypatch.setenv("JARVIS_HOME", str(jarvis_home))
+
+        token = todoist_api._get_token()
+        assert token == "config-token"
+
+    def test_jarvis_home_for_config_path(self, tmp_path, monkeypatch):
+        """JARVIS_HOME should be used for config path resolution."""
+        todoist_api.reset_client()
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+
+        custom_home = tmp_path / "custom_jarvis"
+        custom_home.mkdir()
+        config = {"todoist": {"api_token": "custom-home-token"}}
+        (custom_home / "config.json").write_text(json.dumps(config))
+        monkeypatch.setenv("JARVIS_HOME", str(custom_home))
+
+        token = todoist_api._get_token()
+        assert token == "custom-home-token"
+
+    def test_error_message_includes_config_path(self, tmp_path, monkeypatch):
+        """Error message should show the resolved config path."""
+        todoist_api.reset_client()
+        monkeypatch.delenv("TODOIST_API_TOKEN", raising=False)
+
+        custom_home = tmp_path / "nonexistent_jarvis"
+        monkeypatch.setenv("JARVIS_HOME", str(custom_home))
+
+        with pytest.raises(ValueError, match=str(custom_home)):
+            todoist_api._get_token()

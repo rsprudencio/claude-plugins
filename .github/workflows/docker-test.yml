@@ -1,0 +1,84 @@
+name: Docker Test
+
+on:
+  pull_request:
+    paths:
+      - 'docker/**'
+      - 'plugins/*/mcp-server/**'
+      - '.github/workflows/docker-*.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -f docker/Dockerfile -t jarvis-test .
+
+      - name: Create test fixtures
+        run: |
+          mkdir -p /tmp/test-vault /tmp/test-config
+          echo '{"vault_path":"/vault","vault_confirmed":true}' > /tmp/test-config/config.json
+
+      - name: Start container
+        run: |
+          docker run -d --name jarvis-test \
+            -p 8741:8741 \
+            -v /tmp/test-vault:/vault \
+            -v /tmp/test-config:/config \
+            -e JARVIS_HOME=/config \
+            -e JARVIS_VAULT_PATH=/vault \
+            jarvis-test
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8741/health; then
+              echo ""
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Health check failed"
+          docker logs jarvis-test
+          exit 1
+
+      - name: Verify MCP initialize
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8741/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1"}}}')
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"serverInfo"' || { echo "MCP initialize failed"; exit 1; }
+
+      - name: Verify tools list
+        run: |
+          # First initialize, then list tools
+          curl -sf -X POST http://localhost:8741/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1"}}}' > /dev/null
+
+          TOOLS=$(curl -sf -X POST http://localhost:8741/mcp \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
+          echo "$TOOLS" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          tools = data.get('result', {}).get('tools', [])
+          print(f'Found {len(tools)} tools')
+          assert len(tools) >= 20, f'Expected >= 20 tools, got {len(tools)}'
+          print('Tools list check passed')
+          "
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop jarvis-test 2>/dev/null || true
+          docker rm jarvis-test 2>/dev/null || true

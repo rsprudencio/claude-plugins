@@ -49,7 +49,28 @@ claude plugin install jarvis-strategic@raph-claude-plugins
 
 This walks you through vault path selection, auto-extract mode, and shell integration.
 
-### Option 3: Clone and Install Locally
+### Option 3: Docker
+
+Run the MCP server in a container — no Python or ChromaDB compilation needed on your machine.
+
+```bash
+# Install the plugin (still needed for skills, agents, system prompt)
+claude plugin marketplace add rsprudencio/claude-plugins
+claude plugin install jarvis@raph-claude-plugins
+
+# Start the MCP server container
+docker pull ghcr.io/rsprudencio/jarvis:latest
+docker compose -f ~/.jarvis/docker-compose.yml up -d
+
+# Tell Claude Code to use HTTP transport
+claude mcp add --transport http jarvis-core http://localhost:8741/mcp
+```
+
+Or use the installer with Docker option: `curl -fsSL ... | bash` and choose **[2] Docker** when prompted.
+
+See [docker/README.md](docker/README.md) for full Docker setup guide.
+
+### Option 4: Clone and Install Locally
 
 ```bash
 git clone https://github.com/rsprudencio/claude-plugins.git

@@ -57,6 +57,40 @@ echo -e "  ${BOLD}AI Assistant Plugin Installer${NC}"
 echo ""
 
 # ═══════════════════════════════════════════════
+# 🐳 Detect Docker
+# ═══════════════════════════════════════════════
+
+INSTALL_METHOD="native"
+DOCKER_IMAGE="ghcr.io/rsprudencio/jarvis:latest"
+
+# Check Docker availability
+HAS_DOCKER=false
+if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+        HAS_DOCKER=true
+    fi
+fi
+
+if [ "$HAS_DOCKER" = true ]; then
+    echo -e "${BOLD}🐳 Installation Method${NC}"
+    echo ""
+    echo "  Docker detected! Choose how to run the MCP server:"
+    echo ""
+    echo -e "    ${CYAN}[1]${NC} Native (uvx) — Run Python locally (recommended)"
+    echo -e "    ${CYAN}[2]${NC} Docker — Run in container (recommended for Windows)"
+    echo ""
+    ask "  Choice [1]: " METHOD_CHOICE "1"
+
+    if [ "$METHOD_CHOICE" = "2" ]; then
+        INSTALL_METHOD="docker"
+        ok "Using Docker installation"
+    else
+        ok "Using native installation"
+    fi
+    echo ""
+fi
+
+# ═══════════════════════════════════════════════
 # 📦 Install Core Plugin
 # ═══════════════════════════════════════════════
 
@@ -110,6 +144,8 @@ echo ""
 # ═══════════════════════════════════════════════
 # ✅ Check Prerequisites
 # ═══════════════════════════════════════════════
+
+if [ "$INSTALL_METHOD" = "native" ]; then
 
 echo -e "${BOLD}✅ Check Prerequisites${NC}"
 echo ""
@@ -179,6 +215,8 @@ fi
 
 echo ""
 
+fi  # end INSTALL_METHOD=native prerequisites
+
 # ═══════════════════════════════════════════════
 # 🧩 Install Optional Extensions
 # ═══════════════════════════════════════════════
@@ -231,6 +269,8 @@ fi
 # 🔌 Validate MCP Server
 # ═══════════════════════════════════════════════
 
+if [ "$INSTALL_METHOD" = "native" ]; then
+
 echo -e "${BOLD}🔌 Validate MCP Server${NC}"
 echo ""
 
@@ -264,6 +304,8 @@ else
 fi
 
 echo ""
+
+fi  # end INSTALL_METHOD=native MCP validation
 
 # ═══════════════════════════════════════════════
 # ⚙️  Configure Jarvis
@@ -462,8 +504,154 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════
-# 📚 Index Vault
+# 🐳 Docker Setup (if Docker method selected)
 # ═══════════════════════════════════════════════
+
+if [ "$INSTALL_METHOD" = "docker" ]; then
+
+echo -e "${BOLD}🐳 Docker Setup${NC}"
+echo ""
+
+# Optional Todoist API token
+echo -e "  ${BOLD}Todoist Integration (optional)${NC}"
+echo "  If you use Todoist, enter your API token for task management."
+echo -e "  Get one at: ${BLUE}https://app.todoist.com/app/settings/integrations/developer${NC}"
+echo ""
+ask "  Todoist API token (press Enter to skip): " TODOIST_TOKEN ""
+
+if [ -n "$TODOIST_TOKEN" ]; then
+    ok "Todoist token saved"
+else
+    info "Skipping Todoist (can add later in config)"
+fi
+echo ""
+
+# Pull Docker image
+info "Pulling Docker image: $DOCKER_IMAGE"
+if docker pull "$DOCKER_IMAGE" 2>&1 | tail -2; then
+    ok "Docker image pulled"
+else
+    warn "Could not pull image from GHCR"
+    info "You may need to build locally: docker build -f docker/Dockerfile -t jarvis-local ."
+    echo ""
+    ask "  Continue without Docker image? [y/N]: " CONTINUE_NO_IMAGE "N"
+    if [ "$CONTINUE_NO_IMAGE" != "y" ] && [ "$CONTINUE_NO_IMAGE" != "Y" ]; then
+        fail "Docker image required. Build locally or check your network."
+        exit 1
+    fi
+    DOCKER_IMAGE="jarvis-local"
+fi
+echo ""
+
+# Write docker-compose.yml for user
+COMPOSE_FILE="$JARVIS_HOME/docker-compose.yml"
+cat > "$COMPOSE_FILE" << COMPOSEEOF
+services:
+  jarvis:
+    image: $DOCKER_IMAGE
+    ports:
+      - "8741:8741"
+      - "8742:8742"
+    volumes:
+      - "$VAULT_PATH:/vault"
+      - "$JARVIS_HOME:/config"
+    environment:
+      - JARVIS_HOME=/config
+      - JARVIS_VAULT_PATH=/vault
+      - TODOIST_API_TOKEN=${TODOIST_TOKEN:-}
+      - JARVIS_AUTOCRLF=false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+COMPOSEEOF
+ok "Docker Compose file: $COMPOSE_FILE"
+
+# Start the container
+info "Starting Jarvis container..."
+if docker compose -f "$COMPOSE_FILE" up -d 2>&1; then
+    # Wait for health
+    HEALTH_OK=false
+    for i in $(seq 1 30); do
+        if curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+            HEALTH_OK=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$HEALTH_OK" = true ]; then
+        ok "Jarvis MCP server is running"
+        HEALTH_RESP=$(curl -sf http://localhost:8741/health 2>/dev/null)
+        info "$HEALTH_RESP"
+    else
+        warn "Container started but health check failed — check: docker compose -f $COMPOSE_FILE logs"
+    fi
+else
+    fail "Docker compose failed to start"
+    echo "  Debug: docker compose -f $COMPOSE_FILE logs"
+fi
+echo ""
+
+# Write management helper script
+HELPER_SCRIPT="$JARVIS_HOME/jarvis-docker.sh"
+cat > "$HELPER_SCRIPT" << 'HELPEREOF'
+#!/bin/bash
+# Jarvis Docker management helper
+COMPOSE_FILE="${JARVIS_HOME:-$HOME/.jarvis}/docker-compose.yml"
+
+case "${1:-status}" in
+    start)   docker compose -f "$COMPOSE_FILE" up -d ;;
+    stop)    docker compose -f "$COMPOSE_FILE" down ;;
+    restart) docker compose -f "$COMPOSE_FILE" restart ;;
+    logs)    docker compose -f "$COMPOSE_FILE" logs -f --tail=50 ;;
+    status)  docker compose -f "$COMPOSE_FILE" ps ;;
+    update)
+        docker compose -f "$COMPOSE_FILE" pull
+        docker compose -f "$COMPOSE_FILE" up -d
+        ;;
+    *)
+        echo "Usage: jarvis-docker.sh {start|stop|restart|logs|status|update}"
+        exit 1
+        ;;
+esac
+HELPEREOF
+chmod +x "$HELPER_SCRIPT"
+ok "Management helper: $HELPER_SCRIPT"
+echo ""
+
+# Show Claude Code MCP config
+echo -e "${BOLD}📋 Claude Code MCP Configuration${NC}"
+echo ""
+echo "  Add this to your Claude Code settings (global or project):"
+echo ""
+echo -e "  ${CYAN}claude mcp add --transport http jarvis-core http://localhost:8741/mcp${NC}"
+echo -e "  ${CYAN}claude mcp add --transport http jarvis-todoist-api http://localhost:8742/mcp${NC}"
+echo ""
+echo "  Or add to settings.json manually:"
+echo ""
+echo -e "  ${BLUE}{${NC}"
+echo -e "  ${BLUE}  \"mcpServers\": {${NC}"
+echo -e "  ${BLUE}    \"jarvis-core\": { \"type\": \"http\", \"url\": \"http://localhost:8741/mcp\" },${NC}"
+echo -e "  ${BLUE}    \"jarvis-todoist-api\": { \"type\": \"http\", \"url\": \"http://localhost:8742/mcp\" }${NC}"
+echo -e "  ${BLUE}  }${NC}"
+echo -e "  ${BLUE}}${NC}"
+echo ""
+warn "Docker mode: The MCP server runs in a container. Claude Code hooks"
+warn "(prompt-search, stop-extract) require native Python on the host or"
+warn "routing through 'docker exec'. See docker/README.md for details."
+echo ""
+
+fi  # end INSTALL_METHOD=docker
+
+# ═══════════════════════════════════════════════
+# 📚 Index Vault (native only — Docker indexes via MCP tools)
+# ═══════════════════════════════════════════════
+
+if [ "$INSTALL_METHOD" = "native" ]; then
 
 echo -e "${BOLD}📚 Index Vault${NC}"
 echo ""
@@ -509,6 +697,8 @@ fi
 
 echo ""
 
+fi  # end INSTALL_METHOD=native indexing
+
 # ═══════════════════════════════════════════════
 # Complete!
 # ═══════════════════════════════════════════════
@@ -518,6 +708,13 @@ echo -e "${BOLD}  Installation Complete!${NC}"
 echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Vault:       ${CYAN}$VAULT_PATH${NC}"
+
+if [ "$INSTALL_METHOD" = "docker" ]; then
+    echo -e "  Method:      ${CYAN}Docker${NC} (container running)"
+    echo -e "  Compose:     ${CYAN}$JARVIS_HOME/docker-compose.yml${NC}"
+    echo -e "  MCP Core:    ${CYAN}http://localhost:8741/mcp${NC}"
+    echo -e "  MCP Todoist: ${CYAN}http://localhost:8742/mcp${NC}"
+fi
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     echo -e "  Shell:       ${CYAN}jarvis${NC} command added to $SHELL_RC"
@@ -529,6 +726,16 @@ echo -e "  ${BOLD}Quick Start:${NC}"
 echo -e "    ${BLUE}\$ jarvis${NC}                     — Launch Jarvis"
 echo -e "    ${BLUE}\$ jarvis \"/jarvis-recall AI tools\"${NC}  — Search your vault"
 echo -e "    ${BLUE}/jarvis-settings${NC}              — Update configuration"
+
+if [ "$INSTALL_METHOD" = "docker" ]; then
+    echo ""
+    echo -e "  ${BOLD}Docker Management:${NC}"
+    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh status${NC}   — Check container"
+    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh logs${NC}     — View logs"
+    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh restart${NC}  — Restart"
+    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh update${NC}   — Pull & restart"
+fi
+
 echo ""
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then

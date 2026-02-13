@@ -1,0 +1,24 @@
+services:
+  jarvis:
+    image: ghcr.io/rsprudencio/jarvis:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "${JARVIS_CORE_PORT:-8741}:8741"
+      - "${JARVIS_TODOIST_PORT:-8742}:8742"
+    volumes:
+      - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
+      - "${JARVIS_HOME:-~/.jarvis}:/config"
+    environment:
+      - JARVIS_HOME=/config
+      - JARVIS_VAULT_PATH=/vault
+      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

@@ -93,6 +93,10 @@ def get_path(
 
     # 3. Resolve to absolute path
     if is_absolute:
+        # In Docker mode, replace ~/.jarvis prefix with JARVIS_HOME
+        jarvis_home = os.environ.get("JARVIS_HOME")
+        if jarvis_home and raw.startswith("~/.jarvis"):
+            raw = raw.replace("~/.jarvis", jarvis_home, 1)
         resolved = os.path.expanduser(os.path.expandvars(raw))
     else:
         vault_path, error = _config.get_verified_vault_path()

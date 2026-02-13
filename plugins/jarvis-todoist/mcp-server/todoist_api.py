@@ -18,11 +18,23 @@ _inbox_id: str | None = None
 
 
 def _get_token() -> str:
-    """Read API token from ~/.jarvis/config.json → todoist.api_token."""
-    config_path = os.path.expanduser("~/.jarvis/config.json")
+    """Read API token from env var or config.
+
+    Resolution order:
+    1. TODOIST_API_TOKEN env var (for Docker)
+    2. ~/.jarvis/config.json (or $JARVIS_HOME/config.json) → todoist.api_token
+    """
+    # Check env var first (Docker mode)
+    env_token = os.environ.get("TODOIST_API_TOKEN")
+    if env_token:
+        return env_token
+
+    # Fall back to config file
+    jarvis_home = os.environ.get("JARVIS_HOME", os.path.expanduser("~/.jarvis"))
+    config_path = os.path.join(jarvis_home, "config.json")
     if not os.path.exists(config_path):
         raise ValueError(
-            "Jarvis config not found at ~/.jarvis/config.json. "
+            f"Jarvis config not found at {config_path}. "
             "Run /jarvis-settings to configure."
         )
     with open(config_path) as f:
@@ -31,7 +43,7 @@ def _get_token() -> str:
     if not token:
         raise ValueError(
             "No Todoist API token configured. "
-            "Add todoist.api_token to ~/.jarvis/config.json. "
+            "Set TODOIST_API_TOKEN env var or add todoist.api_token to config. "
             "Get your token at https://app.todoist.com/app/settings/integrations/developer"
         )
     return token

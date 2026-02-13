@@ -281,3 +281,37 @@ class TestListAllPaths:
         # Absolute paths should still work
         abs_entry = result["absolute"]["db_path"]
         assert abs_entry["resolved"] is not None
+
+
+class TestJarvisHomeEnvVar:
+    """Tests for JARVIS_HOME env var overriding absolute path resolution."""
+
+    def test_db_path_uses_jarvis_home(self, tmp_path, mock_config, monkeypatch):
+        """Absolute paths starting with ~/.jarvis should use JARVIS_HOME."""
+        import tools.config as config_module
+
+        # Reset config to use default db_path (starting with ~/.jarvis)
+        config_module._config_cache = None
+        mock_config.set(memory={})  # Remove custom db_path override
+
+        jarvis_home = tmp_path / "docker_config"
+        jarvis_home.mkdir()
+        monkeypatch.setenv("JARVIS_HOME", str(jarvis_home))
+
+        resolved = get_path("db_path")
+        assert str(resolved).startswith(str(jarvis_home))
+        assert "memory_db" in resolved
+
+    def test_db_path_default_without_env(self, tmp_path, mock_config, monkeypatch):
+        """Without JARVIS_HOME, paths should resolve via ~ expansion."""
+        import tools.config as config_module
+
+        # Reset config to use default db_path
+        config_module._config_cache = None
+        mock_config.set(memory={})
+
+        monkeypatch.delenv("JARVIS_HOME", raising=False)
+
+        resolved = get_path("db_path")
+        home = os.path.expanduser("~")
+        assert resolved.startswith(home)
