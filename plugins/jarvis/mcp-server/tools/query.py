@@ -351,24 +351,29 @@ def query_vault(query: str, n_results: int = 5,
     return response
 
 
-def semantic_context(query: str, max_results: int = 5,
-                     threshold: float = 0.5,
-                     max_content_length: int = 500) -> dict:
+def semantic_context(query: str, threshold: float = 0.5,
+                     budget: int = 8000) -> dict:
     """Search vault memories for per-prompt context injection.
 
     Optimized for automatic, per-message use. Differs from query_vault():
     - Applies minimum relevance threshold (filters low-scoring results)
-    - Returns longer content previews (default 500 chars vs 150)
+    - Budget-based allocation: tier2 content shown in full, vault as references
     - Fractionally increments retrieval counts (configurable, default 0.01)
     - Filters out sensitive directories (documents/, people/)
     - Returns query_ms timing for performance monitoring
     - Silently returns empty on any error (graceful degradation)
 
+    Budget strategy:
+    - Total budget is split 50/50 between tier2 and vault
+    - Tier 2 items (observations, learnings, etc.) are shown with full content
+    - Vault items are shown as references (file path + heading, ~120 chars)
+    - Each half gets a guaranteed budget; unused budget overflows to the other
+    - Results are processed in relevance order, highest first
+
     Args:
         query: User's raw prompt text
-        max_results: Maximum memories to return (default 5)
         threshold: Minimum relevance score 0.0-1.0 (default 0.5)
-        max_content_length: Character limit per content preview (default 500)
+        budget: Total character budget for injection (default 8000, split 50/50)
 
     Returns:
         Dict with matches list and metadata
@@ -390,7 +395,7 @@ def semantic_context(query: str, max_results: int = 5,
     search_text = expansion["expanded"]
 
     # Over-fetch to account for chunk dedup + threshold filtering
-    fetch_count = min(max_results * 4, 60, total)
+    fetch_count = min(100, total)
 
     try:
         raw = collection.query(
@@ -455,24 +460,67 @@ def semantic_context(query: str, max_results: int = 5,
         if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
             best_per_file[pf] = entry
 
-    # Sort by relevance descending, trim to max_results
-    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:max_results]
+    # Sort by relevance descending
+    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
+
+    # Budget-based selection: process in relevance order
+    # Each item tries its own half first, overflows to the other
+    VAULT_REF_COST = 120  # estimated chars for "See: path § heading"
+    half = budget // 2
+    tier2_remaining = half
+    vault_remaining = half
+    selected = []
+
+    for entry in deduped:
+        ns = entry["metadata"].get("namespace", "")
+        is_vault = (ns == "vault::")
+
+        if is_vault:
+            cost = VAULT_REF_COST
+            if vault_remaining >= cost:
+                vault_remaining -= cost
+                entry["display_mode"] = "reference"
+                selected.append(entry)
+            elif tier2_remaining >= cost:
+                tier2_remaining -= cost
+                entry["display_mode"] = "reference"
+                selected.append(entry)
+        else:
+            content_len = len(entry["document"] or "")
+            cost = max(content_len, 50)  # minimum 50 chars cost
+            if tier2_remaining >= cost:
+                tier2_remaining -= cost
+                entry["display_mode"] = "full"
+                selected.append(entry)
+            elif vault_remaining >= cost:
+                vault_remaining -= cost
+                entry["display_mode"] = "full"
+                selected.append(entry)
 
     # Fractional retrieval bump for passively surfaced results
-    if deduped:
+    if selected:
         per_prompt_config = get_per_prompt_config()
         passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
-            surfaced_ids = [entry["doc_id"] for entry in deduped]
+            surfaced_ids = [entry["doc_id"] for entry in selected]
             _increment_retrieval_counts(collection, surfaced_ids, increment=passive_increment)
 
     matches = []
-    for entry in deduped:
+    for entry in selected:
         meta = entry["metadata"]
-        entry_fmt = _detect_format_from_entry(entry)
-        content = _extract_preview(entry["document"], max_len=max_content_length, fmt=entry_fmt) if entry["document"] else ""
         doc_type = meta.get("vault_type") or meta.get("type", "unknown")
         chunk_heading = meta.get("chunk_heading", "")
+
+        if entry["display_mode"] == "reference":
+            # Vault reference: path + heading only, no content
+            ref_text = entry["parent_file"]
+            if chunk_heading:
+                ref_text += f" (section: {chunk_heading})"
+            content = ref_text
+        else:
+            # Tier 2: full content, no truncation
+            entry_fmt = _detect_format_from_entry(entry)
+            content = _extract_preview(entry["document"], max_len=10000, fmt=entry_fmt) if entry["document"] else ""
 
         match = {
             "source": entry["parent_file"],
@@ -480,6 +528,7 @@ def semantic_context(query: str, max_results: int = 5,
             "relevance": round(entry["relevance"], 3),
             "type": doc_type,
             "content": content,
+            "display_mode": entry["display_mode"],
         }
         if chunk_heading:
             match["heading"] = chunk_heading
@@ -492,6 +541,11 @@ def semantic_context(query: str, max_results: int = 5,
         "query_ms": query_ms,
         "total_searched": total,
         "skipped_sensitive": skipped_sensitive,
+        "budget_used": {
+            "tier2": half - tier2_remaining,
+            "vault": half - vault_remaining,
+            "total": budget,
+        },
     }
 
 

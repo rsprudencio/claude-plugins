@@ -283,8 +283,8 @@ class TestSemanticContext:
         for match in result["matches"]:
             assert match["relevance"] >= 0.9
 
-    def test_max_results_cap(self, mock_config):
-        """Never returns more than max_results."""
+    def test_budget_limits_results(self, mock_config):
+        """Small budget limits number of returned matches."""
         from tools.memory import _get_collection
         from tools.query import semantic_context
 
@@ -293,14 +293,17 @@ class TestSemanticContext:
         ids = [f"vault::notes/doc{i}.md" for i in range(10)]
         docs = [f"Document about career goals topic {i}" for i in range(10)]
         metas = [
-            {"type": "vault", "vault_type": "note", "directory": "notes",
-             "title": f"Doc {i}", "importance": "medium"}
+            {"type": "vault", "vault_type": "note", "namespace": "vault::",
+             "directory": "notes", "title": f"Doc {i}", "importance": "medium"}
             for i in range(10)
         ]
         collection.add(ids=ids, documents=docs, metadatas=metas)
 
-        result = semantic_context("career goals", max_results=3, threshold=0.0)
-        assert len(result["matches"]) <= 3
+        # Tiny budget (240 chars) should limit vault refs (~120 chars each)
+        result_small = semantic_context("career goals", budget=240, threshold=0.0)
+        # Large budget should return more
+        result_large = semantic_context("career goals", budget=8000, threshold=0.0)
+        assert len(result_small["matches"]) <= len(result_large["matches"])
 
     def test_sensitive_dirs_excluded(self, mock_config):
         """Results from documents/ and people/ are never returned."""
@@ -332,8 +335,8 @@ class TestSemanticContext:
         assert "people/contact.md" not in sources
         assert result["skipped_sensitive"] >= 2
 
-    def test_content_preview_length(self, mock_config):
-        """Content is truncated to max_content_length."""
+    def test_vault_shown_as_reference(self, mock_config):
+        """Vault items use reference display mode (path only, no full content)."""
         from tools.memory import _get_collection
         from tools.query import semantic_context
 
@@ -343,14 +346,40 @@ class TestSemanticContext:
             ids=["vault::notes/long.md"],
             documents=[long_content],
             metadatas=[
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Long", "importance": "high"},
+                {"type": "vault", "vault_type": "note", "namespace": "vault::",
+                 "directory": "notes", "title": "Long", "importance": "high"},
             ],
         )
 
-        result = semantic_context("career goals", max_content_length=100, threshold=0.0)
+        result = semantic_context("career goals", threshold=0.0)
         if result["matches"]:
-            assert len(result["matches"][0]["content"]) <= 110  # Allow for "..."
+            match = result["matches"][0]
+            assert match["display_mode"] == "reference"
+            # Reference content is just the path, not the full document
+            assert len(match["content"]) < 200
+
+    def test_tier2_shown_in_full(self, mock_config):
+        """Tier 2 items use full display mode with complete content."""
+        from tools.memory import _get_collection
+        from tools.query import semantic_context
+
+        collection = _get_collection()
+        obs_content = "User prefers kebab-case for all file naming conventions across the vault."
+        collection.add(
+            ids=["obs::1234567890"],
+            documents=[obs_content],
+            metadatas=[
+                {"type": "observation", "namespace": "obs::",
+                 "importance": "high"},
+            ],
+        )
+
+        result = semantic_context("file naming conventions", threshold=0.0)
+        if result["matches"]:
+            match = next((m for m in result["matches"] if m.get("display_mode") == "full"), None)
+            if match:
+                # Full content should be present, not truncated
+                assert "kebab-case" in match["content"]
 
     def test_chunk_dedup(self, mock_config):
         """Only best chunk per parent file is returned."""
@@ -391,8 +420,7 @@ class TestPerPromptConfig:
         config = get_per_prompt_config()
         assert config["enabled"] is True
         assert config["threshold"] == 0.5
-        assert config["max_results"] == 5
-        assert config["max_content_length"] == 500
+        assert config["budget"] == 8000
         assert config["passive_retrieval_increment"] == 0.01
 
     def test_disabled(self, mock_config):
@@ -424,18 +452,18 @@ class TestPerPromptConfig:
         assert config["threshold"] == 0.7
         # Other defaults preserved
         assert config["enabled"] is True
-        assert config["max_results"] == 5
+        assert config["budget"] == 8000
 
-    def test_custom_max_results(self, mock_config):
-        """Custom max_results overrides default."""
+    def test_custom_budget(self, mock_config):
+        """Custom budget overrides default."""
         import tools.config as config_module
         config_module._config_cache = None
 
         config_data = json.loads(mock_config.path.read_text())
-        config_data.setdefault("memory", {})["per_prompt_search"] = {"max_results": 3}
+        config_data.setdefault("memory", {})["per_prompt_search"] = {"budget": 12000}
         mock_config.path.write_text(json.dumps(config_data))
         config_module._config_cache = None
 
         from tools.config import get_per_prompt_config
         config = get_per_prompt_config()
-        assert config["max_results"] == 3
+        assert config["budget"] == 12000

@@ -17,7 +17,7 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.25.0",
+      "version": "1.27.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
@@ -486,9 +486,8 @@
 
     "memory_per_prompt_search": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
-      "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.3=aggressive, 0.5=balanced, 0.7=conservative)" },
-      "max_results": { "type": "integer", "default": 5, "description": "Maximum memories injected per message (1-10)" },
-      "max_content_length": { "type": "integer", "default": 500, "description": "Character limit per memory preview (100-2000)" },
+      "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.4=aggressive, 0.5=balanced, 0.6=conservative)" },
+      "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (split 50/50 between tier2 full content and vault references)" },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for per-prompt search" },
       "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" }
     },

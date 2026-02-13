@@ -60,6 +60,35 @@ def _debug_log(action: str, detail: str, prompt: str = "", injected: str = ""):
         pass  # Never fail on debug logging
 
 
+# --- Telemetry ---
+
+TELEMETRY_FILE = Path.home() / ".jarvis" / "telemetry" / "prompt_search.jsonl"
+
+
+def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
+    """Append a structured JSONL line for threshold/budget analysis."""
+    try:
+        TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        scores = [m["relevance"] for m in matches]
+        n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
+        budget = result.get("budget_used", {})
+        entry = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "prompt_len": len(prompt),
+            "query_ms": query_ms,
+            "n_results": len(matches),
+            "n_tier2": len(matches) - n_vault,
+            "n_vault": n_vault,
+            "scores": [round(s, 3) for s in scores],
+            "budget_tier2_used": budget.get("tier2", 0),
+            "budget_vault_used": budget.get("vault", 0),
+        }
+        with open(TELEMETRY_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass  # Never fail on telemetry
+
+
 # --- Prompt Filtering ---
 
 _SKIP_PATTERNS = {
@@ -120,13 +149,18 @@ def _extract_prompt(hook_json: str) -> str:
 # --- Output Formatting ---
 
 def _format_memories(matches: list, query_ms: float) -> str:
-    """Format search results as XML for injection into Claude's context."""
+    """Format search results as XML for injection into Claude's context.
+
+    Vault items (display_mode="reference") are shown as compact file pointers.
+    Tier 2 items (display_mode="full") are shown with full content.
+    """
     if not matches:
         return ""
 
     lines = [f'<relevant-vault-memories count="{len(matches)}" query_ms="{query_ms}">']
 
     for match in matches:
+        display_mode = match.get("display_mode", "full")
         attrs = [
             f'source="{saxutils.escape(match["source"])}"',
             f'relevance="{match["relevance"]}"',
@@ -134,6 +168,8 @@ def _format_memories(matches: list, query_ms: float) -> str:
         ]
         if match.get("heading"):
             attrs.append(f'heading="{saxutils.escape(match["heading"])}"')
+        if display_mode == "reference":
+            attrs.append('ref="vault"')
 
         content = saxutils.escape(match.get("content", ""))
         lines.append(f'<memory {" ".join(attrs)}>')
@@ -186,7 +222,7 @@ def main():
         if skip:
             sys.exit(0)
         # If config fails but prompt wasn't skipped, continue with defaults
-        config = {"enabled": True, "max_results": 5, "threshold": 0.5, "max_content_length": 500}
+        config = {"enabled": True, "threshold": 0.5, "budget": 8000}
 
     if not config.get("enabled", True):
         if debug:
@@ -204,14 +240,12 @@ def main():
         sys.exit(0)
 
     # Run search
-    max_results = config.get("max_results", 5)
     try:
         search_start = time.time()
         result = semantic_context(
             query=prompt_text,
-            max_results=max_results,
             threshold=config.get("threshold", 0.5),
-            max_content_length=config.get("max_content_length", 500),
+            budget=config.get("budget", 8000),
         )
         query_ms = round((time.time() - search_start) * 1000)
     except Exception as e:
@@ -222,18 +256,26 @@ def main():
     matches = result.get("matches", [])
     if not matches:
         if debug:
-            _debug_log("EMPTY", f"{query_ms}ms | 0/{max_results}", prompt_text)
+            _debug_log("EMPTY", f"{query_ms}ms | 0 results", prompt_text)
         sys.exit(0)
 
     # Format output (Claude sees this via stdout)
     output = _format_memories(matches, result.get("query_ms", 0))
 
+    # JSONL telemetry (always on, lightweight)
+    _write_telemetry(prompt_text, query_ms, matches, result)
+
     if debug:
+        n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
+        n_tier2 = len(matches) - n_vault
+        budget = result.get("budget_used", {})
         sources = " ".join(
             f'{m["source"]}({m["relevance"]})'
             for m in matches
         )
-        _debug_log("FOUND", f"{query_ms}ms | {len(matches)}/{max_results} | {sources}",
+        _debug_log("FOUND",
+                   f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
+                   f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
                    prompt_text, injected=output)
 
     if output:

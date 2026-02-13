@@ -241,8 +241,7 @@ def get_per_prompt_config() -> dict:
     Returns config dict with:
     - enabled: Master switch for per-prompt search (default True)
     - threshold: Minimum relevance score for injection (default 0.5)
-    - max_results: Maximum memories to inject per prompt (default 5)
-    - max_content_length: Character limit per memory preview (default 500)
+    - budget: Total character budget for injection (default 8000, split 50/50)
 
     Config lives at memory.per_prompt_search in ~/.jarvis/config.json.
     """
@@ -250,8 +249,7 @@ def get_per_prompt_config() -> dict:
     defaults = {
         "enabled": True,
         "threshold": 0.5,
-        "max_results": 5,
-        "max_content_length": 500,
+        "budget": 8000,
         "debug": False,
         "passive_retrieval_increment": 0.01,
     }
