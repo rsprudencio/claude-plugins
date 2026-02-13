@@ -36,6 +36,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract plugin version
+        id: version
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('plugins/jarvis/.claude-plugin/plugin.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -43,6 +49,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }}
             type=sha,prefix=,format=short
 
       - name: Build and push

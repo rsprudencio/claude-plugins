@@ -96,6 +96,19 @@ for line in plugin_paths_raw.strip().splitlines():
         if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
             compose_file="$JARVIS_HOME/docker-compose.yml"
             if [ -f "$compose_file" ]; then
+                # Pull version-matched image before starting
+                plugin_version=""
+                while IFS='|' read -r pname ppath; do
+                    if [ "$pname" = "jarvis" ] && [ -f "$ppath/.claude-plugin/plugin.json" ]; then
+                        plugin_version=$(python3 -c "import json; print(json.load(open('$ppath/.claude-plugin/plugin.json'))['version'])" 2>/dev/null || true)
+                        break
+                    fi
+                done <<< "$plugin_paths"
+                if [ -n "$plugin_version" ]; then
+                    echo "Pulling jarvis:$plugin_version..."
+                    docker pull "ghcr.io/rsprudencio/jarvis:$plugin_version" 2>/dev/null && \
+                        docker tag "ghcr.io/rsprudencio/jarvis:$plugin_version" "ghcr.io/rsprudencio/jarvis:latest" 2>/dev/null || true
+                fi
                 echo "Starting Jarvis container..."
                 docker compose -f "$compose_file" up -d 2>&1
                 # Wait for health (up to 15s)
