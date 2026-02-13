@@ -23,7 +23,7 @@ Vault:        ~/.jarvis/vault/
 File Format:  Markdown (.md)
 Auto-Extract: background (min text: 200 chars)
 Memory DB:    ~/.jarvis/memory_db/ (configurable)
-Shell:        jarvis command in ~/.zshrc
+Shell:        jarvis command in PATH
 Version:      1.19.0
 ```
 
@@ -204,12 +204,13 @@ AskUserQuestion:
       multiSelect: false
 ```
 
-After selecting mode:
-1. Update `mcp_transport` (and `mcp_remote_url` if remote) in `~/.jarvis/config.json`
-2. For **local**: Run `claude mcp remove --scope user jarvis-core` and `claude mcp remove --scope user jarvis-todoist-api`
-3. For **container**: Run `claude mcp add --transport http --scope user jarvis-core http://localhost:8741/mcp` and same for todoist-api on 8742
-4. For **remote**: Same as container but use the user's URL instead of localhost
-5. Print: "Transport changed to [mode]. **Restart Claude Code to apply.**"
+After selecting mode, invoke the transport helper script via Bash:
+- For **local**: `bash ~/.jarvis/jarvis-transport.sh local`
+- For **container**: `bash ~/.jarvis/jarvis-transport.sh container`
+- For **remote**: `bash ~/.jarvis/jarvis-transport.sh remote <url>`
+
+The script handles config updates AND `.mcp.json` rewrites in the plugin cache.
+Print: "Transport changed to [mode]. **Restart Claude Code to apply.**"
 
 ### 3d. Advanced settings
 
@@ -344,28 +345,21 @@ notes:                  notes
 
 Highlight any non-default values with a marker. After viewing, return to main menu.
 
-### 3f. Shell integration
+### 3f. Install jarvis command
 
-If user chose this from advanced, or during first-time flow:
+Check if the `jarvis` executable is already installed and in PATH (`command -v jarvis`).
 
-```
-AskUserQuestion:
-  questions:
-    - question: "Add 'jarvis' shell command for quick access?"
-      header: "Shell"
-      options:
-        - label: "Yes, add to my shell config (Recommended)"
-          description: "Adds jarvis() function to ~/.zshrc or ~/.bashrc"
-        - label: "No, skip"
-          description: "You can set it up later with /jarvis-settings"
-      multiSelect: false
-```
+If not installed or outdated, find the shell script in the plugin distribution and install it:
 
-If yes:
-1. Detect shell from `$SHELL`
-2. Check if already exists (grep for "function jarvis")
-3. Append snippet to shell config
-4. Remind to `source ~/.zshrc`
+1. Locate `jarvis.sh` in the plugin's `shell/` directory (use the skill's base directory, two levels up from `skills/<name>/`)
+2. Determine install directory:
+   - `~/.local/bin/` if it exists and is in PATH (preferred)
+   - `/usr/local/bin/` if writable
+   - Fallback: `~/.local/bin/` (create it, warn about PATH)
+3. Copy to `<install_dir>/jarvis` and `chmod +x`
+4. If directory not in PATH, tell user to add it: `export PATH="~/.local/bin:$PATH"`
+
+If old shell function markers exist in RC files (`# Jarvis AI Assistant START` in `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`), offer to clean them up by removing the START/END block.
 
 ### 4. Write config
 

@@ -551,8 +551,7 @@
     },
 
     "shell_integration": {
-      "bash": "Source jarvis.bash function for `jarvis` command",
-      "zsh": "Source jarvis.zsh function for `jarvis` command",
+      "executable": "Standalone jarvis.sh script installed to PATH (e.g. ~/.local/bin/jarvis)",
       "env_var": "__JARVIS_CLAUDE_STATUSLINE__=1 enables gold JARVIS indicator in statusline"
     }
   },

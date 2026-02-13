@@ -402,12 +402,12 @@ if [ "$SKIP_CONFIG" != true ]; then
     echo ""
 fi
 
-# Shell integration (always ask, independent of config)
+# Shell integration (always offer executable install, independent of config)
 echo -e "  ${BOLD}Shell Integration${NC}"
 echo "  The 'jarvis' command launches Claude with your Jarvis identity."
 echo -e "  ${YELLOW}⚠️  Highly recommended — this is the only way to make Claude fully impersonate Jarvis.${NC}"
 echo ""
-ask "  Add/update 'jarvis' command in your shell? [Y/n]: " SHELL_SETUP "Y"
+ask "  Install 'jarvis' command to your PATH? [Y/n]: " SHELL_SETUP "Y"
 
 echo ""
 
@@ -457,44 +457,40 @@ fi
 
 # Shell integration (independent of config — always runs if user said Y)
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
-    # Detect shell
-    SHELL_RC=""
-    if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "$(command -v zsh)" ] || [ -f "$HOME/.zshrc" ]; then
-        SHELL_RC="$HOME/.zshrc"
-        SHELL_TYPE="zsh"
-    elif [ -f "$HOME/.bashrc" ]; then
-        SHELL_RC="$HOME/.bashrc"
-        SHELL_TYPE="bash"
-    elif [ -f "$HOME/.bash_profile" ]; then
-        SHELL_RC="$HOME/.bash_profile"
-        SHELL_TYPE="bash"
+    # Clean up old shell function injection if present
+    for rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+        if grep -q "# Jarvis AI Assistant START" "$rc" 2>/dev/null; then
+            sed -i.bak '/# Jarvis AI Assistant START/,/# Jarvis AI Assistant END/d' "$rc"
+            rm -f "$rc.bak"
+            info "Removed old shell function from $rc"
+        fi
+    done
+
+    # Detect best install directory
+    INSTALL_DIR=""
+    if [ -d "$HOME/.local/bin" ] && echo "$PATH" | grep -q "$HOME/.local/bin"; then
+        INSTALL_DIR="$HOME/.local/bin"
+    elif [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
+        INSTALL_DIR="/usr/local/bin"
+    else
+        INSTALL_DIR="$HOME/.local/bin"
+        mkdir -p "$INSTALL_DIR"
     fi
 
-    if [ -n "$SHELL_RC" ]; then
-        # Check if already installed
-        if grep -q "# Jarvis AI Assistant" "$SHELL_RC" 2>/dev/null; then
-            # Remove old version before adding new
-            sed -i.bak '/# Jarvis AI Assistant START/,/# Jarvis AI Assistant END/d' "$SHELL_RC" 2>/dev/null || true
-            rm -f "$SHELL_RC.bak"
-        fi
-
-        # Copy shell function content into RC (no version-pinned source path)
-        SHELL_FUNCTION_FILE="$PLUGIN_DIR/shell/jarvis.$SHELL_TYPE"
-        if [ -f "$SHELL_FUNCTION_FILE" ]; then
-            {
-                echo ""
-                echo "# Jarvis AI Assistant START"
-                cat "$SHELL_FUNCTION_FILE"
-                echo "# Jarvis AI Assistant END"
-            } >> "$SHELL_RC"
-            ok "Shell function added to $SHELL_RC"
-        else
-            warn "Shell function not found at $SHELL_FUNCTION_FILE"
-            echo "    Expected: $PLUGIN_DIR/shell/jarvis.$SHELL_TYPE"
-        fi
+    # Install the jarvis executable
+    SHELL_SCRIPT="$PLUGIN_DIR/shell/jarvis.sh"
+    if [ -f "$SHELL_SCRIPT" ]; then
+        cp "$SHELL_SCRIPT" "$INSTALL_DIR/jarvis"
+        chmod +x "$INSTALL_DIR/jarvis"
+        ok "Installed: $INSTALL_DIR/jarvis"
     else
-        warn "Could not detect shell config file"
-        echo "    Manually add the jarvis function from $PLUGIN_DIR/shell/"
+        warn "jarvis.sh not found at $SHELL_SCRIPT"
+    fi
+
+    # Check if directory is in PATH
+    if ! command -v jarvis >/dev/null 2>&1; then
+        warn "$INSTALL_DIR is not in your PATH"
+        info "Add to your shell config: export PATH=\"$INSTALL_DIR:\$PATH\""
     fi
 else
     info "Skipping shell integration"
@@ -729,7 +725,7 @@ if [ "$INSTALL_METHOD" = "docker" ]; then
 fi
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
-    echo -e "  Shell:       ${CYAN}jarvis${NC} command added to $SHELL_RC"
+    echo -e "  Shell:       ${CYAN}jarvis${NC} installed to ${INSTALL_DIR:-PATH}"
 fi
 
 echo -e "  Config:      ${CYAN}$JARVIS_HOME/config.json${NC}"
@@ -751,9 +747,11 @@ fi
 echo ""
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
-    echo -e "  ${YELLOW}Remember to reload your shell:${NC}"
-    echo -e "    ${BLUE}source $SHELL_RC${NC}"
-    echo ""
+    if ! command -v jarvis >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}Add to your shell config to use 'jarvis':${NC}"
+        echo -e "    ${BLUE}export PATH=\"${INSTALL_DIR:-\$HOME/.local/bin}:\$PATH\"${NC}"
+        echo ""
+    fi
 fi
 
 echo -e "  ${BOLD}First time? Just run: jarvis${NC}"

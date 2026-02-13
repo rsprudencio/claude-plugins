@@ -216,7 +216,7 @@ Jarvis works on **macOS, Linux, Windows, and WSL** with automatic platform detec
 
 **uv**: Download installer from [astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-**Shell integration**: The `jarvis` shell function works in Git Bash, PowerShell, and WSL.
+**Shell integration**: The `jarvis` executable is installed to `~/.local/bin/` and works in any shell (Bash, Zsh, Git Bash, etc.).
 
 ### PATH Enrichment
 

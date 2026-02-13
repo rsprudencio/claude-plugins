@@ -1,10 +1,10 @@
 ---
-description: Activate Jarvis identity and load strategic context. Fallback for users without the shell function.
+description: Activate Jarvis identity and load strategic context. Fallback for users without the jarvis executable.
 ---
 
 # Jarvis Mode Activation
 
-## Important: Shell Function Recommended
+## Important: Shell Command Recommended
 
 **This skill activates Jarvis mid-session, but this is NOT the recommended way to use Jarvis.**
 
@@ -13,15 +13,15 @@ The `/jarvis:jarvis` skill loads identity into your conversation as a regular me
 - Instructions loaded this way are more likely to cause **hallucination** as context fills up
 - Session-start checks run late instead of at the beginning
 
-**Recommended**: Use the `jarvis` shell function instead, which injects the system prompt before the session starts:
+**Recommended**: Use the `jarvis` command instead, which injects the system prompt before the session starts:
 
 ```bash
 jarvis    # starts Claude Code with Jarvis identity embedded in system prompt
 ```
 
-If you haven't set it up yet, run `/jarvis-settings` to add the shell function to your shell config.
+If you haven't set it up yet, run `/jarvis-settings` to install the `jarvis` executable.
 
-**If you're using this skill because the shell function isn't available**, proceed below — but be aware of the limitations above.
+**If you're using this skill because the jarvis command isn't available**, proceed below — but be aware of the limitations above.
 
 ---
 
@@ -64,8 +64,8 @@ Load and embody the following identity:
 
    ```
    **Note:** You're using /jarvis:jarvis (mid-session activation). For the best experience,
-   use the `jarvis` shell function which embeds identity in the system prompt.
-   Run /jarvis-settings if you haven't configured it yet.
+   use the `jarvis` command which embeds identity in the system prompt.
+   Run /jarvis-settings if you haven't installed it yet.
    ```
 
    Then proceed with context:
