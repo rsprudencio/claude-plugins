@@ -653,6 +653,11 @@ async def main():
 
 def main_sync():
     """Synchronous entry point for uvx/pip scripts."""
+    from tools.config import get_mcp_transport
+    transport = get_mcp_transport()
+    if transport != "local":
+        logger.info(f"MCP transport is '{transport}', skipping stdio server (use HTTP instead)")
+        sys.exit(0)
     asyncio.run(main())
 
 

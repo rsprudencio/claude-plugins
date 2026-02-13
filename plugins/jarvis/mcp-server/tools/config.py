@@ -292,6 +292,17 @@ def get_expansion_config() -> dict:
     return {**defaults, **memory_config.get("expansion", {})}
 
 
+
+def get_mcp_transport() -> str:
+    """Get MCP transport mode. Returns 'local', 'container', or 'remote'."""
+    return get_config().get("mcp_transport", "local")
+
+
+def get_mcp_remote_url() -> str:
+    """Get MCP remote base URL (for remote mode)."""
+    return get_config().get("mcp_remote_url", "")
+
+
 def get_debug_info() -> dict:
     """Return diagnostic info for troubleshooting config issues."""
     from .auto_extract_config import check_prerequisites

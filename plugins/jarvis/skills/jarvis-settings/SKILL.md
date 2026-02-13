@@ -45,6 +45,8 @@ AskUserQuestion:
           description: "Choose Markdown (.md) or Org-mode (.org) for new files"
         - label: "Auto-Extract"
           description: "Configure observation capture from conversations"
+        - label: "MCP Transport"
+          description: "Switch between local, Docker container, or remote server"
         - label: "Advanced settings"
           description: "Promotion thresholds, vault paths, memory tuning"
       multiSelect: false
@@ -166,6 +168,49 @@ Preset mapping:
 - "Conservative" -> `min_turn_chars: 500`
 - "Custom" -> Ask for `min_turn_chars` (int)
 
+### 3g. MCP Transport
+
+Show current transport mode (`mcp_transport` in config, default: `local`), then ask:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "MCP transport mode? (current: [mode])"
+      header: "Transport"
+      options:
+        - label: "Local (Recommended)"
+          description: "stdio via uvx — fastest, no Docker needed"
+        - label: "Container"
+          description: "Docker on localhost — ports 8741/8742"
+        - label: "Remote"
+          description: "Docker on another machine — specify URL"
+      multiSelect: false
+```
+
+Map to config values:
+- "Local" -> `"local"`
+- "Container" -> `"container"`
+- "Remote" -> `"remote"` (then ask for URL)
+
+If "Remote" selected, ask for URL:
+```
+AskUserQuestion:
+  questions:
+    - question: "Remote server URL? (e.g., http://192.168.1.50)"
+      header: "Remote URL"
+      options:
+        - label: "Enter URL"
+          description: "Base URL of the machine running Docker (no port, no /mcp)"
+      multiSelect: false
+```
+
+After selecting mode:
+1. Update `mcp_transport` (and `mcp_remote_url` if remote) in `~/.jarvis/config.json`
+2. For **local**: Run `claude mcp remove --scope user jarvis-core` and `claude mcp remove --scope user jarvis-todoist-api`
+3. For **container**: Run `claude mcp add --transport http --scope user jarvis-core http://localhost:8741/mcp` and same for todoist-api on 8742
+4. For **remote**: Same as container but use the user's URL instead of localhost
+5. Print: "Transport changed to [mode]. **Restart Claude Code to apply.**"
+
 ### 3d. Advanced settings
 
 ```
@@ -259,6 +304,10 @@ vault_path:      ~/.jarvis/vault/
 file_format:     md
 vault_confirmed: true
 configured_at:   2026-02-08T10:30:00Z
+
+=== MCP Transport ===
+mcp_transport:   local
+mcp_remote_url:  (not set)
 
 === Memory ===
 db_path:              ~/.jarvis/memory_db

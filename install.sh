@@ -623,26 +623,38 @@ chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
 echo ""
 
-# Show Claude Code MCP config
-echo -e "${BOLD}📋 Claude Code MCP Configuration${NC}"
+# Copy transport helper script and configure MCP entries
+TRANSPORT_SRC="$PLUGIN_DIR/scripts/jarvis-transport.sh"
+TRANSPORT_DEST="$JARVIS_HOME/jarvis-transport.sh"
+if [ -f "$TRANSPORT_SRC" ]; then
+    cp "$TRANSPORT_SRC" "$TRANSPORT_DEST"
+    chmod +x "$TRANSPORT_DEST"
+    ok "Transport helper: $TRANSPORT_DEST"
+
+    # Use transport helper to configure MCP entries for container mode
+    bash "$TRANSPORT_DEST" container
+else
+    # Fallback: manual MCP configuration
+    warn "Transport helper not found — configuring MCP entries manually"
+    # Update config to container mode
+    python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    c = json.load(f)
+c['mcp_transport'] = 'container'
+with open(sys.argv[1], 'w') as f:
+    json.dump(c, f, indent=2)
+    f.write('\n')
+" "$JARVIS_HOME/config.json"
+    echo ""
+    echo -e "  ${BOLD}Add MCP servers to Claude Code:${NC}"
+    echo ""
+    echo -e "  ${CYAN}claude mcp add --transport http --scope user jarvis-core http://localhost:8741/mcp${NC}"
+    echo -e "  ${CYAN}claude mcp add --transport http --scope user jarvis-todoist-api http://localhost:8742/mcp${NC}"
+fi
 echo ""
-echo "  Add this to your Claude Code settings (global or project):"
-echo ""
-echo -e "  ${CYAN}claude mcp add --transport http jarvis-core http://localhost:8741/mcp${NC}"
-echo -e "  ${CYAN}claude mcp add --transport http jarvis-todoist-api http://localhost:8742/mcp${NC}"
-echo ""
-echo "  Or add to settings.json manually:"
-echo ""
-echo -e "  ${BLUE}{${NC}"
-echo -e "  ${BLUE}  \"mcpServers\": {${NC}"
-echo -e "  ${BLUE}    \"jarvis-core\": { \"type\": \"http\", \"url\": \"http://localhost:8741/mcp\" },${NC}"
-echo -e "  ${BLUE}    \"jarvis-todoist-api\": { \"type\": \"http\", \"url\": \"http://localhost:8742/mcp\" }${NC}"
-echo -e "  ${BLUE}  }${NC}"
-echo -e "  ${BLUE}}${NC}"
-echo ""
-warn "Docker mode: The MCP server runs in a container. Claude Code hooks"
-warn "(prompt-search, stop-extract) require native Python on the host or"
-warn "routing through 'docker exec'. See docker/README.md for details."
+warn "Docker mode: Claude Code hooks (prompt-search, stop-extract) require"
+warn "native Python on the host. See docker/README.md for details."
 echo ""
 
 fi  # end INSTALL_METHOD=docker

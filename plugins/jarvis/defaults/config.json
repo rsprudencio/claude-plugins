@@ -3,6 +3,8 @@
   "file_format": "md",
   "vault_confirmed": false,
   "configured_at": "__REQUIRED__",
+  "mcp_transport": "local",
+  "mcp_remote_url": "",
   "memory": {
     "db_path": "~/.jarvis/memory_db",
     "secret_detection": true,

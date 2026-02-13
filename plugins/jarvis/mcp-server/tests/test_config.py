@@ -186,6 +186,36 @@ class TestGetDebugInfo:
         assert info["config_contents"].get("vault_path") is None
 
 
+class TestMcpTransportConfig:
+    """Tests for MCP transport configuration getters."""
+
+    def test_get_mcp_transport_default(self, mock_config):
+        """Should return 'local' by default."""
+        from tools.config import get_mcp_transport
+
+        assert get_mcp_transport() == "local"
+
+    def test_get_mcp_transport_from_config(self, mock_config):
+        """Should return config value when set."""
+        from tools.config import get_mcp_transport
+
+        mock_config.set(mcp_transport="container")
+        assert get_mcp_transport() == "container"
+
+    def test_get_mcp_remote_url_default(self, mock_config):
+        """Should return empty string by default."""
+        from tools.config import get_mcp_remote_url
+
+        assert get_mcp_remote_url() == ""
+
+    def test_get_mcp_remote_url_from_config(self, mock_config):
+        """Should return config value when set."""
+        from tools.config import get_mcp_remote_url
+
+        mock_config.set(mcp_remote_url="http://192.168.1.50")
+        assert get_mcp_remote_url() == "http://192.168.1.50"
+
+
 class TestEnvVarOverrides:
     """Tests for JARVIS_HOME and JARVIS_VAULT_PATH environment variable overrides."""
 

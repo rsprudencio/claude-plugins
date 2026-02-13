@@ -68,6 +68,8 @@ claude mcp add --transport http jarvis-core http://localhost:8741/mcp
 
 Or use the installer with Docker option: `curl -fsSL ... | bash` and choose **[2] Docker** when prompted.
 
+Switch between local/container/remote modes anytime with `~/.jarvis/jarvis-transport.sh` or `/jarvis-settings` inside Claude Code.
+
 See [docker/README.md](docker/README.md) for full Docker setup guide.
 
 ### Option 4: Clone and Install Locally

@@ -309,6 +309,19 @@ async def main():
 
 def main_sync():
     """Synchronous entry point for uvx/pip scripts."""
+    from pathlib import Path
+    transport = "local"
+    try:
+        jarvis_home = os.environ.get("JARVIS_HOME") or str(Path.home() / ".jarvis")
+        config_path = os.path.join(jarvis_home, "config.json")
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                transport = json.load(f).get("mcp_transport", "local")
+    except Exception:
+        pass
+    if transport != "local":
+        logger.info(f"MCP transport is '{transport}', skipping stdio server")
+        sys.exit(0)
     asyncio.run(main())
 
 

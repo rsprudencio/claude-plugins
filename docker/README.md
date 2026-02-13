@@ -62,6 +62,36 @@ Or add to your settings JSON manually:
 }
 ```
 
+## Switching Transport Modes
+
+Jarvis supports three MCP transport modes: **local** (stdio, default), **container** (Docker on localhost), and **remote** (Docker on another machine).
+
+### Using the helper script
+
+```bash
+# Check current mode
+~/.jarvis/jarvis-transport.sh status
+
+# Switch to Docker on localhost
+~/.jarvis/jarvis-transport.sh container
+
+# Switch to remote Docker host
+~/.jarvis/jarvis-transport.sh remote http://192.168.1.50
+
+# Switch back to local (stdio)
+~/.jarvis/jarvis-transport.sh local
+```
+
+The script updates `~/.jarvis/config.json` and configures Claude Code MCP entries automatically. **Restart Claude Code after switching.**
+
+### Using /jarvis-settings
+
+Inside Claude Code, run `/jarvis-settings` and choose "MCP Transport" to switch modes interactively.
+
+### How it works
+
+When transport is not `local`, the plugin's stdio servers detect this at startup and exit immediately. Claude Code marks them as disconnected. Meanwhile, HTTP MCP entries (added by the transport script or `/jarvis-settings`) provide the tools from the Docker container.
+
 ## Volume Mounts
 
 | Container Path | Host Path | Purpose |
