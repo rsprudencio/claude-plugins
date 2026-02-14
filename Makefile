@@ -93,6 +93,7 @@ build: ## Build Docker image (tags local + GHCR)
 restart: ## Restart Docker container via compose
 	@echo "$(CYAN)Restarting container...$(NC)"
 	@docker compose -f $(COMPOSE_FILE) down 2>/dev/null || true
+	@docker ps -a --filter "name=jarvis" -q | xargs -r docker rm -f 2>/dev/null || true
 	@docker compose -f $(COMPOSE_FILE) up -d
 	@echo "Waiting for health check..."
 	@sleep 4
