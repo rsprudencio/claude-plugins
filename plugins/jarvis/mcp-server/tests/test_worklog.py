@@ -14,18 +14,22 @@ sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
     _WORKLOG_ACTIVITY_TYPES,
-    _WORKLOG_DEDUP_THRESHOLD,
+    _DEDUP_JACCARD_THRESHOLD,
+    _DEDUP_RELEVANCE_THRESHOLD,
     _HAIKU_MAX_TOKENS,
     discover_workstreams,
     is_duplicate_worklog,
+    is_duplicate_observation,
+    _has_jaccard_duplicate,
     normalize_worklog_response,
     store_worklog,
-    worklog_jaccard_similarity,
+    jaccard_similarity,
     build_session_prompt,
 )
 
-# Pre-import tools.tier2 so it can be patched
+# Pre-import modules so they can be patched
 import tools.tier2  # noqa: F401
+import tools.query  # noqa: F401
 
 
 # ──────────────────────────────────────────────
@@ -154,20 +158,20 @@ class TestNormalizeWorklogResponse:
 # ──────────────────────────────────────────────
 
 
-class TestWorklogJaccardSimilarity:
-    """Tests for worklog_jaccard_similarity()."""
+class TestJaccardSimilarity:
+    """Tests for jaccard_similarity()."""
 
     def test_identical_texts(self):
         """Identical texts have similarity 1.0."""
-        assert worklog_jaccard_similarity("hello world", "hello world") == 1.0
+        assert jaccard_similarity("hello world", "hello world") == 1.0
 
     def test_completely_different(self):
         """Completely different texts have similarity 0.0."""
-        assert worklog_jaccard_similarity("hello world", "foo bar") == 0.0
+        assert jaccard_similarity("hello world", "foo bar") == 0.0
 
     def test_partial_overlap(self):
         """Partial overlap gives intermediate score."""
-        sim = worklog_jaccard_similarity("adding docker support", "adding worklog support")
+        sim = jaccard_similarity("adding docker support", "adding worklog support")
         # Words: {adding, docker, support} vs {adding, worklog, support}
         # Intersection: {adding, support} = 2
         # Union: {adding, docker, support, worklog} = 4
@@ -176,21 +180,21 @@ class TestWorklogJaccardSimilarity:
 
     def test_case_insensitive(self):
         """Similarity is case-insensitive."""
-        assert worklog_jaccard_similarity("Hello World", "hello world") == 1.0
+        assert jaccard_similarity("Hello World", "hello world") == 1.0
 
     def test_both_empty(self):
         """Both empty returns 0.0."""
-        assert worklog_jaccard_similarity("", "") == 0.0
+        assert jaccard_similarity("", "") == 0.0
 
     def test_one_empty(self):
         """One empty returns 0.0."""
-        assert worklog_jaccard_similarity("hello", "") == 0.0
+        assert jaccard_similarity("hello", "") == 0.0
 
     def test_high_overlap_similar_sentences(self):
         """Similar sentences about the same task have high overlap."""
         a = "Adding worklog feature to Jarvis"
         b = "Adding worklog auto-extract to Jarvis plugin"
-        sim = worklog_jaccard_similarity(a, b)
+        sim = jaccard_similarity(a, b)
         # {adding, worklog, feature, to, jarvis} vs {adding, worklog, auto-extract, to, jarvis, plugin}
         # Intersection: {adding, worklog, to, jarvis} = 4
         # Union: {adding, worklog, feature, to, jarvis, auto-extract, plugin} = 7
@@ -246,6 +250,95 @@ class TestIsDuplicateWorklog:
                 session_id="my-session-42",
                 sort_by="created_at_desc",
             )
+
+
+# ──────────────────────────────────────────────
+# TestHasJaccardDuplicate (shared helper)
+# ──────────────────────────────────────────────
+
+
+class TestHasJaccardDuplicate:
+    """Tests for _has_jaccard_duplicate() shared helper."""
+
+    def test_no_candidates(self):
+        """No duplicates when candidate list is empty."""
+        assert _has_jaccard_duplicate("some text", []) is False
+
+    def test_identical_match(self):
+        """Identical text is a duplicate."""
+        assert _has_jaccard_duplicate("hello world", ["hello world"]) is True
+
+    def test_below_threshold(self):
+        """Sufficiently different text is not a duplicate."""
+        assert _has_jaccard_duplicate("Adding Docker support", ["Debugging VMPulse alerts"]) is False
+
+    def test_custom_threshold(self):
+        """Custom threshold is respected."""
+        # These have moderate overlap
+        candidates = ["adding worklog feature to plugin"]
+        # With low threshold, it's a match
+        assert _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.5) is True
+        # With high threshold, it's not
+        assert _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.95) is False
+
+
+# ──────────────────────────────────────────────
+# TestIsDuplicateObservation
+# ──────────────────────────────────────────────
+
+
+class TestIsDuplicateObservation:
+    """Tests for is_duplicate_observation() — embedding relevance based."""
+
+    def test_no_results(self):
+        """No duplicates when semantic search returns nothing."""
+        with patch("tools.query.query_vault",
+                   return_value={"success": True, "results": []}):
+            assert is_duplicate_observation("New insight") is False
+
+    def test_query_failure(self):
+        """Treat query failure as no duplicates."""
+        with patch("tools.query.query_vault",
+                   return_value={"success": False}):
+            assert is_duplicate_observation("New insight") is False
+
+    def test_high_relevance_is_duplicate(self):
+        """Observation with relevance >= 0.95 is a duplicate."""
+        results = [{"relevance": 0.98, "preview": "User prefers dark mode"}]
+        with patch("tools.query.query_vault",
+                   return_value={"success": True, "results": results}):
+            assert is_duplicate_observation("User prefers dark mode") is True
+
+    def test_low_relevance_not_duplicate(self):
+        """Observation with relevance < 0.95 is not a duplicate."""
+        results = [{"relevance": 0.80, "preview": "Debugging VMPulse alerts"}]
+        with patch("tools.query.query_vault",
+                   return_value={"success": True, "results": results}):
+            assert is_duplicate_observation("Adding Docker support for Jarvis") is False
+
+    def test_custom_threshold(self):
+        """Custom threshold overrides default."""
+        results = [{"relevance": 0.85, "preview": "Some observation"}]
+        with patch("tools.query.query_vault",
+                   return_value={"success": True, "results": results}):
+            # Below default (0.95) but above custom (0.80)
+            assert is_duplicate_observation("Similar", threshold=0.80) is True
+            assert is_duplicate_observation("Similar", threshold=0.90) is False
+
+    def test_passes_observation_type_filter(self):
+        """Verifies filter={'type': 'observation'} and n_results=1."""
+        mock_query = MagicMock(return_value={"success": True, "results": []})
+        with patch("tools.query.query_vault", mock_query):
+            is_duplicate_observation("Test content")
+            mock_query.assert_called_once_with(
+                query="Test content",
+                n_results=1,
+                filter={"type": "observation"},
+            )
+
+    def test_default_threshold_is_relevance(self):
+        """Default threshold matches _DEDUP_RELEVANCE_THRESHOLD (0.95)."""
+        assert _DEDUP_RELEVANCE_THRESHOLD == 0.95
 
 
 # ──────────────────────────────────────────────
@@ -417,7 +510,7 @@ class TestWorklogConstants:
 
     def test_dedup_threshold(self):
         """Dedup threshold is 0.7."""
-        assert _WORKLOG_DEDUP_THRESHOLD == 0.7
+        assert _DEDUP_JACCARD_THRESHOLD == 0.7
 
     def test_activity_types(self):
         """All expected activity types present."""

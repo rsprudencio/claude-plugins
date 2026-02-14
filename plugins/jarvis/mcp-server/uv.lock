@@ -851,7 +851,7 @@ wheels = [
 
 [[package]]
 name = "jarvis-tools"
-version = "1.24.0"
+version = "1.28.4"
 source = { editable = "." }
 dependencies = [
     { name = "chromadb" },

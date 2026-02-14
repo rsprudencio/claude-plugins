@@ -172,6 +172,9 @@ def get_auto_extract_config() -> dict:
         - "background-cli": Force Claude CLI (uses OAuth from Keychain)
     - min_turn_chars: Minimum total text in a turn to trigger extraction (default 200)
     - max_transcript_lines: Max new lines to read from transcript per invocation (default 500)
+    - dedup_threshold: Embedding relevance threshold for observation dedup (default 0.95).
+        Higher = stricter (fewer false positives). Lower = catches more duplicates.
+        Scale: 0.0 = unrelated, 1.0 = identical meaning.
     - debug: Enable detailed logging to ~/.jarvis/debug.auto-extraction.log (default False)
 
     Per-session watermarks (at ~/.jarvis/state/sessions/) replace the old global
@@ -185,6 +188,7 @@ def get_auto_extract_config() -> dict:
         "min_turn_chars": 200,
         "max_transcript_lines": 500,
         "max_observations": 3,
+        "dedup_threshold": 0.95,
         "debug": False,
     }
     memory_config = config.get("memory", {})
@@ -296,7 +300,8 @@ def get_worklog_config() -> dict:
 
     Returns config dict with:
     - enabled: Whether worklog extraction is active (default True)
-    - dedup_threshold: Jaccard word-overlap threshold for dedup (default 0.7)
+    - dedup_threshold: Jaccard word-overlap threshold for session dedup (default 0.7).
+        Higher = more similar (1.0 = identical). Lower value catches more duplicates.
 
     Config lives at memory.worklog in ~/.jarvis/config.json.
     """

@@ -76,9 +76,12 @@ fi
 
 ### Step 2: Reinstall All Plugins
 
-**CRITICAL**: All `claude plugin` commands MUST be prefixed with `CLAUDE_CONFIG_DIR=$DETECTED_DIR` to target the correct config directory.
+**CRITICAL**:
+- All `claude plugin` commands MUST be prefixed with `CLAUDE_CONFIG_DIR=$DETECTED_DIR` to target the correct config directory.
+- Must `unset CLAUDECODE` first — Claude Code sets this env var in child processes, and `claude plugin` commands refuse to run when it's set (nested session protection).
 
 ```bash
+unset CLAUDECODE && \
 CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin marketplace update && \
 CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
 CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
@@ -93,7 +96,7 @@ CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-strategic@raph-cl
 ```bash
 echo ""
 echo "Installed plugins:"
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin list | grep -E "jarvis|todoist|strategic"
+unset CLAUDECODE && CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin list | grep -E "jarvis|todoist|strategic"
 echo ""
 echo "Active cache directory: $DETECTED_DIR/plugins/cache/raph-claude-plugins/"
 ls -la "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"

@@ -16,6 +16,7 @@
       "min_turn_chars": 200,
       "max_transcript_lines": 500,
       "max_observations": 3,
+      "dedup_threshold": 0.95,
       "debug": false
     },
     "per_prompt_search": {
