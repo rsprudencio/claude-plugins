@@ -78,7 +78,7 @@ rewrite_mcp_json() {
     local mcp_key entry port
     if [ "$plugin_type" = "jarvis" ]; then
         mcp_key="core"
-        entry="jarvis-tools"
+        entry="jarvis-core"
         port="8741"
     else
         mcp_key="api"

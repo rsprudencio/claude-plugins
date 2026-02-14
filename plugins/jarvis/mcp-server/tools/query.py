@@ -194,7 +194,7 @@ def _increment_retrieval_counts(collection, doc_ids: list, increment: float = 1.
     except Exception as e:
         # Log but don't fail query
         import logging
-        logger = logging.getLogger("jarvis-tools")
+        logger = logging.getLogger("jarvis-core")
         logger.warning(f"Failed to increment retrieval counts: {e}")
 
 

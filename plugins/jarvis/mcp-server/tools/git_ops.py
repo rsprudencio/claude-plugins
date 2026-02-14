@@ -8,7 +8,7 @@ from typing import Optional
 
 from .git_common import run_git_command, GIT_TIMEOUT_LONG
 
-logger = logging.getLogger("jarvis-tools.git_ops")
+logger = logging.getLogger("jarvis-core.git_ops")
 
 
 def get_status() -> dict:

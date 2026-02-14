@@ -49,6 +49,10 @@ COPY plugins/jarvis-todoist/mcp-server/http_app.py .
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Version (set via --build-arg for health endpoint reporting)
+ARG JARVIS_VERSION=unknown
+ENV JARVIS_VERSION=$JARVIS_VERSION
+
 # Default ports
 ENV JARVIS_CORE_PORT=8741
 ENV JARVIS_TODOIST_PORT=8742

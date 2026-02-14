@@ -16,7 +16,7 @@ from typing import Optional
 from .namespaces import TIER2_TYPES, parse_id, get_tier, TIER_CHROMADB
 from .format_support import is_indexable
 
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 
 def store(

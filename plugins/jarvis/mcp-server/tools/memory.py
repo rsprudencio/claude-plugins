@@ -26,7 +26,7 @@ from .format_support import (
     detect_format, is_indexable, parse_frontmatter, extract_title, INDEXABLE_EXTENSIONS,
 )
 
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 # Singleton client
 _chroma_client = None

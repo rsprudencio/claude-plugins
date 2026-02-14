@@ -39,12 +39,13 @@ def test_app_creates_successfully():
 
 
 def test_health_endpoint(client):
-    """GET /health should return status ok with server name."""
+    """GET /health should return status ok with server name and version."""
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["server"] == "jarvis-tools"
+    assert data["server"] == "jarvis-core"
+    assert "version" in data
 
 
 def test_not_found(client):

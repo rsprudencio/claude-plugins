@@ -22,7 +22,7 @@ from .namespaces import (
 )
 from .secret_scan import scan_for_secrets
 
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 VALID_IMPORTANCE = ("low", "medium", "high", "critical")
 VALID_SCOPES = ("global", "project")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Jarvis Tools MCP Server
+Jarvis Core MCP Server
 
 Unified content API, git operations, and vault access for JARVIS protocol.
 
@@ -64,7 +64,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stderr
 )
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 server = Server("core")
 
@@ -646,7 +646,7 @@ def handle_get_format_reference() -> dict:
 
 
 async def main():
-    logger.info("Starting Jarvis Tools MCP Server")
+    logger.info("Starting Jarvis Core MCP Server")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 

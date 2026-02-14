@@ -1,6 +1,6 @@
 {
   "core": {
     "command": "uvx",
-    "args": ["--from", "${CLAUDE_PLUGIN_ROOT}/mcp-server", "jarvis-tools"]
+    "args": ["--from", "${CLAUDE_PLUGIN_ROOT}/mcp-server", "jarvis-core"]
   }
 }

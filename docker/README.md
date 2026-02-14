@@ -19,7 +19,7 @@ docker compose -f docker/docker-compose.yml up -d
 
 # 4. Verify
 curl http://localhost:8741/health
-# → {"status":"ok","server":"jarvis-tools"}
+# → {"status":"ok","server":"jarvis-core","version":"1.28.5"}
 ```
 
 Or use the installer: `bash install.sh` and choose **[2] Docker**.

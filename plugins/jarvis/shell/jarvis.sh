@@ -54,7 +54,7 @@ remote_url = cfg.get('mcp_remote_url', '').rstrip('/')
 
 # Plugin name -> (mcp_key, entry_point, port)
 PLUGIN_MAP = {
-    'jarvis': ('core', 'jarvis-tools', '8741'),
+    'jarvis': ('core', 'jarvis-core', '8741'),
     'jarvis-todoist': ('api', 'jarvis-todoist-api', '8742'),
 }
 

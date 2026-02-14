@@ -1,6 +1,6 @@
 [project]
-name = "jarvis-tools"
-version = "1.28.5"
+name = "jarvis-core"
+version = "1.28.6"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-jarvis-tools = "server:main_sync"
+jarvis-core = "server:main_sync"
 
 [build-system]
 requires = ["hatchling"]

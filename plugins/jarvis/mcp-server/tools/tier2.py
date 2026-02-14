@@ -21,7 +21,7 @@ from .namespaces import (
 )
 from .secret_scan import scan_for_secrets
 
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 VALID_CONTENT_TYPES = (
     "observation", "pattern", "summary", "code",

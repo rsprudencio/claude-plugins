@@ -11,7 +11,7 @@ from .git_common import run_git_command
 from .git_ops import get_status
 from .format_support import is_indexable
 
-logger = logging.getLogger("jarvis-tools.commit")
+logger = logging.getLogger("jarvis-core.commit")
 
 
 def stage_files(files: Optional[list[str]] = None, stage_all: bool = False) -> dict:

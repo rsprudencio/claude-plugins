@@ -19,7 +19,7 @@
     "jarvis": {
       "version": "1.27.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
-      "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-tools", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
+      "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-core", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
     "jarvis-todoist": {
@@ -255,7 +255,7 @@
   },
 
   "mcp_tools": {
-    "_note": "Provided by jarvis-tools MCP server. 21 tools across 6 categories.",
+    "_note": "Provided by jarvis-core MCP server. 21 tools across 6 categories.",
 
     "unified_content_api": {
       "_note": "Single entry points for all content operations. Routes automatically by parameter.",

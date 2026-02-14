@@ -403,7 +403,7 @@ info "Testing MCP server startup..."
 
 # Send a minimal JSON-RPC initialize request and check for a response
 MCP_OUTPUT=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' | \
-    timeout 30 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-tools 2>/dev/null || true)
+    timeout 30 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-core 2>/dev/null || true)
 
 if echo "$MCP_OUTPUT" | grep -q '"result"' 2>/dev/null; then
     ok "MCP server responds"
@@ -417,7 +417,7 @@ else
     echo "    - uvx cache corrupted (fix: uvx cache clean)"
     echo ""
     echo "  Debug:"
-    echo -e "    ${BLUE}uvx --from \"$PLUGIN_DIR/mcp-server\" jarvis-tools${NC}"
+    echo -e "    ${BLUE}uvx --from \"$PLUGIN_DIR/mcp-server\" jarvis-core${NC}"
     echo ""
     echo "  Continuing anyway — the plugin is installed, but semantic memory may not work."
     echo ""
@@ -639,7 +639,7 @@ if [ -d "$VAULT_PATH" ]; then
                 '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"installer","version":"0.1"}}}' \
                 '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
                 '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jarvis_index_vault","arguments":{}}}' | \
-                timeout 120 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-tools 2>/dev/null || true)
+                timeout 120 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-core 2>/dev/null || true)
 
             if echo "$INDEX_OUTPUT" | grep -q '"result"' 2>/dev/null; then
                 ok "Vault indexed ($MD_COUNT files) — semantic search ready"

@@ -11,7 +11,7 @@ Unified entry point for running all Jarvis plugin tests. Covers two distinct tes
 
 ### 1. MCP Server Unit Tests (pytest)
 
-**What:** Deterministic Python unit tests for the jarvis-tools MCP server.
+**What:** Deterministic Python unit tests for the jarvis-core MCP server.
 **Location:** `plugins/jarvis/mcp-server/tests/`
 **Runner:** pytest
 **Speed:** Fast (~5-15 seconds)

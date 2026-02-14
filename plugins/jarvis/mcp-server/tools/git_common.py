@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 from .config import get_verified_vault_path
 
-logger = logging.getLogger("jarvis-tools.git")
+logger = logging.getLogger("jarvis-core.git")
 
 # Environment that disables git pager to prevent hanging on interactive prompts
 GIT_ENV = {**os.environ, "GIT_PAGER": ""}

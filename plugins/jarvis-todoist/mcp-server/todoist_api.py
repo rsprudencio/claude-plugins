@@ -53,8 +53,8 @@ def _get_api():
     """Lazy singleton TodoistAPI client."""
     global _api
     if _api is None:
-        from todoist_api_python.api import TodoistAPI
         token = _get_token()
+        from todoist_api_python.api import TodoistAPI
         _api = TodoistAPI(token)
     return _api
 

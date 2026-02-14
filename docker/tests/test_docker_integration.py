@@ -129,7 +129,8 @@ class TestHealthEndpoint:
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "ok"
-        assert data["server"] == "jarvis-tools"
+        assert data["server"] == "jarvis-core"
+        assert "version" in data
 
     def test_health_json_content_type(self, docker_container):
         r = requests.get(f"{docker_container['core_url']}/health", timeout=5)

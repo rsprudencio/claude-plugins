@@ -15,7 +15,7 @@ from .memory import _get_collection
 from .namespaces import vault_id, parse_id, get_tier, TIER_CHROMADB, TIER_FILE
 from .paths import get_path
 
-logger = logging.getLogger("jarvis-tools")
+logger = logging.getLogger("jarvis-core")
 
 
 def check_promotion_criteria(metadata: dict) -> dict:
