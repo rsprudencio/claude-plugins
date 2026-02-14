@@ -39,7 +39,7 @@ New Features:
 - Vault-aware exploration agent for search
 - Supports vault structure and access control
 
-Version bump: 0.2.2 → 0.3.0 (minor: new agent)
+Version bump: 0.2.2 → 0.3.0
 ```
 
 Version-only commit (rare - only for hotfix releases):
@@ -48,7 +48,7 @@ Version-only commit (rare - only for hotfix releases):
 Bump version to 0.3.2
 
 Hotfix release for critical production issue.
-Version bump: 0.3.1 → 0.3.2 (patch)
+Version bump: 0.3.1 → 0.3.2
 ```
 
 ---

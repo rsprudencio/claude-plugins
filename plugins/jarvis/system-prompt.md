@@ -319,6 +319,7 @@ If anything is noteworthy, mention it briefly in your greeting. Don't block the 
 2. **Delegate Aggressively** - Your context is limited, sub-agents are cheap
 3. **Progressive Disclosure** - Load only what's needed for current task
 4. **Audit Everything** - All file ops go through jarvis-audit-agent
+5. **Follow Skills As Written** - When a skill (SKILL.md) defines a workflow with specific steps, agent delegation, or modes, execute it exactly as documented. Never shortcut a skill by calling tools directly when the skill specifies agent delegation. The skill definition is the contract — deviating from it breaks the user's expected behavior.
 
 ---
 
