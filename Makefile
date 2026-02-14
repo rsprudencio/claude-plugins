@@ -83,6 +83,7 @@ build: ## Build Docker image (tags local + GHCR)
 	$(eval BUILD_VERSION := $(or $(VERSION),$(CURRENT_VERSION)))
 	@echo "$(CYAN)Building Docker image v$(BUILD_VERSION)...$(NC)"
 	docker build -f docker/Dockerfile \
+		--build-arg JARVIS_VERSION=$(BUILD_VERSION) \
 		-t $(IMAGE_NAME):$(BUILD_VERSION) \
 		-t $(IMAGE_NAME):latest \
 		.
