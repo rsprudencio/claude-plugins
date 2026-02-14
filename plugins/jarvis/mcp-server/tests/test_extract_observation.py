@@ -396,6 +396,30 @@ class TestParseAllTurns:
         assert len(turns) == 1
         assert turns[0]["user_text"] == "Second user msg"
 
+    def test_user_content_as_string(self):
+        """User message content can be a plain string (not a list of blocks)."""
+        lines = [
+            (0, json.dumps({"type": "user", "message": {"content": "Fix the login bug"}})),
+            self._make_assistant("I'll fix that.", idx=1),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 1
+        assert turns[0]["user_text"] == "Fix the login bug"
+        assert turns[0]["assistant_text"] == "I'll fix that."
+
+    def test_user_content_string_mixed_with_list(self):
+        """String and list content formats can coexist across turns."""
+        lines = [
+            (0, json.dumps({"type": "user", "message": {"content": "First question"}})),
+            self._make_assistant("First answer", idx=1),
+            self._make_user("Second question", idx=2),
+            self._make_assistant("Second answer", idx=3),
+        ]
+        turns = parse_all_turns(lines)
+        assert len(turns) == 2
+        assert turns[0]["user_text"] == "First question"
+        assert turns[1]["user_text"] == "Second question"
+
 
 # ──────────────────────────────────────────────
 # TestPickBestTurn
@@ -1747,6 +1771,15 @@ class TestExtractFirstUserMessage:
         result = extract_first_user_message(path)
         assert "Part 1" in result
         assert "Part 2" in result
+
+    def test_string_content(self, tmp_path):
+        """User message content as a plain string is handled correctly."""
+        lines = [
+            json.dumps({"type": "user", "message": {"content": "Check the debug log"}}),
+        ]
+        path = self._write_transcript(tmp_path, lines)
+        result = extract_first_user_message(path)
+        assert result == "Check the debug log"
 
 
 # ──────────────────────────────────────────────

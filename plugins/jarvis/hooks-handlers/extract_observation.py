@@ -199,7 +199,6 @@ _WORKLOG_ACTIVITY_TYPES = frozenset({
     "coding", "debugging", "reviewing", "configuring",
     "planning", "discussing", "researching", "other",
 })
-_WORKLOG_DEDUP_THRESHOLD = 0.7    # Jaccard word-overlap threshold for dedup
 
 
 def _parse_output_tokens(token_usage: str) -> int:
@@ -335,14 +334,17 @@ def parse_all_turns(indexed_lines: list[tuple[int, str]]) -> list[dict]:
             continue
 
         if msg_type == "user":
-            # Extract user text
+            # Extract user text (content can be a string or list of blocks)
             content = entry.get("message", {}).get("content", [])
-            texts = [
-                block.get("text", "")
-                for block in content
-                if isinstance(block, dict) and block.get("type") == "text"
-            ]
-            pending_user = "\n".join(texts).strip()
+            if isinstance(content, str):
+                pending_user = content.strip()
+            else:
+                texts = [
+                    block.get("text", "")
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
+                pending_user = "\n".join(texts).strip()
             pending_user_line = abs_idx
 
         elif msg_type == "assistant" and pending_user is not None:
@@ -477,12 +479,15 @@ def extract_first_user_message(transcript_path: str, max_scan_lines: int = 50) -
                     continue
                 if entry.get("type") == "user":
                     content = entry.get("message", {}).get("content", [])
-                    texts = [
-                        block.get("text", "")
-                        for block in content
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ]
-                    text = "\n".join(texts).strip()
+                    if isinstance(content, str):
+                        text = content.strip()
+                    else:
+                        texts = [
+                            block.get("text", "")
+                            for block in content
+                            if isinstance(block, dict) and block.get("type") == "text"
+                        ]
+                        text = "\n".join(texts).strip()
                     return text[:_FIRST_USER_MAX_CHARS]
     except OSError:
         pass
@@ -976,6 +981,7 @@ def _call_api_backend(prompt: str) -> tuple[str, int, int] | None:
         response = client.messages.create(
             model=HAIKU_MODEL,
             max_tokens=_HAIKU_MAX_TOKENS,
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         return (
@@ -1233,7 +1239,7 @@ def normalize_worklog_response(parsed: dict | None) -> list[dict]:
     }]
 
 
-def worklog_jaccard_similarity(text_a: str, text_b: str) -> float:
+def jaccard_similarity(text_a: str, text_b: str) -> float:
     """Compute Jaccard word-overlap similarity between two texts.
 
     Args:
@@ -1252,18 +1258,110 @@ def worklog_jaccard_similarity(text_a: str, text_b: str) -> float:
     return len(intersection) / len(union)
 
 
-def is_duplicate_worklog(task_summary: str, session_id: str) -> bool:
-    """Check if a similar worklog already exists for this session.
+# ---------------------------------------------------------------------------
+# Dedup: embedding relevance for observations, Jaccard for worklogs
+# ---------------------------------------------------------------------------
 
-    Queries ChromaDB for existing worklogs in the same session,
-    then computes Jaccard similarity against each.
+_DEDUP_JACCARD_THRESHOLD = 0.7
+_DEDUP_RELEVANCE_THRESHOLD = 0.95
+
+
+def _log_dedup(content_type: str, text: str, matched: str, score: float,
+               threshold: float, metric: str = "jaccard",
+               debug: bool = False):
+    """Log a dedup discard to the debug file.
 
     Args:
-        task_summary: Proposed worklog text
-        session_id: Claude Code session ID
+        content_type: "observation" or "worklog"
+        text: Proposed new text (truncated in log)
+        matched: Existing text that triggered the match (truncated in log)
+        score: Similarity score (Jaccard or relevance depending on metric)
+        threshold: Threshold that was exceeded
+        metric: "jaccard" or "relevance" (for log labeling)
+        debug: Whether debug logging is enabled
+    """
+    if not debug:
+        return
+    try:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        TOKEN_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(TOKEN_LOG_FILE, "a") as f:
+            f.write(
+                f"{timestamp} | DEDUP {content_type:11s} | "
+                f"{metric}={score:.3f} >= {threshold:.2f} | "
+                f"new={text[:80]!r} | matched={matched[:80]!r}\n"
+            )
+    except Exception:
+        pass
+
+
+def _has_jaccard_duplicate(text: str, candidates: list[str],
+                           threshold: float = _DEDUP_JACCARD_THRESHOLD,
+                           content_type: str = "", debug: bool = False) -> bool:
+    """Check if any candidate text is a Jaccard duplicate of the given text.
+
+    Args:
+        text: Proposed new text
+        candidates: List of existing content strings to compare against
+        threshold: Jaccard similarity threshold (default 0.7).
+            Higher = more similar (1.0 = identical, 0.0 = no overlap).
+            Lower threshold catches more duplicates.
+        content_type: "observation" or "worklog" (for debug logging)
+        debug: Whether to log dedup events to debug file
 
     Returns:
-        True if a similar worklog exists (skip storing), False otherwise
+        True if any candidate exceeds the threshold
+    """
+    for existing in candidates:
+        score = jaccard_similarity(text, existing)
+        if score >= threshold:
+            _log_dedup(content_type, text, existing, score, threshold, debug)
+            return True
+    return False
+
+
+def is_duplicate_observation(content: str, threshold: float = _DEDUP_RELEVANCE_THRESHOLD,
+                             debug: bool = False) -> bool:
+    """Check if a semantically similar observation already exists globally.
+
+    Uses ChromaDB embedding relevance score directly. If the top result's
+    relevance >= threshold, the observation is considered a duplicate.
+    Zero additional API calls (embeddings computed on store).
+
+    Args:
+        content: Observation text to check for duplicates
+        threshold: Minimum relevance to consider duplicate (default 0.95).
+            Higher = stricter (fewer false positives). Lower = more aggressive.
+            Scale: 0.0 = unrelated, 1.0 = identical meaning.
+        debug: Whether to log dedup events to debug file
+    """
+    from tools.query import query_vault
+
+    result = query_vault(
+        query=content,
+        n_results=1,
+        filter={"type": "observation"},
+    )
+    if not result.get("success") or not result.get("results"):
+        return False
+
+    top = result["results"][0]
+    relevance = top.get("relevance", 0.0)
+
+    if relevance >= threshold:
+        _log_dedup("observation", content, top.get("preview", ""),
+                   relevance, threshold, metric="relevance", debug=debug)
+        return True
+    return False
+
+
+def is_duplicate_worklog(task_summary: str, session_id: str,
+                         threshold: float = _DEDUP_JACCARD_THRESHOLD,
+                         debug: bool = False) -> bool:
+    """Check if a similar worklog already exists for this session.
+
+    Session-scoped: queries only worklogs from the same session, then
+    Jaccard confirms word-level overlap.
     """
     from tools.tier2 import tier2_list
 
@@ -1272,17 +1370,12 @@ def is_duplicate_worklog(task_summary: str, session_id: str) -> bool:
         session_id=session_id,
         sort_by="created_at_desc",
     )
-
     if not result.get("success") or not result.get("documents"):
         return False
 
-    for doc in result["documents"]:
-        existing_content = doc.get("content", "")
-        similarity = worklog_jaccard_similarity(task_summary, existing_content)
-        if similarity >= _WORKLOG_DEDUP_THRESHOLD:
-            return True
-
-    return False
+    candidates = [d.get("content", "") for d in result["documents"]]
+    return _has_jaccard_duplicate(task_summary, candidates, threshold,
+                                 content_type="worklog", debug=debug)
 
 
 def discover_workstreams(limit: int = 30) -> list[str]:
@@ -1413,9 +1506,13 @@ def main():
     max_lines = config.get("max_transcript_lines", 500)
     max_observations = config.get("max_observations", _MAX_OBSERVATIONS)
 
+    # Dedup thresholds (observations use embedding relevance, worklogs use Jaccard)
+    obs_dedup_threshold = config.get("dedup_threshold", _DEDUP_RELEVANCE_THRESHOLD)
+
     # Worklog config
     worklog_config = get_worklog_config()
     worklog_enabled = worklog_config.get("enabled", True)
+    worklog_dedup_threshold = worklog_config.get("dedup_threshold", _DEDUP_JACCARD_THRESHOLD)
 
     # Step 1: Read watermark
     watermark = read_watermark(session_id)
@@ -1520,6 +1617,10 @@ def main():
         if scope not in ("project", "global"):
             scope = ""
 
+        if is_duplicate_observation(content, threshold=obs_dedup_threshold, debug=debug):
+            print(f"Skipping duplicate observation {i + 1}", file=sys.stderr)
+            continue
+
         result = store_observation(
             content, importance, tags, "auto-extract:stop-hook",
             project_path=project_path, git_branch=git_branch,
@@ -1555,7 +1656,7 @@ def main():
     # Step 10b: Store worklog entry (if not a duplicate)
     if worklogs:
         wl = worklogs[0]  # Max 1 worklog per extraction
-        if not is_duplicate_worklog(wl["task_summary"], session_id):
+        if not is_duplicate_worklog(wl["task_summary"], session_id, threshold=worklog_dedup_threshold, debug=debug):
             wl_result = store_worklog(
                 task_summary=wl["task_summary"],
                 workstream=wl["workstream"],
