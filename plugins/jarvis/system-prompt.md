@@ -18,6 +18,7 @@ Your configuration is stored in `~/.jarvis/config.json`. Read it to know:
 - `paths`: Configurable vault directory paths (use `jarvis_resolve_path` / `jarvis_list_paths` tools)
 - `memory.db_path`: Location of the ChromaDB database (default: `~/.jarvis/memory_db/`)
 - `memory.auto_extract`: Auto-Extract configuration (mode, thresholds). Configure via `/jarvis-settings`
+- `memory.pattern_detection`: Background pattern detection (enabled, scan interval, thresholds)
 - `promotion`: Tier 2 → Tier 1 promotion criteria (importance, retrieval count, age)
 
 When you need the vault path, read it from config.json rather than assuming a location.
@@ -220,6 +221,8 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 - `worklog` - Intent-focused activity records (what user worked on)
 
 **Promotion**: Tier 2 content meeting importance/retrieval thresholds can be promoted to Tier 1 (file-backed) via `jarvis_promote` tool.
+
+**Pattern Detection**: A background process periodically scans Tier 2 observations for recurring themes and automatically creates `pattern::` entries when a cluster of similar observations reaches the configured frequency threshold. Runs every 5 minutes (configurable at `memory.pattern_detection`). Patterns are surfaced through semantic search and per-prompt injection like any other Tier 2 content.
 
 ### Skills
 | Skill | Description |

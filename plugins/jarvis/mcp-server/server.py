@@ -648,7 +648,9 @@ def handle_get_format_reference() -> dict:
 async def main():
     logger.info("Starting Jarvis Core MCP Server")
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        from tools.patterns import pattern_detection_loop
+        server_task = server.run(read_stream, write_stream, server.create_initialization_options())
+        await asyncio.gather(server_task, pattern_detection_loop(), return_exceptions=True)
 
 
 def main_sync():

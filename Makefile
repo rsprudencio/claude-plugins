@@ -26,17 +26,9 @@ IMAGE_NAME    := jarvis-mcp
 GHCR_IMAGE    := ghcr.io/rsprudencio/jarvis
 COMPOSE_FILE  := $(HOME)/.jarvis/docker-compose.yml
 
-# Auto-detect Claude config directory (respects CLAUDE_CONFIG_DIR env var, overridable via CLAUDE_DIR=)
-CLAUDE_DIR ?= $(shell \
-  if [ -n "$$CLAUDE_CONFIG_DIR" ]; then \
-    echo "$$CLAUDE_CONFIG_DIR"; \
-  elif [ -d "$(HOME)/.claude-personal/plugins" ]; then \
-    echo "$(HOME)/.claude-personal"; \
-  elif [ -d "$(HOME)/.claude/plugins" ]; then \
-    echo "$(HOME)/.claude"; \
-  else \
-    echo "$(HOME)/.claude"; \
-  fi)
+# Claude config directory — must be set explicitly (no auto-detection)
+# Usage: make reinstall CLAUDE_DIR=~/.claude-personal
+CLAUDE_DIR ?= $(CLAUDE_CONFIG_DIR)
 
 # Colors
 CYAN    := \033[0;36m
@@ -102,11 +94,18 @@ restart: ## Restart Docker container via compose
 		echo "$(GREEN)✓ Container healthy$(NC)" || \
 		echo "$(RED)✗ Health check failed$(NC)"
 
-reinstall: ## Reinstall all 3 Claude plugins
+reinstall: ## Reinstall all 3 Claude plugins (CLAUDE_DIR= required)
+	@if [ -z "$(CLAUDE_DIR)" ]; then \
+		echo "$(RED)Error: CLAUDE_DIR is required$(NC)"; \
+		echo "  make reinstall CLAUDE_DIR=~/.claude"; \
+		echo "  make reinstall CLAUDE_DIR=~/.claude-personal"; \
+		exit 1; \
+	fi
 	@echo "$(CYAN)Reinstalling plugins...$(NC)"
-	@echo "  Config dir: $(CLAUDE_DIR)"
-	@unset CLAUDECODE; \
-	export CLAUDE_CONFIG_DIR="$(CLAUDE_DIR)"; \
+	@_dir=$$(eval echo "$(CLAUDE_DIR)"); \
+	echo "  Config dir: $$_dir"; \
+	unset CLAUDECODE; \
+	export CLAUDE_CONFIG_DIR="$$_dir"; \
 	claude plugin marketplace update && \
 	claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
 	claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \

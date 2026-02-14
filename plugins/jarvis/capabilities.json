@@ -1,7 +1,7 @@
 {
   "$schema": "jarvis-capabilities/v2",
   "description": "AI-first reference for Jarvis plugin capabilities. Designed for Jarvis to self-reference when answering user questions about features, workflows, and best practices.",
-  "last_updated": "2026-02-10",
+  "last_updated": "2026-02-14",
 
   "identity": {
     "name": "Jarvis",
@@ -17,8 +17,8 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.27.0",
-      "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract",
+      "version": "1.29.0",
+      "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract, pattern detection",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-core", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
@@ -445,6 +445,31 @@
         "observations": "Global dedup via ChromaDB embedding relevance score. If the nearest existing observation has relevance >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
         "worklogs": "Session-scoped dedup via tier2_list + Jaccard word-overlap. Only prevents double-logging within same session. Configurable at memory.worklog.dedup_threshold (default 0.7)."
       }
+    },
+
+    "pattern_detection": {
+      "hook_type": "Background task (asyncio.gather with MCP server)",
+      "description": "Periodically scans Tier 2 observations for recurring themes and promotes clusters to durable pattern:: entries",
+      "handler": "tools/patterns.py → pattern_detection_loop()",
+      "pipeline": {
+        "1_fetch": "Query recent observations within lookback window",
+        "2_signature": "Extract token signatures from content/tags/title (stop words filtered)",
+        "3_cluster": "Jaccard similarity clustering into in-memory candidates",
+        "4_promote": "Candidates exceeding frequency threshold promoted to pattern:: entries",
+        "5_dedup": "New patterns checked against existing patterns via Jaccard merge threshold"
+      },
+      "configuration": {
+        "enabled": { "type": "boolean", "default": true, "description": "Master switch" },
+        "scan_interval_seconds": { "type": "integer", "default": 300, "description": "Seconds between scans" },
+        "similarity_threshold": { "type": "float", "default": 0.3, "description": "Jaccard threshold for merging observations into a candidate" },
+        "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations to promote a candidate" },
+        "max_candidates": { "type": "integer", "default": 200, "description": "Max in-memory candidates before LRU eviction" },
+        "candidate_expiry_days": { "type": "integer", "default": 7, "description": "Days before inactive candidate expires" },
+        "lookback_minutes": { "type": "integer", "default": 10, "description": "How far back each scan looks for new observations" },
+        "merge_threshold": { "type": "float", "default": 0.7, "description": "Jaccard threshold for dedup against existing patterns" }
+      },
+      "candidates": "In-memory only — lost on restart, re-derived from observations on next scan cycle",
+      "surfacing": "Patterns indexed in unified collection, surfaced via jarvis_retrieve and per-prompt search (no new MCP tools)"
     }
   },
 
@@ -531,6 +556,17 @@
     "memory_worklog": {
       "enabled": { "type": "boolean", "default": true, "description": "Enable worklog extraction alongside observations" },
       "dedup_threshold": { "type": "float", "default": 0.7, "description": "Jaccard word-overlap threshold for worklog dedup within a session. Higher = more similar (1.0 = identical). Lower value catches more duplicates." }
+    },
+
+    "memory_pattern_detection": {
+      "enabled": { "type": "boolean", "default": true, "description": "Enable background pattern detection from observations" },
+      "scan_interval_seconds": { "type": "integer", "default": 300, "description": "Seconds between detection scans" },
+      "similarity_threshold": { "type": "float", "default": 0.3, "description": "Jaccard threshold for merging observations into a candidate" },
+      "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations before promoting candidate to pattern" },
+      "max_candidates": { "type": "integer", "default": 200, "description": "Max in-memory candidates before LRU eviction" },
+      "candidate_expiry_days": { "type": "integer", "default": 7, "description": "Days before inactive candidate expires" },
+      "lookback_minutes": { "type": "integer", "default": 10, "description": "How far back each scan looks for new observations" },
+      "merge_threshold": { "type": "float", "default": 0.7, "description": "Jaccard threshold for dedup against existing patterns" }
     },
 
     "promotion": {

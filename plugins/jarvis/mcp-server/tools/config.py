@@ -295,6 +295,36 @@ def get_expansion_config() -> dict:
 
 
 
+def get_pattern_detection_config() -> dict:
+    """Get pattern detection configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for pattern detection (default True)
+    - scan_interval_seconds: Seconds between detection scans (default 300)
+    - similarity_threshold: Jaccard threshold to merge observations into a candidate (default 0.3)
+    - promotion_threshold: Min observations before promoting a candidate to pattern (default 3)
+    - max_candidates: Maximum in-memory candidates before LRU eviction (default 200)
+    - candidate_expiry_days: Days before an inactive candidate expires (default 7)
+    - lookback_minutes: How far back to scan for new observations each cycle (default 10)
+    - merge_threshold: Jaccard threshold to merge new pattern into existing one (default 0.7)
+
+    Config lives at memory.pattern_detection in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "scan_interval_seconds": 300,
+        "similarity_threshold": 0.3,
+        "promotion_threshold": 3,
+        "max_candidates": 200,
+        "candidate_expiry_days": 7,
+        "lookback_minutes": 10,
+        "merge_threshold": 0.7,
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("pattern_detection", {})}
+
+
 def get_worklog_config() -> dict:
     """Get worklog configuration with defaults.
 

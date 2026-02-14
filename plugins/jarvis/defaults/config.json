@@ -47,6 +47,16 @@
     "worklog": {
       "enabled": true,
       "dedup_threshold": 0.7
+    },
+    "pattern_detection": {
+      "enabled": true,
+      "scan_interval_seconds": 300,
+      "similarity_threshold": 0.3,
+      "promotion_threshold": 3,
+      "max_candidates": 200,
+      "candidate_expiry_days": 7,
+      "lookback_minutes": 10,
+      "merge_threshold": 0.7
     }
   },
   "promotion": {
