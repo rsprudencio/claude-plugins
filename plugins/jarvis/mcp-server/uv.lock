@@ -856,6 +856,7 @@ source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "mcp" },
+    { name = "tokenizers" },
 ]
 
 [package.optional-dependencies]
@@ -870,6 +871,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "tokenizers", specifier = ">=0.13.0" },
 ]
 provides-extras = ["dev"]
 

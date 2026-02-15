@@ -15,7 +15,7 @@ from .memory import _get_collection
 from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
-from .config import get_expansion_config, get_per_prompt_config
+from .config import get_expansion_config, get_per_prompt_config, get_reranking_config
 from .format_support import detect_format
 
 
@@ -233,8 +233,12 @@ def query_vault(query: str, n_results: int = 5,
     expansion = _expand_query(query, expansion_config)
     search_text = expansion["expanded"]
 
-    # Over-fetch to account for chunk deduplication
-    fetch_count = min(n_results * 3, 60, total)
+    # Over-fetch to account for chunk deduplication (and reranking if enabled)
+    reranking_config = get_reranking_config()
+    if reranking_config.get("enabled", True):
+        fetch_count = min(reranking_config.get("candidate_count", 100), total)
+    else:
+        fetch_count = min(n_results * 3, 60, total)
 
     try:
         query_params = {
@@ -292,8 +296,22 @@ def query_vault(query: str, n_results: int = 5,
         if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
             best_per_file[pf] = entry
 
-    # Sort by relevance descending and trim to n_results
-    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:n_results]
+    # Cross-encoder reranking (applied only when enabled and >1 candidate)
+    reranking_applied = False
+    if reranking_config.get("enabled") and len(best_per_file) > 1:
+        from .reranking import rerank
+        deduped_list = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
+        docs = [e["document"] or "" for e in deduped_list]
+        vscores = [e["relevance"] for e in deduped_list]
+        blended = rerank(query, docs, vscores, reranking_config)
+        if blended is not vscores:
+            for entry, score in zip(deduped_list, blended):
+                entry["relevance"] = score
+            reranking_applied = True
+
+    # Sort by relevance descending and trim to final count
+    final_count = reranking_config.get("top_k", 10) if reranking_applied else n_results
+    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:final_count]
 
     results = []
     all_ids = []
@@ -346,6 +364,15 @@ def query_vault(query: str, n_results: int = 5,
         response["expansion"] = {
             "terms_added": expansion["terms_added"],
             "intent": expansion["intent"],
+        }
+
+    # Include reranking metadata when applied
+    if reranking_applied:
+        response["reranking"] = {
+            "applied": True,
+            "alpha": reranking_config.get("alpha", 0.7),
+            "candidates": len(best_per_file),
+            "top_k": final_count,
         }
 
     return response

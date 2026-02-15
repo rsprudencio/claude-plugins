@@ -15,6 +15,7 @@ WORKDIR /build
 RUN uv pip install --system --no-cache \
     "mcp>=1.0.0" \
     "chromadb>=0.5.0" \
+    "tokenizers>=0.13.0" \
     "todoist-api-python>=3.0.0" \
     uvicorn
 

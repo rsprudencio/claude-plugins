@@ -44,6 +44,14 @@
       "synonyms": {},
       "intent_patterns": []
     },
+    "reranking": {
+      "enabled": true,
+      "candidate_count": 100,
+      "top_k": 10,
+      "alpha": 0.7,
+      "max_latency_ms": 1000,
+      "batch_size": 32
+    },
     "worklog": {
       "enabled": true,
       "dedup_threshold": 0.7

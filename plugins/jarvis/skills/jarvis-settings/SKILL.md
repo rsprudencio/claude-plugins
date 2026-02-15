@@ -277,6 +277,21 @@ Let user change specific paths. All paths are relative to vault root.
 | `default_importance` | "medium" | Default importance for new content |
 | `db_path` | `~/.jarvis/memory_db` | ChromaDB database location |
 
+#### Cross-encoder reranking
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | true | Enable cross-encoder reranking for `/jarvis-recall` results |
+| `candidate_count` | 100 | How many results to over-fetch for reranking |
+| `top_k` | 10 | Final result count after reranking |
+| `alpha` | 0.7 | Blend weight (0.0=vector only, 1.0=reranker only) |
+| `max_latency_ms` | 1000 | Latency budget before fallback to vector scores |
+| `batch_size` | 32 | Tokenization batch size for ONNX inference |
+
+Config key: `memory.reranking`
+
+Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jarvis/models/cross-encoder/`. Not applied to per-prompt search.
+
 #### Per-prompt search
 
 | Setting | Default | Description |

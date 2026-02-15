@@ -295,6 +295,32 @@ def get_expansion_config() -> dict:
 
 
 
+def get_reranking_config() -> dict:
+    """Get cross-encoder reranking configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Whether reranking is active (default True)
+    - candidate_count: How many results to over-fetch for reranking (default 100)
+    - top_k: Final result count after reranking (default 10)
+    - alpha: Blend weight for reranker vs vector scores (default 0.7)
+    - max_latency_ms: Latency budget for reranking in milliseconds (default 1000)
+    - batch_size: Tokenization batch size for ONNX inference (default 32)
+
+    Config lives at memory.reranking in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "candidate_count": 100,
+        "top_k": 10,
+        "alpha": 0.7,
+        "max_latency_ms": 1000,
+        "batch_size": 32,
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("reranking", {})}
+
+
 def get_pattern_detection_config() -> dict:
     """Get pattern detection configuration with defaults.
 

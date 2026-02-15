@@ -79,6 +79,17 @@ Pass as `filter` parameter to `jarvis_retrieve(query=...)`.
 
 
 
+## Cross-Encoder Reranking
+
+When enabled (default), results are reranked using a cross-encoder model after initial vector search. This improves precision for nuanced queries.
+
+- **Response metadata**: When reranking is applied, the response includes `reranking: {applied: true, alpha: 0.7, candidates: N, top_k: K}`
+- **Graceful fallback**: If the model isn't available or latency exceeds budget, vector scores are used silently
+- **First use**: The ONNX model (~23MB) is downloaded automatically to `~/.jarvis/models/cross-encoder/`
+- **Not applied to per-prompt search** (`semantic_context`) — only to explicit `/jarvis-recall` queries
+
+Configure via `memory.reranking` in `~/.jarvis/config.json` (or `/jarvis-settings` > Advanced > Memory system).
+
 ## Graceful Degradation
 
 If `jarvis_retrieve` is unavailable or returns an error:

@@ -415,7 +415,8 @@
       "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to ChromaDB",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
       "promotion": "Tier 2 content meeting importance/retrieval thresholds can be promoted to vault files via jarvis_promote",
-      "recency_boost": "Recent content (within configurable days) gets boosted in search ranking"
+      "recency_boost": "Recent content (within configurable days) gets boosted in search ranking",
+      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to per-prompt search."
     }
   },
 
@@ -551,6 +552,15 @@
       "max_expansion_terms": { "type": "integer", "default": 5, "description": "Cap on added terms per query" },
       "synonyms": { "type": "object", "default": {}, "description": "Override/extend trigger->terms mappings" },
       "intent_patterns": { "type": "array", "default": [], "description": "Custom intent detection patterns" }
+    },
+
+    "memory_reranking": {
+      "enabled": { "type": "boolean", "default": true, "description": "Enable cross-encoder reranking for query_vault() results. Uses ONNX model (~23MB, downloaded on first use)." },
+      "candidate_count": { "type": "integer", "default": 100, "description": "How many results to over-fetch from ChromaDB for reranking" },
+      "top_k": { "type": "integer", "default": 10, "description": "Final result count after reranking" },
+      "alpha": { "type": "float", "default": 0.7, "description": "Blend weight: 0.0=vector only, 1.0=reranker only, 0.7=recommended blend" },
+      "max_latency_ms": { "type": "integer", "default": 1000, "description": "Latency budget — if exceeded, falls back to vector scores" },
+      "batch_size": { "type": "integer", "default": 32, "description": "Tokenization batch size for ONNX inference" }
     },
 
     "memory_worklog": {
