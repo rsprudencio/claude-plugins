@@ -450,6 +450,10 @@ def semantic_context(query: str, threshold: float = 0.5,
             skipped_sensitive += 1
             continue
 
+        # Filter superseded Tier 2 entries
+        if meta.get("status") == "superseded":
+            continue
+
         importance = meta.get("importance", "medium")
         updated_at = meta.get("updated_at")
 

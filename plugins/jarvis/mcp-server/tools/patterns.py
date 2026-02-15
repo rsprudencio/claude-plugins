@@ -352,6 +352,8 @@ def _fetch_recent_observations(lookback_minutes: int) -> list:
     recent = []
     for doc in result.get("documents", []):
         meta = doc.get("metadata", {})
+        if meta.get("status") == "superseded":
+            continue
         created = meta.get("created_at", "")
         if created:
             try:

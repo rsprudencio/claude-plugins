@@ -56,6 +56,13 @@
       "enabled": true,
       "dedup_threshold": 0.7
     },
+    "conflict_detection": {
+      "enabled": true,
+      "use_llm": false,
+      "similarity_threshold": 0.7,
+      "divergence_threshold": 0.4,
+      "max_candidates": 10
+    },
     "pattern_detection": {
       "enabled": true,
       "scan_interval_seconds": 300,

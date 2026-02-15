@@ -177,12 +177,24 @@ def tier2_write(
             documents=[content],
             metadatas=[metadata]
         )
-        return {
+        result = {
             "success": True,
             "id": doc_id,
             "content_type": content_type,
             "importance_score": importance_score,
         }
+
+        # Post-write conflict detection (all Tier 2 types)
+        try:
+            from .conflict import detect_conflicts
+            superseded = detect_conflicts(doc_id, content)
+            if superseded:
+                result["conflicts_resolved"] = len(superseded)
+                result["superseded_ids"] = superseded
+        except Exception as e:
+            logger.debug(f"Conflict detection skipped: {e}")
+
+        return result
     except Exception as e:
         logger.error(f"tier2_write failed: {e}")
         return {"success": False, "error": str(e)}

@@ -321,6 +321,30 @@ def get_reranking_config() -> dict:
     return {**defaults, **memory_config.get("reranking", {})}
 
 
+def get_conflict_detection_config() -> dict:
+    """Get conflict detection configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for conflict detection (default True)
+    - use_llm: Whether to verify conflicts with Haiku LLM (default False)
+    - similarity_threshold: Minimum embedding similarity to consider (default 0.7)
+    - divergence_threshold: Maximum word Jaccard for conflict signal (default 0.4)
+    - max_candidates: Maximum candidates to evaluate per write (default 10)
+
+    Config lives at memory.conflict_detection in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": True,
+        "use_llm": False,
+        "similarity_threshold": 0.7,
+        "divergence_threshold": 0.4,
+        "max_candidates": 10,
+    }
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("conflict_detection", {})}
+
+
 def get_pattern_detection_config() -> dict:
     """Get pattern detection configuration with defaults.
 
