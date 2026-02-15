@@ -78,14 +78,22 @@ async def app(scope, receive, send):
 
 async def _handle_lifespan(scope, receive, send):
     """Handle ASGI lifespan events (startup/shutdown)."""
+    import asyncio
+    from server import get_background_tasks
+
     _run_ctx = None
+    _bg_tasks = []
     while True:
         message = await receive()
         if message["type"] == "lifespan.startup":
             _run_ctx = session_manager.run()
             await _run_ctx.__aenter__()
+            _bg_tasks = [asyncio.create_task(t) for t in get_background_tasks()]
             await send({"type": "lifespan.startup.complete"})
         elif message["type"] == "lifespan.shutdown":
+            for task in _bg_tasks:
+                if not task.done():
+                    task.cancel()
             if _run_ctx:
                 await _run_ctx.__aexit__(None, None, None)
             await send({"type": "lifespan.shutdown.complete"})

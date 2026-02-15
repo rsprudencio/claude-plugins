@@ -645,12 +645,21 @@ def handle_get_format_reference() -> dict:
     }
 
 
+def get_background_tasks():
+    """Registry of background async tasks to run alongside the MCP server.
+
+    Both stdio (main) and HTTP (http_app lifespan) transports consume this,
+    ensuring no drift between transport modes.
+    """
+    from tools.patterns import pattern_detection_loop
+    return [pattern_detection_loop()]
+
+
 async def main():
     logger.info("Starting Jarvis Core MCP Server")
     async with stdio_server() as (read_stream, write_stream):
-        from tools.patterns import pattern_detection_loop
         server_task = server.run(read_stream, write_stream, server.create_initialization_options())
-        await asyncio.gather(server_task, pattern_detection_loop(), return_exceptions=True)
+        await asyncio.gather(server_task, *get_background_tasks(), return_exceptions=True)
 
 
 def main_sync():

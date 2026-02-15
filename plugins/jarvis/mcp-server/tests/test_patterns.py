@@ -629,3 +629,25 @@ class TestPatternDetectionConfig:
         assert config["promotion_threshold"] == 5
         # Defaults still apply for unset keys
         assert config["scan_interval_seconds"] == 300
+
+
+class TestBackgroundTaskRegistry:
+    """Coupling guard: ensures get_background_tasks() includes pattern detection.
+
+    Both stdio (server.main) and HTTP (http_app lifespan) consume this registry.
+    If pattern_detection_loop is removed from the registry, this test fails,
+    preventing silent drift between transport modes.
+    """
+
+    def test_registry_includes_pattern_detection(self):
+        from server import get_background_tasks
+        tasks = get_background_tasks()
+        assert len(tasks) >= 1, "Registry must include at least pattern_detection_loop"
+        # Verify the coroutine is from the patterns module
+        coro = tasks[0]
+        assert hasattr(coro, "cr_code"), "Expected a coroutine object"
+        assert "pattern_detection_loop" in coro.cr_code.co_qualname
+        # Clean up: close the coroutine to avoid warnings
+        coro.close()
+        for t in tasks[1:]:
+            t.close()
