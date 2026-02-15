@@ -25,6 +25,7 @@ def retrieve(
     limit: int = 20,
     filter: Optional[dict] = None,
     include_metadata: bool = True,
+    include_content: bool = False,
     sort_by: str = "importance_desc",
 ) -> dict:
     """Unified read/search entry point.
@@ -70,7 +71,7 @@ def retrieve(
             min_importance=min_importance, source=source,
             scope=scope, project=project,
             tag=tag, importance=importance, limit=limit,
-            sort_by=sort_by,
+            sort_by=sort_by, include_content=include_content,
         )
 
     return {"success": False, "error": "No valid routing parameter provided"}
@@ -93,7 +94,7 @@ def _read_by_id(doc_id: str, include_metadata: bool):
 
 def _list_content(list_type, type_filter, min_importance, source,
                   scope, project, tag, importance, limit,
-                  sort_by="importance_desc"):
+                  sort_by="importance_desc", include_content=False):
     """Route list operations."""
     if list_type == "tier2":
         from .tier2 import tier2_list
@@ -103,12 +104,14 @@ def _list_content(list_type, type_filter, min_importance, source,
             source=source,
             limit=limit,
             sort_by=sort_by,
+            include_content=include_content,
         )
     elif list_type == "memory":
         from .memory_crud import memory_list
         return memory_list(
             scope=scope, project=project,
             tag=tag, importance=importance,
+            include_content=include_content,
         )
     else:
         return {

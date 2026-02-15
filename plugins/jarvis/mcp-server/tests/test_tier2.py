@@ -575,3 +575,48 @@ class TestTier2Worklog:
         result = tier2_list(content_type="worklog")
         assert result["success"]
         assert result["total"] == 2
+
+
+class TestTier2ListIncludeContent:
+    """Test tier2_list include_content parameter."""
+
+    def test_default_includes_content(self, mock_config):
+        """Default include_content=True includes document text (backward compat)."""
+        tier2_write(content="Default content test", content_type="observation")
+
+        result = tier2_list(content_type="observation")
+        assert result["success"]
+        assert result["total"] >= 1
+
+        found = any(
+            doc.get("content") == "Default content test"
+            for doc in result["documents"]
+        )
+        assert found, "Expected content in results by default"
+
+    def test_include_content_false(self, mock_config):
+        """include_content=False omits document text from results."""
+        tier2_write(content="Hidden content", content_type="observation")
+
+        result = tier2_list(content_type="observation", include_content=False)
+        assert result["success"]
+        assert result["total"] >= 1
+
+        for doc in result["documents"]:
+            assert "content" not in doc
+            # Metadata should still be present
+            assert "metadata" in doc
+            assert "id" in doc
+
+    def test_include_content_true_explicit(self, mock_config):
+        """Explicit include_content=True includes document text."""
+        tier2_write(content="Visible content", content_type="observation")
+
+        result = tier2_list(content_type="observation", include_content=True)
+        assert result["success"]
+
+        found = any(
+            doc.get("content") == "Visible content"
+            for doc in result["documents"]
+        )
+        assert found, "Expected content when include_content=True"

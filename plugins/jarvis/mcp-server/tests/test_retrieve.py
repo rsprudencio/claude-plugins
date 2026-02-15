@@ -182,3 +182,57 @@ class TestRetrieveList:
         if result["total"] >= 2:
             scores = [float(d["metadata"]["importance_score"]) for d in result["documents"]]
             assert scores == sorted(scores)
+
+
+class TestRetrieveIncludeContent:
+    """Test include_content passthrough in retrieve()."""
+
+    def test_tier2_default_excludes_content(self, mock_config):
+        """retrieve(list_type='tier2') defaults include_content=False."""
+        tier2_write(content="Tier2 default test", content_type="observation")
+
+        result = retrieve(list_type="tier2")
+        assert result["success"]
+        # retrieve passes include_content=False to _list_content,
+        # but _list_content passes it to tier2_list which defaults True internally.
+        # However, retrieve's default is False, so tier2_list receives False.
+        for doc in result["documents"]:
+            assert "content" not in doc
+
+    def test_tier2_include_content_true(self, mock_config):
+        """retrieve(list_type='tier2', include_content=True) includes content."""
+        tier2_write(content="Tier2 visible", content_type="observation")
+
+        result = retrieve(list_type="tier2", include_content=True)
+        assert result["success"]
+        found = any(
+            doc.get("content") == "Tier2 visible"
+            for doc in result["documents"]
+        )
+        assert found, "Expected content when include_content=True"
+
+    def test_memory_default_excludes_content(self, mock_config):
+        """retrieve(list_type='memory') defaults include_content=False."""
+        from tools.store import store
+        store(content="Memory list test", type="memory", name="retrieve-list-test")
+
+        result = retrieve(list_type="memory")
+        assert result["success"]
+        for mem in result.get("memories", []):
+            assert "content" not in mem
+
+    def test_memory_include_content_true(self, mock_config):
+        """retrieve(list_type='memory', include_content=True) includes content."""
+        from tools.store import store
+        store(content="Memory body here", type="memory", name="retrieve-content-test")
+
+        result = retrieve(list_type="memory", include_content=True)
+        assert result["success"]
+        found = False
+        for mem in result.get("memories", []):
+            if mem["name"] == "retrieve-content-test":
+                assert "content" in mem
+                assert "Memory body here" in mem["content"]
+                found = True
+                break
+        assert found, "Memory 'retrieve-content-test' not found in list"

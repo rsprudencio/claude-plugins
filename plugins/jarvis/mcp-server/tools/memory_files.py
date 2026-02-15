@@ -263,7 +263,8 @@ def read_memory_file(path: str) -> dict:
 
 def list_memory_files(scope: str = "global", project: Optional[str] = None,
                       tag: Optional[str] = None,
-                      importance: Optional[str] = None) -> list:
+                      importance: Optional[str] = None,
+                      include_content: bool = False) -> list:
     """Scan filesystem for memory files, parse frontmatter, apply filters.
 
     Args:
@@ -271,9 +272,10 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
         project: Project name (for scope="project")
         tag: Filter by tag
         importance: Filter by importance level
+        include_content: Include body text (frontmatter stripped) in results
 
     Returns:
-        List of {name, scope, importance, tags, modified, path}
+        List of {name, scope, importance, tags, modified, path[, content]}
     """
     dirs_to_scan = []
 
@@ -312,6 +314,7 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
                     content = f.read()
                 fm = _parse_memory_frontmatter(content)
             except Exception:
+                content = ""
                 fm = {}
 
             entry_importance = fm.get("importance", "medium")
@@ -326,7 +329,7 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
                 continue
 
             name = filename[:-3]  # strip .md
-            results.append({
+            entry = {
                 "name": name,
                 "scope": entry_scope,
                 "project": proj_name,
@@ -335,7 +338,10 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
                 "modified": fm.get("modified", ""),
                 "version": fm.get("version", 1),
                 "path": filepath,
-            })
+            }
+            if include_content:
+                entry["content"] = _strip_frontmatter(content).strip()
+            results.append(entry)
 
     return results
 

@@ -264,6 +264,7 @@ def tier2_list(
     limit: int = 20,
     sort_by: str = "importance_desc",
     session_id: Optional[str] = None,
+    include_content: bool = True,
 ) -> dict:
     """List Tier 2 documents with optional filtering and sorting.
 
@@ -275,6 +276,7 @@ def tier2_list(
         sort_by: Sort order. One of: importance_desc (default),
                  importance_asc, created_at_desc, created_at_asc, none
         session_id: Filter by session_id (useful for dedup within a session)
+        include_content: Include document text in results (default True)
 
     Returns:
         Result dict with success, documents, total
@@ -321,11 +323,13 @@ def tier2_list(
                 if importance < min_importance:
                     continue
             
-            docs.append({
+            entry = {
                 "id": doc_id,
-                "content": result["documents"][i],
                 "metadata": metadata,
-            })
+            }
+            if include_content:
+                entry["content"] = result["documents"][i]
+            docs.append(entry)
         
         # Validate sort_by
         if sort_by not in VALID_SORT_OPTIONS:

@@ -354,13 +354,13 @@ class TestMemoryTierMetadata:
     def test_memory_write_includes_tier(self, mock_config):
         """Test that memory_write includes tier='file' in metadata."""
         _cleanup_chromadb()
-        
+
         result = memory_write(
             name="test-tier-memory",
             content="Testing tier metadata in memories"
         )
         assert result["success"] is True
-        
+
         # Verify tier in metadata
         from tools.memory import _get_collection
         from tools.namespaces import global_memory_id
@@ -368,7 +368,83 @@ class TestMemoryTierMetadata:
         doc_id = global_memory_id("test-tier-memory")
         doc = collection.get(ids=[doc_id])
         assert doc["metadatas"][0]["tier"] == "file"
-        
+
         # Cleanup
         memory_delete(name="test-tier-memory", confirm=True)
+        _cleanup_chromadb()
+
+
+class TestMemoryListIncludeContent:
+    """Tests for memory_list include_content parameter."""
+
+    def test_default_excludes_content(self, mock_config):
+        """Default include_content=False omits content from results."""
+        _reset_chromadb(mock_config)
+
+        memory_write(name="no-content-test", content="# Body\n\nSome text here.")
+        result = memory_list()
+        assert result["success"] is True
+
+        for mem in result["memories"]:
+            if mem["name"] == "no-content-test":
+                assert "content" not in mem
+                break
+
+        _cleanup_chromadb()
+
+    def test_include_content_true(self, mock_config):
+        """include_content=True adds body text to each entry."""
+        _reset_chromadb(mock_config)
+
+        memory_write(name="with-content", content="# Title\n\nBody text for test.")
+        result = memory_list(include_content=True)
+        assert result["success"] is True
+
+        found = False
+        for mem in result["memories"]:
+            if mem["name"] == "with-content":
+                assert "content" in mem
+                assert "Body text for test." in mem["content"]
+                found = True
+                break
+        assert found, "Memory 'with-content' not found in list"
+
+        _cleanup_chromadb()
+
+    def test_include_content_false_explicit(self, mock_config):
+        """Explicit include_content=False omits content."""
+        _reset_chromadb(mock_config)
+
+        memory_write(name="explicit-false", content="Should not appear.")
+        result = memory_list(include_content=False)
+        assert result["success"] is True
+
+        for mem in result["memories"]:
+            if mem["name"] == "explicit-false":
+                assert "content" not in mem
+                break
+
+        _cleanup_chromadb()
+
+    def test_content_is_frontmatter_stripped(self, mock_config):
+        """Content returned by include_content has frontmatter stripped."""
+        _reset_chromadb(mock_config)
+
+        memory_write(
+            name="fm-stripped",
+            content="Pure body only.",
+            importance="high",
+            tags=["test"],
+        )
+        result = memory_list(include_content=True)
+        assert result["success"] is True
+
+        for mem in result["memories"]:
+            if mem["name"] == "fm-stripped":
+                # Should NOT contain frontmatter delimiters
+                assert "---" not in mem["content"]
+                assert "importance:" not in mem["content"]
+                assert mem["content"] == "Pure body only."
+                break
+
         _cleanup_chromadb()

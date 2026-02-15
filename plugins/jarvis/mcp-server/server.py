@@ -255,6 +255,7 @@ TOOLS = [
                 "limit": {"type": "integer", "default": 20, "description": "Max results for list mode"},
                 "filter": {"type": "object", "description": "Metadata filter for query mode (directory, type, importance, tags)"},
                 "include_metadata": {"type": "boolean", "default": True, "description": "Include metadata in ID-based reads"},
+                "include_content": {"type": "boolean", "default": False, "description": "Include document content in list results (for list_type='memory' and 'tier2')"},
                 "sort_by": {
                     "type": "string",
                     "enum": ["importance_desc", "importance_asc", "created_at_desc", "created_at_asc", "none"],

@@ -238,7 +238,8 @@ def memory_read(name: str, scope: str = "global",
 
 def memory_list(scope: str = "all", project: Optional[str] = None,
                 tag: Optional[str] = None,
-                importance: Optional[str] = None) -> dict:
+                importance: Optional[str] = None,
+                include_content: bool = False) -> dict:
     """List memory files with optional filters.
 
     Args:
@@ -246,6 +247,7 @@ def memory_list(scope: str = "all", project: Optional[str] = None,
         project: Filter by project (for scope="project")
         tag: Filter by tag
         importance: Filter by importance level
+        include_content: Include body text in each memory entry
 
     Returns:
         Result dict with memories list and total count
@@ -253,6 +255,7 @@ def memory_list(scope: str = "all", project: Optional[str] = None,
     memories = list_memory_files(
         scope=scope, project=project,
         tag=tag, importance=importance,
+        include_content=include_content,
     )
 
     # Cross-reference with ChromaDB to detect stale indexes

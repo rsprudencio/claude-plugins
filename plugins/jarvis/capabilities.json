@@ -268,8 +268,8 @@
       "jarvis_retrieve": {
         "purpose": "Read or search any content — semantic search, ID lookup, memory read, or listing",
         "routing": "Provide ONE of: query (semantic search), id (read by ID), name (memory by name), list_type (tier2/memory)",
-        "params": ["query", "id", "name", "list_type", "n_results", "type_filter", "min_importance", "scope", "filter"],
-        "features": ["Semantic search across all indexed content", "Auto-routes by ID prefix", "Increments retrieval_count for Tier 2"]
+        "params": ["query", "id", "name", "list_type", "n_results", "type_filter", "min_importance", "scope", "filter", "include_content", "sort_by"],
+        "features": ["Semantic search across all indexed content", "Auto-routes by ID prefix", "Increments retrieval_count for Tier 2", "include_content flag controls whether document text is returned in list results (default false for memory, true for tier2)"]
       },
       "jarvis_remove": {
         "purpose": "Delete content — Tier 2 by ID or strategic memory by name",
