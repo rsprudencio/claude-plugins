@@ -258,11 +258,11 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
 # ── Conflict log ────────────────────────────────────────────────────────────
 
 def _resolve_log_dir() -> Path:
-    """Resolve log directory, respecting JARVIS_HOME."""
+    """Resolve telemetry directory, respecting JARVIS_HOME."""
     env_home = os.environ.get("JARVIS_HOME")
     if env_home:
-        return Path(env_home) / "logs"
-    return Path.home() / ".jarvis" / "logs"
+        return Path(env_home) / "telemetry"
+    return Path.home() / ".jarvis" / "telemetry"
 
 
 def log_conflict(
@@ -273,7 +273,7 @@ def log_conflict(
     method: str,
     verdict: str,
 ) -> None:
-    """Append a JSONL record to ``~/.jarvis/logs/conflicts.jsonl``."""
+    """Append a JSONL record to ``~/.jarvis/telemetry/conflicts.jsonl``."""
     log_dir = _resolve_log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
 

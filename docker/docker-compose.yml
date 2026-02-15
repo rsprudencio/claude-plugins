@@ -15,6 +15,7 @@ services:
       - JARVIS_VAULT_PATH=/vault
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
+    stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
