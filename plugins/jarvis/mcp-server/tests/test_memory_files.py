@@ -1,10 +1,17 @@
 """Tests for memory file I/O module."""
+
 import os
 import pytest
 from tools.memory_files import (
-    validate_name, resolve_memory_path, write_memory_file,
-    read_memory_file, list_memory_files, delete_memory_file,
-    _parse_memory_frontmatter, _format_frontmatter, _strip_frontmatter,
+    validate_name,
+    resolve_memory_path,
+    write_memory_file,
+    read_memory_file,
+    list_memory_files,
+    delete_memory_file,
+    _parse_memory_frontmatter,
+    _format_frontmatter,
+    _strip_frontmatter,
 )
 
 
@@ -46,9 +53,13 @@ class TestFrontmatter:
 
     def test_format_roundtrip(self):
         fm_str = _format_frontmatter(
-            name="test-mem", scope="global", importance="high",
-            tags=["strategic", "goals"], version=1,
-            created="2026-02-07T20:00:00Z", modified="2026-02-07T20:00:00Z",
+            name="test-mem",
+            scope="global",
+            importance="high",
+            tags=["strategic", "goals"],
+            version=1,
+            created="2026-02-07T20:00:00Z",
+            modified="2026-02-07T20:00:00Z",
         )
         parsed = _parse_memory_frontmatter(fm_str + "\nBody content here.")
         assert parsed["name"] == "test-mem"
@@ -60,9 +71,13 @@ class TestFrontmatter:
 
     def test_format_with_project(self):
         fm_str = _format_frontmatter(
-            name="context", scope="project", importance="medium",
-            tags=[], version=1,
-            created="2026-02-07T20:00:00Z", modified="2026-02-07T20:00:00Z",
+            name="context",
+            scope="project",
+            importance="medium",
+            tags=[],
+            version=1,
+            created="2026-02-07T20:00:00Z",
+            modified="2026-02-07T20:00:00Z",
             project="my-app",
         )
         parsed = _parse_memory_frontmatter(fm_str + "\nContent.")
@@ -114,9 +129,14 @@ class TestWriteAndReadMemoryFile:
     def test_write_and_read(self, mock_config):
         path, _ = resolve_memory_path("test-write", scope="global")
         result = write_memory_file(
-            path=path, name="test-write", content="# Test\n\nHello world.",
-            scope="global", project=None, importance="high",
-            tags=["test"], overwrite=False,
+            path=path,
+            name="test-write",
+            content="# Test\n\nHello world.",
+            scope="global",
+            project=None,
+            importance="high",
+            tags=["test"],
+            overwrite=False,
         )
         assert result["success"] is True
         assert result["version"] == 1
@@ -130,14 +150,24 @@ class TestWriteAndReadMemoryFile:
     def test_overwrite_bumps_version(self, mock_config):
         path, _ = resolve_memory_path("test-version", scope="global")
         write_memory_file(
-            path=path, name="test-version", content="V1",
-            scope="global", project=None, importance="medium",
-            tags=[], overwrite=False,
+            path=path,
+            name="test-version",
+            content="V1",
+            scope="global",
+            project=None,
+            importance="medium",
+            tags=[],
+            overwrite=False,
         )
         result = write_memory_file(
-            path=path, name="test-version", content="V2",
-            scope="global", project=None, importance="medium",
-            tags=[], overwrite=True,
+            path=path,
+            name="test-version",
+            content="V2",
+            scope="global",
+            project=None,
+            importance="medium",
+            tags=[],
+            overwrite=True,
         )
         assert result["success"] is True
         assert result["version"] == 2
@@ -145,14 +175,24 @@ class TestWriteAndReadMemoryFile:
     def test_no_overwrite_fails(self, mock_config):
         path, _ = resolve_memory_path("test-nooverwrite", scope="global")
         write_memory_file(
-            path=path, name="test-nooverwrite", content="V1",
-            scope="global", project=None, importance="medium",
-            tags=[], overwrite=False,
+            path=path,
+            name="test-nooverwrite",
+            content="V1",
+            scope="global",
+            project=None,
+            importance="medium",
+            tags=[],
+            overwrite=False,
         )
         result = write_memory_file(
-            path=path, name="test-nooverwrite", content="V2",
-            scope="global", project=None, importance="medium",
-            tags=[], overwrite=False,
+            path=path,
+            name="test-nooverwrite",
+            content="V2",
+            scope="global",
+            project=None,
+            importance="medium",
+            tags=[],
+            overwrite=False,
         )
         assert result["success"] is False
         assert result.get("exists") is True
@@ -165,9 +205,14 @@ class TestWriteAndReadMemoryFile:
     def test_directory_auto_created(self, mock_config):
         path, _ = resolve_memory_path("auto-dir", scope="global")
         result = write_memory_file(
-            path=path, name="auto-dir", content="Content",
-            scope="global", project=None, importance="medium",
-            tags=[], overwrite=False,
+            path=path,
+            name="auto-dir",
+            content="Content",
+            scope="global",
+            project=None,
+            importance="medium",
+            tags=[],
+            overwrite=False,
         )
         assert result["success"] is True
         assert os.path.isfile(path)
@@ -204,7 +249,9 @@ class TestListMemoryFiles:
 
     def test_list_filter_by_tag(self, mock_config):
         path, _ = resolve_memory_path("tagged-mem", scope="global")
-        write_memory_file(path, "tagged-mem", "A", "global", None, "medium", ["work", "python"], False)
+        write_memory_file(
+            path, "tagged-mem", "A", "global", None, "medium", ["work", "python"], False
+        )
 
         results = list_memory_files(scope="global", tag="work")
         names = [m["name"] for m in results]

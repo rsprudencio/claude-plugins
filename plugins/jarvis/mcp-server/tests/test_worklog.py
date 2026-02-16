@@ -1,4 +1,5 @@
 """Tests for worklog extraction functions in extract_observation.py."""
+
 import json
 import os
 import sys
@@ -7,9 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Add hooks-handlers to path for importing
-HOOKS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "hooks-handlers"
-)
+HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "hooks-handlers")
 sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
@@ -74,8 +73,16 @@ class TestNormalizeWorklogResponse:
         """Accepts worklogs array (takes first element)."""
         parsed = {
             "worklogs": [
-                {"task_summary": "First task", "workstream": "misc", "activity_type": "coding"},
-                {"task_summary": "Second task", "workstream": "misc", "activity_type": "coding"},
+                {
+                    "task_summary": "First task",
+                    "workstream": "misc",
+                    "activity_type": "coding",
+                },
+                {
+                    "task_summary": "Second task",
+                    "workstream": "misc",
+                    "activity_type": "coding",
+                },
             ]
         }
         result = normalize_worklog_response(parsed)
@@ -84,13 +91,25 @@ class TestNormalizeWorklogResponse:
 
     def test_empty_task_summary(self):
         """Empty task_summary is rejected."""
-        parsed = {"worklog": {"task_summary": "", "workstream": "misc", "activity_type": "coding"}}
+        parsed = {
+            "worklog": {
+                "task_summary": "",
+                "workstream": "misc",
+                "activity_type": "coding",
+            }
+        }
         result = normalize_worklog_response(parsed)
         assert result == []
 
     def test_whitespace_task_summary(self):
         """Whitespace-only task_summary is rejected."""
-        parsed = {"worklog": {"task_summary": "   ", "workstream": "misc", "activity_type": "coding"}}
+        parsed = {
+            "worklog": {
+                "task_summary": "   ",
+                "workstream": "misc",
+                "activity_type": "coding",
+            }
+        }
         result = normalize_worklog_response(parsed)
         assert result == []
 
@@ -102,7 +121,9 @@ class TestNormalizeWorklogResponse:
 
     def test_invalid_activity_type_defaults_to_other(self):
         """Invalid activity_type defaults to 'other'."""
-        parsed = {"worklog": {"task_summary": "Something", "activity_type": "invalid_type"}}
+        parsed = {
+            "worklog": {"task_summary": "Something", "activity_type": "invalid_type"}
+        }
         result = normalize_worklog_response(parsed)
         assert len(result) == 1
         assert result[0]["activity_type"] == "other"
@@ -212,7 +233,9 @@ class TestIsDuplicateWorklog:
 
     def test_no_existing_worklogs(self):
         """No duplicates when no existing worklogs."""
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": []}):
+        with patch(
+            "tools.tier2.tier2_list", return_value={"success": True, "documents": []}
+        ):
             assert is_duplicate_worklog("New task", "session-1") is False
 
     def test_tier2_list_failure(self):
@@ -223,22 +246,40 @@ class TestIsDuplicateWorklog:
     def test_identical_worklog_is_duplicate(self):
         """Identical worklog text is detected as duplicate."""
         existing = [{"content": "Adding Docker support", "metadata": {}}]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": existing}):
+        with patch(
+            "tools.tier2.tier2_list",
+            return_value={"success": True, "documents": existing},
+        ):
             assert is_duplicate_worklog("Adding Docker support", "session-1") is True
 
     def test_similar_worklog_above_threshold(self):
         """Similar worklog above threshold is duplicate."""
         # These share enough words to exceed 0.7 Jaccard
-        existing = [{"content": "adding worklog feature to Jarvis plugin code", "metadata": {}}]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": existing}):
-            result = is_duplicate_worklog("adding worklog feature to Jarvis plugin", "session-1")
+        existing = [
+            {"content": "adding worklog feature to Jarvis plugin code", "metadata": {}}
+        ]
+        with patch(
+            "tools.tier2.tier2_list",
+            return_value={"success": True, "documents": existing},
+        ):
+            result = is_duplicate_worklog(
+                "adding worklog feature to Jarvis plugin", "session-1"
+            )
             assert result is True
 
     def test_different_worklog_below_threshold(self):
         """Different worklog below threshold is not duplicate."""
         existing = [{"content": "Debugging VMPulse alerts", "metadata": {}}]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": existing}):
-            assert is_duplicate_worklog("Adding Docker support for Jarvis MCP", "session-1") is False
+        with patch(
+            "tools.tier2.tier2_list",
+            return_value={"success": True, "documents": existing},
+        ):
+            assert (
+                is_duplicate_worklog(
+                    "Adding Docker support for Jarvis MCP", "session-1"
+                )
+                is False
+            )
 
     def test_passes_session_id_to_tier2_list(self):
         """Verifies session_id is passed to tier2_list."""
@@ -270,16 +311,27 @@ class TestHasJaccardDuplicate:
 
     def test_below_threshold(self):
         """Sufficiently different text is not a duplicate."""
-        assert _has_jaccard_duplicate("Adding Docker support", ["Debugging VMPulse alerts"]) is False
+        assert (
+            _has_jaccard_duplicate(
+                "Adding Docker support", ["Debugging VMPulse alerts"]
+            )
+            is False
+        )
 
     def test_custom_threshold(self):
         """Custom threshold is respected."""
         # These have moderate overlap
         candidates = ["adding worklog feature to plugin"]
         # With low threshold, it's a match
-        assert _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.5) is True
+        assert (
+            _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.5)
+            is True
+        )
         # With high threshold, it's not
-        assert _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.95) is False
+        assert (
+            _has_jaccard_duplicate("adding worklog feature", candidates, threshold=0.95)
+            is False
+        )
 
 
 # ──────────────────────────────────────────────
@@ -292,35 +344,41 @@ class TestIsDuplicateObservation:
 
     def test_no_results(self):
         """No duplicates when semantic search returns nothing."""
-        with patch("tools.query.query_vault",
-                   return_value={"success": True, "results": []}):
+        with patch(
+            "tools.query.query_vault", return_value={"success": True, "results": []}
+        ):
             assert is_duplicate_observation("New insight") is False
 
     def test_query_failure(self):
         """Treat query failure as no duplicates."""
-        with patch("tools.query.query_vault",
-                   return_value={"success": False}):
+        with patch("tools.query.query_vault", return_value={"success": False}):
             assert is_duplicate_observation("New insight") is False
 
     def test_high_relevance_is_duplicate(self):
         """Observation with relevance >= 0.95 is a duplicate."""
         results = [{"relevance": 0.98, "preview": "User prefers dark mode"}]
-        with patch("tools.query.query_vault",
-                   return_value={"success": True, "results": results}):
+        with patch(
+            "tools.query.query_vault",
+            return_value={"success": True, "results": results},
+        ):
             assert is_duplicate_observation("User prefers dark mode") is True
 
     def test_low_relevance_not_duplicate(self):
         """Observation with relevance < 0.95 is not a duplicate."""
         results = [{"relevance": 0.80, "preview": "Debugging VMPulse alerts"}]
-        with patch("tools.query.query_vault",
-                   return_value={"success": True, "results": results}):
+        with patch(
+            "tools.query.query_vault",
+            return_value={"success": True, "results": results},
+        ):
             assert is_duplicate_observation("Adding Docker support for Jarvis") is False
 
     def test_custom_threshold(self):
         """Custom threshold overrides default."""
         results = [{"relevance": 0.85, "preview": "Some observation"}]
-        with patch("tools.query.query_vault",
-                   return_value={"success": True, "results": results}):
+        with patch(
+            "tools.query.query_vault",
+            return_value={"success": True, "results": results},
+        ):
             # Below default (0.95) but above custom (0.80)
             assert is_duplicate_observation("Similar", threshold=0.80) is True
             assert is_duplicate_observation("Similar", threshold=0.90) is False
@@ -351,7 +409,9 @@ class TestDiscoverWorkstreams:
 
     def test_empty_when_no_worklogs(self):
         """Returns empty list when no worklogs exist."""
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": []}):
+        with patch(
+            "tools.tier2.tier2_list", return_value={"success": True, "documents": []}
+        ):
             assert discover_workstreams() == []
 
     def test_extracts_unique_workstreams(self):
@@ -361,7 +421,9 @@ class TestDiscoverWorkstreams:
             {"content": "Task B", "metadata": {"workstream": "Jarvis Plugin"}},
             {"content": "Task C", "metadata": {"workstream": "VMPulse"}},  # duplicate
         ]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": docs}):
+        with patch(
+            "tools.tier2.tier2_list", return_value={"success": True, "documents": docs}
+        ):
             result = discover_workstreams()
             assert result == ["Jarvis Plugin", "VMPulse"]  # sorted
 
@@ -371,7 +433,9 @@ class TestDiscoverWorkstreams:
             {"content": "Task A", "metadata": {"workstream": "VMPulse"}},
             {"content": "Task B", "metadata": {"workstream": "misc"}},
         ]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": docs}):
+        with patch(
+            "tools.tier2.tier2_list", return_value={"success": True, "documents": docs}
+        ):
             result = discover_workstreams()
             assert result == ["VMPulse"]
             assert "misc" not in result
@@ -382,7 +446,9 @@ class TestDiscoverWorkstreams:
             {"content": "Task A", "metadata": {"workstream": "VMPulse"}},
             {"content": "Task B", "metadata": {}},
         ]
-        with patch("tools.tier2.tier2_list", return_value={"success": True, "documents": docs}):
+        with patch(
+            "tools.tier2.tier2_list", return_value={"success": True, "documents": docs}
+        ):
             result = discover_workstreams()
             assert result == ["VMPulse"]
 
@@ -464,7 +530,9 @@ class TestBuildSessionPromptWorkstreams:
         """Known workstreams appear in the prompt."""
         turns = [self._make_turn()]
         prompt = build_session_prompt(
-            turns, "Hello", 4000,
+            turns,
+            "Hello",
+            4000,
             workstreams=["VMPulse", "Jarvis Plugin"],
         )
         assert "VMPulse" in prompt
@@ -474,7 +542,9 @@ class TestBuildSessionPromptWorkstreams:
         """Empty workstreams list shows fallback text."""
         turns = [self._make_turn()]
         prompt = build_session_prompt(
-            turns, "Hello", 4000,
+            turns,
+            "Hello",
+            4000,
             workstreams=[],
         )
         assert "None yet" in prompt
@@ -483,7 +553,9 @@ class TestBuildSessionPromptWorkstreams:
         """None workstreams shows fallback text."""
         turns = [self._make_turn()]
         prompt = build_session_prompt(
-            turns, "Hello", 4000,
+            turns,
+            "Hello",
+            4000,
             workstreams=None,
         )
         assert "None yet" in prompt
@@ -514,6 +586,14 @@ class TestWorklogConstants:
 
     def test_activity_types(self):
         """All expected activity types present."""
-        expected = {"coding", "debugging", "reviewing", "configuring",
-                    "planning", "discussing", "researching", "other"}
+        expected = {
+            "coding",
+            "debugging",
+            "reviewing",
+            "configuring",
+            "planning",
+            "discussing",
+            "researching",
+            "other",
+        }
         assert _WORKLOG_ACTIVITY_TYPES == expected

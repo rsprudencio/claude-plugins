@@ -50,9 +50,11 @@ def _make_batched_run(logits_per_doc):
 
 def _make_constant_batched_run(logit=0.5):
     """Create a mock session.run that returns a constant logit for every doc in the batch."""
+
     def run(output_names, inputs):
         batch_size = len(inputs["input_ids"])
         return [[[logit]] * batch_size]
+
     return run
 
 
@@ -121,9 +123,9 @@ class TestRerank:
         # Model returns different logits for each doc (batched)
         mock_session.run.side_effect = _make_batched_run([2.5, -0.5, -2.0])
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = rerank("auth query", docs, scores, {"alpha": 0.7})
             assert result is not scores
             assert len(result) == 3
@@ -142,9 +144,9 @@ class TestRerank:
 
         mock_session.run.side_effect = _make_batched_run([1.0, 0.0, -1.0])
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = rerank("query", docs, scores, {"alpha": 0.0})
             assert result is not scores
             # With alpha=0, blended scores should equal vector scores
@@ -163,9 +165,9 @@ class TestRerank:
         # Reranker says: doc1 is best, doc3 middle, doc2 worst (batched)
         mock_session.run.side_effect = _make_batched_run([3.0, -2.0, 0.5])
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = rerank("query", docs, scores, {"alpha": 1.0})
             assert result is not scores
             # With alpha=1, order should follow reranker: doc1 > doc3 > doc2
@@ -182,6 +184,7 @@ class TestRerank:
 
         # Make inference slow — return batched output matching input size
         import time as time_mod
+
         def slow_run(output_names, inputs):
             time_mod.sleep(0.05)
             batch_size = len(inputs["input_ids"])
@@ -189,15 +192,20 @@ class TestRerank:
 
         mock_session.run.side_effect = slow_run
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             # Use batch_size=1 so each doc is a separate batch,
             # and latency check triggers between batches
-            result = rerank("query", docs, scores, {
-                "max_latency_ms": 1,
-                "batch_size": 1,
-            })
+            result = rerank(
+                "query",
+                docs,
+                scores,
+                {
+                    "max_latency_ms": 1,
+                    "batch_size": 1,
+                },
+            )
             assert result is scores
 
     def test_exception_returns_fallback(self):
@@ -205,8 +213,9 @@ class TestRerank:
         scores = [0.8, 0.6, 0.4]
         docs = ["doc1", "doc2", "doc3"]
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._tokenizer") as mock_tok:
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._tokenizer"
+        ) as mock_tok:
             mock_tok.encode_batch.side_effect = RuntimeError("tokenizer error")
             result = rerank("query", docs, scores)
             assert result is scores
@@ -231,9 +240,9 @@ class TestRerank:
 
         mock_session.run.side_effect = _make_constant_batched_run(0.5)
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = rerank("query", docs, scores, {"batch_size": 3})
             assert result is not scores
             assert len(result) == n
@@ -250,6 +259,7 @@ class TestModelInit:
     def test_import_error_sets_sticky_failure(self):
         """If onnxruntime can't be imported, sets sticky failure."""
         import tools.reranking as mod
+
         reset_model()
 
         # Directly simulate the import failure path by setting state
@@ -257,7 +267,11 @@ class TestModelInit:
         mod._session = None
         mod._tokenizer = None
 
-        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+        original_import = (
+            __builtins__.__import__
+            if hasattr(__builtins__, "__import__")
+            else __import__
+        )
 
         def mock_import(name, *args, **kwargs):
             if name in ("onnxruntime", "tokenizers"):
@@ -279,8 +293,12 @@ class TestModelInit:
         """Model download failure sets sticky failure."""
         reset_model()
 
-        with patch("tools.reranking._ensure_model_files", side_effect=OSError("download failed")):
+        with patch(
+            "tools.reranking._ensure_model_files",
+            side_effect=OSError("download failed"),
+        ):
             from tools.reranking import _init_model
+
             result = _init_model()
             assert result is False
 
@@ -308,10 +326,13 @@ class TestEnsureModelFiles:
         (model_dir / "tokenizer.json").write_text("fake tokenizer")
 
         with patch("tools.reranking._download_file") as mock_dl:
-            with patch("tools.reranking._MODEL_FILES", {
-                "model.onnx": "http://example.com/model.onnx",
-                "tokenizer.json": "http://example.com/tokenizer.json",
-            }):
+            with patch(
+                "tools.reranking._MODEL_FILES",
+                {
+                    "model.onnx": "http://example.com/model.onnx",
+                    "tokenizer.json": "http://example.com/tokenizer.json",
+                },
+            ):
                 _ensure_model_files(model_dir)
                 mock_dl.assert_not_called()
 
@@ -321,10 +342,13 @@ class TestEnsureModelFiles:
         model_dir.mkdir()
 
         with patch("tools.reranking._download_file") as mock_dl:
-            with patch("tools.reranking._MODEL_FILES", {
-                "model.onnx": "http://example.com/model.onnx",
-                "tokenizer.json": "http://example.com/tokenizer.json",
-            }):
+            with patch(
+                "tools.reranking._MODEL_FILES",
+                {
+                    "model.onnx": "http://example.com/model.onnx",
+                    "tokenizer.json": "http://example.com/tokenizer.json",
+                },
+            ):
                 _ensure_model_files(model_dir)
                 assert mock_dl.call_count == 2
 
@@ -333,10 +357,15 @@ class TestEnsureModelFiles:
         model_dir = tmp_path / "models"
         model_dir.mkdir()
 
-        with patch("tools.reranking._download_file", side_effect=OSError("network error")):
-            with patch("tools.reranking._MODEL_FILES", {
-                "model.onnx": "http://example.com/model.onnx",
-            }):
+        with patch(
+            "tools.reranking._download_file", side_effect=OSError("network error")
+        ):
+            with patch(
+                "tools.reranking._MODEL_FILES",
+                {
+                    "model.onnx": "http://example.com/model.onnx",
+                },
+            ):
                 with pytest.raises(OSError, match="network error"):
                     _ensure_model_files(model_dir)
 
@@ -363,6 +392,7 @@ class TestDownloadFile:
         tmp_file = dest.with_suffix(".tmp")
 
         with patch("urllib.request.urlretrieve") as mock_retrieve:
+
             def fake_retrieve(url, path):
                 Path(path).write_bytes(b"partial")
                 raise ConnectionError("connection lost")
@@ -399,6 +429,7 @@ class TestRerankingConfig:
 
     def test_defaults(self, mock_config):
         from tools.config import get_reranking_config
+
         config = get_reranking_config()
         assert config["enabled"] is True
         assert config["candidate_count"] == 100
@@ -410,6 +441,7 @@ class TestRerankingConfig:
     def test_overrides(self, mock_config):
         mock_config.set(memory={"reranking": {"enabled": False, "alpha": 0.5}})
         from tools.config import get_reranking_config
+
         config = get_reranking_config()
         assert config["enabled"] is False
         assert config["alpha"] == 0.5
@@ -419,6 +451,7 @@ class TestRerankingConfig:
     def test_partial_override(self, mock_config):
         mock_config.set(memory={"reranking": {"top_k": 5}})
         from tools.config import get_reranking_config
+
         config = get_reranking_config()
         assert config["top_k"] == 5
         assert config["enabled"] is True  # default preserved
@@ -429,8 +462,11 @@ class TestQueryVaultReranking:
 
     def _reset_chromadb(self, mock_config):
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_rerank_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_rerank_db")}
+        )
 
     def _index_test_files(self, mock_config):
         from tools.memory import index_vault
@@ -465,9 +501,9 @@ class TestQueryVaultReranking:
 
         mock_session.run.side_effect = _make_constant_batched_run(1.0)
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = query_vault("authentication", n_results=5)
             assert result["success"] is True
             assert "reranking" in result
@@ -476,23 +512,28 @@ class TestQueryVaultReranking:
             assert "candidates" in result["reranking"]
 
         import tools.memory as mem
+
         mem._chroma_client = None
 
     def test_reranking_disabled_no_metadata(self, mock_config):
         """When reranking is disabled, no reranking metadata in response."""
         self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
-        mock_config.set(memory={
-            "db_path": str(mock_config.vault_path / ".test_rerank_db"),
-            "reranking": {"enabled": False},
-        })
+        mock_config.set(
+            memory={
+                "db_path": str(mock_config.vault_path / ".test_rerank_db"),
+                "reranking": {"enabled": False},
+            }
+        )
 
         from tools.query import query_vault
+
         result = query_vault("authentication", n_results=5)
         assert result["success"] is True
         assert "reranking" not in result
 
         import tools.memory as mem
+
         mem._chroma_client = None
 
     def test_reranking_fallback_no_metadata(self, mock_config):
@@ -508,16 +549,19 @@ class TestQueryVaultReranking:
             assert "reranking" not in result
 
         import tools.memory as mem
+
         mem._chroma_client = None
 
     def test_fetch_count_increased_with_reranking(self, mock_config):
         """When reranking enabled, fetch_count should use candidate_count."""
         self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
-        mock_config.set(memory={
-            "db_path": str(mock_config.vault_path / ".test_rerank_fetch_db"),
-            "reranking": {"enabled": True, "candidate_count": 50},
-        })
+        mock_config.set(
+            memory={
+                "db_path": str(mock_config.vault_path / ".test_rerank_fetch_db"),
+                "reranking": {"enabled": True, "candidate_count": 50},
+            }
+        )
 
         from tools.query import query_vault
 
@@ -527,16 +571,19 @@ class TestQueryVaultReranking:
             assert result["success"] is True
 
         import tools.memory as mem
+
         mem._chroma_client = None
 
     def test_reranking_uses_top_k(self, mock_config):
         """When reranking succeeds, result count uses top_k from config."""
         self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
-        mock_config.set(memory={
-            "db_path": str(mock_config.vault_path / ".test_rerank_topk_db"),
-            "reranking": {"enabled": True, "top_k": 2},
-        })
+        mock_config.set(
+            memory={
+                "db_path": str(mock_config.vault_path / ".test_rerank_topk_db"),
+                "reranking": {"enabled": True, "top_k": 2},
+            }
+        )
 
         from tools.query import query_vault
 
@@ -546,13 +593,14 @@ class TestQueryVaultReranking:
 
         mock_session.run.side_effect = _make_constant_batched_run(1.0)
 
-        with patch("tools.reranking._init_model", return_value=True), \
-             patch("tools.reranking._session", mock_session), \
-             patch("tools.reranking._tokenizer", mock_tokenizer):
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = query_vault("test", n_results=10)
             assert result["success"] is True
             # Should be capped by top_k=2
             assert len(result["results"]) <= 2
 
         import tools.memory as mem
+
         mem._chroma_client = None

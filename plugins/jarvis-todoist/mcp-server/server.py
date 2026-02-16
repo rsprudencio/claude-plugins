@@ -119,18 +119,30 @@ TOOLS = [
                         "properties": {
                             "content": {"type": "string", "description": "Task title."},
                             "description": {"type": "string"},
-                            "dueString": {"type": "string", "description": "Due date in natural language."},
+                            "dueString": {
+                                "type": "string",
+                                "description": "Due date in natural language.",
+                            },
                             "priority": {
                                 "type": "string",
                                 "enum": ["p1", "p2", "p3", "p4"],
                                 "description": "p1=highest, p4=lowest.",
                             },
                             "labels": {"type": "array", "items": {"type": "string"}},
-                            "projectId": {"type": "string", "description": 'Project ID or "inbox".'},
+                            "projectId": {
+                                "type": "string",
+                                "description": 'Project ID or "inbox".',
+                            },
                             "sectionId": {"type": "string"},
                             "parentId": {"type": "string"},
-                            "deadlineDate": {"type": "string", "description": "Deadline in YYYY-MM-DD."},
-                            "duration": {"type": "string", "description": 'Duration: "2h", "90m", "2h30m".'},
+                            "deadlineDate": {
+                                "type": "string",
+                                "description": "Deadline in YYYY-MM-DD.",
+                            },
+                            "duration": {
+                                "type": "string",
+                                "description": 'Duration: "2h", "90m", "2h30m".',
+                            },
                             "order": {"type": "number"},
                         },
                         "required": ["content"],
@@ -167,11 +179,17 @@ TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string", "description": "Task ID to update."},
+                            "id": {
+                                "type": "string",
+                                "description": "Task ID to update.",
+                            },
                             "content": {"type": "string"},
                             "description": {"type": "string"},
                             "dueString": {"type": "string"},
-                            "priority": {"type": "string", "enum": ["p1", "p2", "p3", "p4"]},
+                            "priority": {
+                                "type": "string",
+                                "enum": ["p1", "p2", "p3", "p4"],
+                            },
                             "labels": {"type": "array", "items": {"type": "string"}},
                             "projectId": {"type": "string"},
                             "sectionId": {"type": "string"},
@@ -240,7 +258,10 @@ TOOLS = [
                         "type": "object",
                         "properties": {
                             "name": {"type": "string", "description": "Project name."},
-                            "parentId": {"type": "string", "description": "Parent project ID for sub-projects."},
+                            "parentId": {
+                                "type": "string",
+                                "description": "Parent project ID for sub-projects.",
+                            },
                             "viewStyle": {
                                 "type": "string",
                                 "enum": ["list", "board", "calendar"],
@@ -304,12 +325,15 @@ async def call_tool(name: str, arguments: dict):
 async def main():
     logger.info("Starting Jarvis Todoist API MCP Server")
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+        await server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
 
 
 def main_sync():
     """Synchronous entry point for uvx/pip scripts."""
     from pathlib import Path
+
     transport = "local"
     try:
         jarvis_home = os.environ.get("JARVIS_HOME") or str(Path.home() / ".jarvis")

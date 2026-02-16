@@ -1,4 +1,5 @@
 """Tests for vault file operations."""
+
 import os
 import pytest
 from tools.file_ops import (
@@ -437,10 +438,13 @@ class TestEditVaultFile:
         result = edit_vault_file(
             "multiline.md",
             "Old paragraph\nwith two lines.",
-            "New paragraph\nwith different content\nand three lines."
+            "New paragraph\nwith different content\nand three lines.",
         )
         assert result["success"] is True
-        assert file_path.read_text() == "# Title\n\nNew paragraph\nwith different content\nand three lines.\n\n## Next"
+        assert (
+            file_path.read_text()
+            == "# Title\n\nNew paragraph\nwith different content\nand three lines.\n\n## Next"
+        )
 
     def test_edit_unicode_content(self, mock_config):
         """Should handle unicode in both old and new strings."""

@@ -6,6 +6,7 @@ ChromaDB auto-embeds content using sentence-transformers (all-MiniLM-L6-v2).
 All documents are stored in the unified 'jarvis' collection with namespaced
 IDs (vault:: prefix) and enriched metadata.
 """
+
 import glob
 import logging
 import os
@@ -23,7 +24,11 @@ from .scoring import compute_importance
 from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 from .format_support import (
-    detect_format, is_indexable, parse_frontmatter, extract_title, INDEXABLE_EXTENSIONS,
+    detect_format,
+    is_indexable,
+    parse_frontmatter,
+    extract_title,
+    INDEXABLE_EXTENSIONS,
 )
 
 logger = logging.getLogger("jarvis-core")
@@ -49,8 +54,7 @@ def _get_collection() -> chromadb.Collection:
     """Get or create the unified jarvis collection."""
     client = _get_client()
     return client.get_or_create_collection(
-        name=_COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"}
+        name=_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
     )
 
 
@@ -72,7 +76,7 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
     Universal fields: type, namespace, created_at, updated_at, source
     Vault-specific: directory, vault_type, title, tags, importance, has_frontmatter
     """
-    directory = relative_path.split('/')[0] if '/' in relative_path else ''
+    directory = relative_path.split("/")[0] if "/" in relative_path else ""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Universal fields
@@ -94,20 +98,23 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
     vault_type = frontmatter.get("type")
     if not vault_type:
         type_map = {
-            'journal': 'journal', 'notes': 'note', 'work': 'work', 'inbox': 'inbox',
-            '.jarvis': 'strategic',
+            "journal": "journal",
+            "notes": "note",
+            "work": "work",
+            "inbox": "inbox",
+            ".jarvis": "strategic",
         }
-        vault_type = type_map.get(directory, directory or 'document')
+        vault_type = type_map.get(directory, directory or "document")
     meta["vault_type"] = vault_type
 
     # Optional fields from frontmatter
-    for key in ('tags', 'sentiment'):
+    for key in ("tags", "sentiment"):
         if key in frontmatter:
             meta[key] = str(frontmatter[key])
-    if 'importance' in frontmatter:
-        meta['importance'] = str(frontmatter['importance'])
+    if "importance" in frontmatter:
+        meta["importance"] = str(frontmatter["importance"])
     else:
-        meta['importance'] = 'medium'
+        meta["importance"] = "medium"
 
     return meta
 
@@ -139,10 +146,7 @@ def _delete_existing_chunks(collection, relative_path: str) -> int:
     deleted = 0
     # Delete chunks by parent_file metadata
     try:
-        result = collection.get(
-            where={"parent_file": relative_path},
-            include=[]
-        )
+        result = collection.get(where={"parent_file": relative_path}, include=[])
         if result["ids"]:
             collection.delete(ids=result["ids"])
             deleted += len(result["ids"])
@@ -162,23 +166,33 @@ def _delete_existing_chunks(collection, relative_path: str) -> int:
     return deleted
 
 
-def _index_single_file(collection, content: str, frontmatter: dict,
-                        relative_path: str, title: str,
-                        chunking_config: dict, scoring_config: dict) -> tuple:
+def _index_single_file(
+    collection,
+    content: str,
+    frontmatter: dict,
+    relative_path: str,
+    title: str,
+    chunking_config: dict,
+    scoring_config: dict,
+) -> tuple:
     """Index a single file with chunking and scoring.
 
     Returns (chunk_ids, chunk_docs, chunk_metas, chunk_count).
     """
     metadata = _build_metadata(frontmatter, relative_path)
-    metadata['title'] = title
-    metadata['parent_file'] = relative_path
+    metadata["title"] = title
+    metadata["parent_file"] = relative_path
 
     # Chunk the document (format-aware)
     fmt = detect_format(relative_path)
     chunk_result = chunk_document(content, chunking_config, fmt=fmt)
 
     # Shared scoring inputs (file-level)
-    scoring_cfg = scoring_config if scoring_config.get("enabled", True) else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}}
+    scoring_cfg = (
+        scoring_config
+        if scoring_config.get("enabled", True)
+        else {"type_weights": {"unknown": 0.5}, "concept_patterns": {}}
+    )
     vault_type = metadata.get("vault_type", "unknown")
     fm_importance = frontmatter.get("importance")
     created_at = metadata.get("created_at")
@@ -198,10 +212,10 @@ def _index_single_file(collection, content: str, frontmatter: dict,
         )
 
         chunk_meta = {**metadata}
-        chunk_meta['importance_score'] = round(importance_score, 4)
-        chunk_meta['chunk_index'] = chunk.index
-        chunk_meta['chunk_total'] = chunk_result.total
-        chunk_meta['chunk_heading'] = chunk.heading
+        chunk_meta["importance_score"] = round(importance_score, 4)
+        chunk_meta["chunk_index"] = chunk.index
+        chunk_meta["chunk_total"] = chunk_result.total
+        chunk_meta["chunk_heading"] = chunk.heading
 
         if chunk_result.was_chunked:
             doc_id = vault_id(relative_path, chunk=chunk.index)
@@ -215,8 +229,11 @@ def _index_single_file(collection, content: str, frontmatter: dict,
     return ids, docs, metas, chunk_result.total
 
 
-def index_vault(force: bool = False, directory: Optional[str] = None,
-                include_sensitive: bool = False) -> dict:
+def index_vault(
+    force: bool = False,
+    directory: Optional[str] = None,
+    include_sensitive: bool = False,
+) -> dict:
     """Bulk index all .md files in the vault into ChromaDB.
 
     Args:
@@ -247,9 +264,9 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
     if not force:
         try:
             result = collection.get(include=["metadatas"])
-            for i, doc_id in enumerate(result['ids']):
-                meta = result['metadatas'][i] if result.get('metadatas') else {}
-                parent = (meta or {}).get('parent_file')
+            for i, doc_id in enumerate(result["ids"]):
+                meta = result["metadatas"][i] if result.get("metadatas") else {}
+                parent = (meta or {}).get("parent_file")
                 if parent:
                     existing_files.add(parent)
                 else:
@@ -263,7 +280,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
     indexable_files = []
     for ext in INDEXABLE_EXTENSIONS:
         indexable_files.extend(
-            glob.glob(os.path.join(search_path, '**', f'*{ext}'), recursive=True)
+            glob.glob(os.path.join(search_path, "**", f"*{ext}"), recursive=True)
         )
 
     files_indexed = 0
@@ -286,7 +303,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             continue
 
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
 
             if not content.strip():
@@ -301,8 +318,13 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
             title = _extract_title_for_file(content, os.path.basename(filepath))
 
             ids, docs, metas, n_chunks = _index_single_file(
-                collection, content, frontmatter, relative, title,
-                chunking_config, scoring_config
+                collection,
+                content,
+                frontmatter,
+                relative,
+                title,
+                chunking_config,
+                scoring_config,
             )
 
             batch_ids.extend(ids)
@@ -313,7 +335,9 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
 
             # Flush batch
             if len(batch_ids) >= _BATCH_SIZE:
-                collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
+                collection.upsert(
+                    ids=batch_ids, documents=batch_docs, metadatas=batch_meta
+                )
                 batch_ids, batch_docs, batch_meta = [], [], []
 
         except Exception as e:
@@ -331,7 +355,7 @@ def index_vault(force: bool = False, directory: Optional[str] = None,
         "files_skipped": skipped,
         "errors": errors,
         "duration_seconds": duration,
-        "collection_total": collection.count()
+        "collection_total": collection.count(),
     }
 
 
@@ -353,7 +377,7 @@ def index_file(relative_path: str) -> dict:
         return {"success": False, "error": f"File not found: {relative_path}"}
 
     try:
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
 
         collection = _get_collection()
@@ -367,8 +391,13 @@ def index_file(relative_path: str) -> dict:
         title = _extract_title_for_file(content, relative_path)
 
         ids, docs, metas, n_chunks = _index_single_file(
-            collection, content, frontmatter, relative_path, title,
-            chunking_config, scoring_config
+            collection,
+            content,
+            frontmatter,
+            relative_path,
+            title,
+            chunking_config,
+            scoring_config,
         )
 
         collection.upsert(ids=ids, documents=docs, metadatas=metas)
@@ -378,7 +407,7 @@ def index_file(relative_path: str) -> dict:
             "id": ids[0] if len(ids) == 1 else ids,
             "title": title,
             "chunks": n_chunks,
-            "metadata": metas[0] if metas else {}
+            "metadata": metas[0] if metas else {},
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

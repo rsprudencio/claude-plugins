@@ -1,4 +1,5 @@
 """Tests for JARVIS protocol formatting and validation."""
+
 import pytest
 
 from protocol import (
@@ -22,9 +23,7 @@ class TestProtocolTag:
     def test_to_string_create_conversational_with_entry_id(self):
         """Create conversational tag with entry ID."""
         tag = ProtocolTag(
-            operation="create",
-            trigger_mode="conversational",
-            entry_id="20260123153045"
+            operation="create", trigger_mode="conversational", entry_id="20260123153045"
         )
         assert tag.to_string() == "[JARVIS:Cc:20260123153045]"
 
@@ -53,21 +52,26 @@ class TestProtocolTag:
         tag = ProtocolTag(
             operation="user",
             trigger_mode="conversational",  # Ignored for user ops
-            entry_id="20260123153045"
+            entry_id="20260123153045",
         )
         assert tag.to_string() == "[JARVIS:U:20260123153045]"
 
-    @pytest.mark.parametrize("operation,trigger_mode,expected", [
-        ("create", "conversational", "[JARVIS:Cc]"),
-        ("create", "agent", "[JARVIS:Ca]"),
-        ("edit", "conversational", "[JARVIS:Ec]"),
-        ("edit", "agent", "[JARVIS:Ea]"),
-        ("delete", "conversational", "[JARVIS:Dc]"),
-        ("delete", "agent", "[JARVIS:Da]"),
-        ("move", "conversational", "[JARVIS:Mc]"),
-        ("move", "agent", "[JARVIS:Ma]"),
-    ])
-    def test_all_operation_trigger_combinations(self, operation, trigger_mode, expected):
+    @pytest.mark.parametrize(
+        "operation,trigger_mode,expected",
+        [
+            ("create", "conversational", "[JARVIS:Cc]"),
+            ("create", "agent", "[JARVIS:Ca]"),
+            ("edit", "conversational", "[JARVIS:Ec]"),
+            ("edit", "agent", "[JARVIS:Ea]"),
+            ("delete", "conversational", "[JARVIS:Dc]"),
+            ("delete", "agent", "[JARVIS:Da]"),
+            ("move", "conversational", "[JARVIS:Mc]"),
+            ("move", "agent", "[JARVIS:Ma]"),
+        ],
+    )
+    def test_all_operation_trigger_combinations(
+        self, operation, trigger_mode, expected
+    ):
         """Test all valid operation and trigger mode combinations."""
         tag = ProtocolTag(operation=operation, trigger_mode=trigger_mode)
         assert tag.to_string() == expected
@@ -96,8 +100,12 @@ class TestProtocolValidator:
     def test_validate_entry_id_invalid_length(self):
         """Entry IDs with wrong length should fail."""
         assert ProtocolValidator.validate_entry_id("123") is False
-        assert ProtocolValidator.validate_entry_id("123456789012345") is False  # 15 digits
-        assert ProtocolValidator.validate_entry_id("2026012315304") is False  # 13 digits
+        assert (
+            ProtocolValidator.validate_entry_id("123456789012345") is False
+        )  # 15 digits
+        assert (
+            ProtocolValidator.validate_entry_id("2026012315304") is False
+        )  # 13 digits
 
     def test_validate_entry_id_non_numeric(self):
         """Non-numeric entry IDs should fail."""
@@ -134,7 +142,7 @@ class TestProtocolValidator:
             operation="create",
             description="Valid description",
             entry_id="20260123153045",
-            trigger_mode="conversational"
+            trigger_mode="conversational",
         )
         assert errors == {}
 
@@ -144,7 +152,7 @@ class TestProtocolValidator:
             operation="invalid_op",
             description="",
             entry_id="123",
-            trigger_mode="invalid_mode"
+            trigger_mode="invalid_mode",
         )
 
         assert "operation" in errors
@@ -158,9 +166,7 @@ class TestProtocolValidator:
     def test_validate_all_without_entry_id(self):
         """validate_all should work without entry_id."""
         errors = ProtocolValidator.validate_all(
-            operation="create",
-            description="Valid",
-            trigger_mode="conversational"
+            operation="create", description="Valid", trigger_mode="conversational"
         )
         assert errors == {}
 
@@ -197,7 +203,7 @@ class TestFormatFunctions:
         """Commit message should have correct structure."""
         message = format_commit_message("create", "Test description", "[JARVIS:Cc]")
 
-        lines = message.split('\n')
+        lines = message.split("\n")
         assert len(lines) == 3
         assert lines[0] == "Jarvis CREATE: Test description"
         assert lines[1] == ""  # Empty line
@@ -206,9 +212,7 @@ class TestFormatFunctions:
     def test_format_commit_message_with_protocol_tag(self):
         """Full commit message with protocol tag."""
         message = format_commit_message(
-            "create",
-            "Journal entry",
-            "[JARVIS:Cc:20260123153045]"
+            "create", "Journal entry", "[JARVIS:Cc:20260123153045]"
         )
 
         assert message.startswith("Jarvis CREATE: Journal entry")
@@ -217,11 +221,7 @@ class TestFormatFunctions:
 
     def test_format_commit_message_user_operation(self):
         """User operation commit message."""
-        message = format_commit_message(
-            "user",
-            "Manual updates to notes",
-            "[JARVIS:U]"
-        )
+        message = format_commit_message("user", "Manual updates to notes", "[JARVIS:U]")
 
         assert message.startswith("User updates: Manual updates to notes")
         assert message.endswith("[JARVIS:U]")

@@ -2,6 +2,7 @@
 
 All git operations run within the configured vault directory.
 """
+
 import subprocess
 import logging
 import os
@@ -20,9 +21,7 @@ GIT_TIMEOUT_LONG = 60  # For filter-branch and other slow operations
 
 
 def run_git_command(
-    args: list[str],
-    timeout: int = GIT_TIMEOUT,
-    check: bool = False
+    args: list[str], timeout: int = GIT_TIMEOUT, check: bool = False
 ) -> Tuple[bool, dict]:
     """Run a git command in the vault directory.
 
@@ -48,10 +47,7 @@ def run_git_command(
     # Get verified vault path
     vault_path, error = get_verified_vault_path()
     if error:
-        return False, {
-            "success": False,
-            "error": f"PERMISSION DENIED: {error}"
-        }
+        return False, {"success": False, "error": f"PERMISSION DENIED: {error}"}
 
     try:
         result = subprocess.run(
@@ -61,7 +57,7 @@ def run_git_command(
             check=check,
             env=GIT_ENV,
             timeout=timeout,
-            cwd=vault_path  # ✅ Always run in vault
+            cwd=vault_path,  # ✅ Always run in vault
         )
 
         if result.returncode != 0:
@@ -70,36 +66,32 @@ def run_git_command(
                 "returncode": result.returncode,
                 "stdout": result.stdout.strip(),
                 "stderr": result.stderr.strip(),
-                "error": result.stderr.strip() or result.stdout.strip() or "Command failed"
+                "error": result.stderr.strip()
+                or result.stdout.strip()
+                or "Command failed",
             }
 
         return True, {
             "success": True,
             "stdout": result.stdout,
             "stderr": result.stderr,
-            "returncode": result.returncode
+            "returncode": result.returncode,
         }
 
     except subprocess.TimeoutExpired:
         logger.error(f"Git command timed out: git {' '.join(args)}")
-        return False, {
-            "success": False,
-            "error": f"Command timed out after {timeout}s"
-        }
+        return False, {"success": False, "error": f"Command timed out after {timeout}s"}
     except subprocess.CalledProcessError as e:
         logger.error(f"Git command failed: {e}")
         return False, {
             "success": False,
             "returncode": e.returncode,
             "stderr": e.stderr.strip() if e.stderr else "",
-            "error": e.stderr.strip() if e.stderr else str(e)
+            "error": e.stderr.strip() if e.stderr else str(e),
         }
     except Exception as e:
         logger.error(f"Unexpected error running git command: {e}", exc_info=True)
-        return False, {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}"
-        }
+        return False, {"success": False, "error": f"Unexpected error: {str(e)}"}
 
 
 def get_vault_path_safe() -> Optional[str]:

@@ -1,4 +1,5 @@
 """Tests for configurable path resolution (tools/paths.py)."""
+
 import os
 from pathlib import Path
 

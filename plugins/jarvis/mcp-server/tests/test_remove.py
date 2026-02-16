@@ -1,4 +1,5 @@
 """Tests for unified remove module — routing deletes."""
+
 import pytest
 from tools.remove import remove
 from tools.tier2 import tier2_write, tier2_read
@@ -74,12 +75,21 @@ class TestRemoveById:
         assert not result["success"]
         assert "not found" in result["error"].lower()
 
-    def test_delete_memory_id_redirects(self, mock_config):
-        """Memory IDs redirect to name= parameter."""
-        result = remove(id="memory::global::test")
-        assert not result["success"]
-        assert "name=" in result["error"]
+    def test_delete_memory_id_works(self, mock_config):
+        """Memory IDs can be deleted directly."""
+        from tools.memory_crud import memory_write
 
+        memory_write(name="test", content="test", scope="global")
+
+        # Should ask for confirmation
+        result = remove(id="memory::global::test")
+        assert result["success"]
+        assert result["confirmation_required"]
+
+        # Should delete with confirm
+        result = remove(id="memory::global::test", confirm=True)
+        assert result["success"]
+        assert result["file_deleted"]
 
     def test_delete_vault_path_traversal_blocked(self, mock_config):
         """Path traversal in vault ID is rejected by validate_vault_path."""

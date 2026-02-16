@@ -7,6 +7,7 @@ All vault paths are resolved through this module to ensure:
 4. Absolute paths get ~ expansion
 5. Template variables ({YYYY}, {MM}, {WW}) are supported
 """
+
 import os
 from pathlib import Path
 from typing import Optional
@@ -50,6 +51,7 @@ SENSITIVE_PATHS = {"people", "documents"}
 
 class PathNotConfiguredError(Exception):
     """Raised when a path name is not in config or defaults."""
+
     pass
 
 
@@ -161,15 +163,19 @@ def validate_paths_config() -> list:
         if name not in _VAULT_RELATIVE_DEFAULTS:
             warnings.append(f"Unknown path key: '{name}' (will be ignored)")
         if os.path.isabs(value):
-            warnings.append(f"Path '{name}' should be relative, got absolute: '{value}'")
+            warnings.append(
+                f"Path '{name}' should be relative, got absolute: '{value}'"
+            )
         if ".." in Path(value).parts:
             warnings.append(f"Path '{name}' contains traversal: '{value}'")
 
     memory = config.get("memory", {})
     for name, value in memory.items():
         if name not in _ABSOLUTE_DEFAULTS and name not in (
-            "secret_detection", "importance_scoring",
-            "recency_boost_days", "default_importance",
+            "secret_detection",
+            "importance_scoring",
+            "recency_boost_days",
+            "default_importance",
         ):
             warnings.append(f"Unknown memory key: '{name}' (will be ignored)")
 

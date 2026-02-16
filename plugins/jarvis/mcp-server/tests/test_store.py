@@ -1,4 +1,5 @@
 """Tests for unified store module — routing writes to vault/memory/tier2."""
+
 import os
 import pytest
 from tools.store import store
@@ -62,9 +63,7 @@ class TestStoreVaultFile:
         # Create file first
         store(content="Line 1", relative_path="append_test.txt")
         # Append
-        result = store(
-            content="Line 2", relative_path="append_test.txt", mode="append"
-        )
+        result = store(content="Line 2", relative_path="append_test.txt", mode="append")
         assert result["success"]
         content = (mock_config.vault_path / "append_test.txt").read_text()
         assert "Line 1" in content
@@ -135,9 +134,7 @@ class TestStoreById:
         from tools.tier2 import tier2_write
 
         # Create tier2 content first
-        write_result = tier2_write(
-            content="Original obs", content_type="observation"
-        )
+        write_result = tier2_write(content="Original obs", content_type="observation")
         doc_id = write_result["id"]
 
         # Update via ID
@@ -255,13 +252,19 @@ class TestStoreTier2:
         result = store(
             content="Observation with context",
             type="observation",
-            extra_metadata={"project_path": "/home/user/projects/jarvis-plugin", "git_branch": "master"},
+            extra_metadata={
+                "project_path": "/home/user/projects/jarvis-plugin",
+                "git_branch": "master",
+            },
         )
         assert result["success"]
 
         # Read and verify metadata
         read_result = tier2_read(result["id"])
-        assert read_result["metadata"]["project_path"] == "/home/user/projects/jarvis-plugin"
+        assert (
+            read_result["metadata"]["project_path"]
+            == "/home/user/projects/jarvis-plugin"
+        )
         assert read_result["metadata"]["git_branch"] == "master"
 
     def test_tags_passthrough(self, mock_config):

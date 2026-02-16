@@ -3,6 +3,7 @@
 Provides OS detection, command finding with PATH enrichment, semantic version
 parsing, and platform-specific error messages.
 """
+
 import os
 import re
 import shutil
@@ -15,6 +16,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 @dataclass
 class Version:
     """Semantic version with prerelease and build metadata support."""
+
     major: int
     minor: int
     patch: int
@@ -32,17 +34,29 @@ class Version:
 
     def __ge__(self, other: "Version") -> bool:
         """Compare versions (prerelease/build ignored for comparison)."""
-        return (self.major, self.minor, self.patch) >= (other.major, other.minor, other.patch)
+        return (self.major, self.minor, self.patch) >= (
+            other.major,
+            other.minor,
+            other.patch,
+        )
 
     def __gt__(self, other: "Version") -> bool:
         """Compare versions (prerelease/build ignored for comparison)."""
-        return (self.major, self.minor, self.patch) > (other.major, other.minor, other.patch)
+        return (self.major, self.minor, self.patch) > (
+            other.major,
+            other.minor,
+            other.patch,
+        )
 
     def __eq__(self, other: object) -> bool:
         """Compare versions (prerelease/build ignored for comparison)."""
         if not isinstance(other, Version):
             return NotImplemented
-        return (self.major, self.minor, self.patch) == (other.major, other.minor, other.patch)
+        return (self.major, self.minor, self.patch) == (
+            other.major,
+            other.minor,
+            other.patch,
+        )
 
 
 def detect_os() -> Literal["Linux", "macOS", "Windows", "WSL", "Unknown"]:
@@ -144,26 +158,32 @@ def _get_enriched_paths() -> List[Path]:
 
     if system in ("Linux", "Darwin"):
         # Unix-like systems
-        paths.extend([
-            home / ".local" / "bin",  # uv, pipx, user-installed tools
-            home / ".cargo" / "bin",  # Rust tools (uv alternative install)
-        ])
+        paths.extend(
+            [
+                home / ".local" / "bin",  # uv, pipx, user-installed tools
+                home / ".cargo" / "bin",  # Rust tools (uv alternative install)
+            ]
+        )
     elif system == "Windows":
         # Windows specific paths
         local_appdata = os.environ.get("LOCALAPPDATA")
         program_files = os.environ.get("PROGRAMFILES")
 
         if local_appdata:
-            paths.extend([
-                Path(local_appdata) / "Programs" / "Python",
-                Path(local_appdata) / "Microsoft" / "WindowsApps",
-            ])
+            paths.extend(
+                [
+                    Path(local_appdata) / "Programs" / "Python",
+                    Path(local_appdata) / "Microsoft" / "WindowsApps",
+                ]
+            )
 
         if program_files:
-            paths.extend([
-                Path(program_files) / "Git" / "cmd",
-                Path(program_files) / "Python",
-            ])
+            paths.extend(
+                [
+                    Path(program_files) / "Git" / "cmd",
+                    Path(program_files) / "Python",
+                ]
+            )
 
     # Filter to only existing directories
     return [p for p in paths if p.exists() and p.is_dir()]
@@ -199,11 +219,7 @@ def extract_version(version_string: str) -> Optional[Version]:
     build = match.group(5) or ""
 
     return Version(
-        major=major,
-        minor=minor,
-        patch=patch,
-        prerelease=prerelease,
-        build=build
+        major=major, minor=minor, patch=patch, prerelease=prerelease, build=build
     )
 
 
@@ -243,12 +259,15 @@ def get_install_instructions(tool: str) -> Dict[str, str]:
         },
     }
 
-    return instructions.get(tool, {
-        "macOS": f"Install {tool} for macOS",
-        "Linux": f"Install {tool} for Linux",
-        "Windows": f"Install {tool} for Windows",
-        "WSL": f"Install {tool} for WSL",
-    })
+    return instructions.get(
+        tool,
+        {
+            "macOS": f"Install {tool} for macOS",
+            "Linux": f"Install {tool} for Linux",
+            "Windows": f"Install {tool} for Windows",
+            "WSL": f"Install {tool} for WSL",
+        },
+    )
 
 
 def format_error_message(tool: str, issue: str) -> str:
@@ -264,15 +283,15 @@ def format_error_message(tool: str, issue: str) -> str:
     current_os = detect_os()
     instructions = get_install_instructions(tool)
 
-    install_msg = instructions.get(current_os, instructions.get("Linux", "See installation docs"))
+    install_msg = instructions.get(
+        current_os, instructions.get("Linux", "See installation docs")
+    )
 
     return f"✗ {tool}: {issue}\n   Install: {install_msg}"
 
 
 def check_version_requirement(
-    actual: Version,
-    required: Tuple[int, int],
-    tool_name: str
+    actual: Version, required: Tuple[int, int], tool_name: str
 ) -> Tuple[bool, str]:
     """Check if version meets minimum requirement.
 
@@ -290,6 +309,5 @@ def check_version_requirement(
         return True, f"✓ {tool_name} {actual}"
     else:
         return False, format_error_message(
-            tool_name,
-            f"version {actual} found (requires {required[0]}.{required[1]}+)"
+            tool_name, f"version {actual} found (requires {required[0]}.{required[1]}+)"
         )

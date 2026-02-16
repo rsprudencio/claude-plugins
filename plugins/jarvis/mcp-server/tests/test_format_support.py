@@ -1,4 +1,5 @@
 """Tests for file format support module (Markdown + Org-mode)."""
+
 import pytest
 from tools.format_support import (
     detect_format,
@@ -297,7 +298,9 @@ class TestOrgHeadings:
         assert positions[0][2] == "Keep"
 
     def test_skips_src_blocks(self):
-        content = "** Real\n\n#+BEGIN_SRC python\n** Not a heading\n#+END_SRC\n\n** Also Real"
+        content = (
+            "** Real\n\n#+BEGIN_SRC python\n** Not a heading\n#+END_SRC\n\n** Also Real"
+        )
         positions = find_heading_positions(content, (2,), "org")
         assert len(positions) == 2
         assert positions[0][2] == "Real"

@@ -2,6 +2,7 @@
 
 All operations run in the configured vault directory.
 """
+
 import logging
 import os
 import re
@@ -40,7 +41,7 @@ def stage_files(files: Optional[list[str]] = None, stage_all: bool = False) -> d
             return {
                 "success": False,
                 "error": "Failed to stage all files",
-                "stderr": result.get("stderr", "")
+                "stderr": result.get("stderr", ""),
             }
         logger.info("Staged all changes (git add -A)")
         return {"success": True, "staged_count": -1}  # -1 indicates "all"
@@ -62,7 +63,7 @@ def stage_files(files: Optional[list[str]] = None, stage_all: bool = False) -> d
             return {
                 "success": False,
                 "error": f"Failed to stage file: {file_path}",
-                "stderr": result.get("stderr", "")
+                "stderr": result.get("stderr", ""),
             }
     logger.info(f"Staged {len(files)} file(s)")
     return {"success": True, "staged_count": len(files)}
@@ -86,14 +87,14 @@ def execute_commit(commit_message: str) -> dict:
             return {
                 "success": False,
                 "error": "Nothing to commit - working tree clean",
-                "nothing_to_commit": True
+                "nothing_to_commit": True,
             }
         return {
             "success": False,
             "error": "Git commit failed",
             "stderr": result.get("stderr", ""),
             "stdout": result.get("stdout", ""),
-            "exit_code": result.get("returncode", -1)
+            "exit_code": result.get("returncode", -1),
         }
 
     # Get commit hash
@@ -103,7 +104,7 @@ def execute_commit(commit_message: str) -> dict:
         return {
             "success": True,
             "commit_hash": "unknown",
-            "message": result.get("stdout", "").strip()
+            "message": result.get("stdout", "").strip(),
         }
 
     commit_hash = hash_result.get("stdout", "").strip()
@@ -111,7 +112,7 @@ def execute_commit(commit_message: str) -> dict:
     return {
         "success": True,
         "commit_hash": commit_hash,
-        "message": result.get("stdout", "").strip()
+        "message": result.get("stdout", "").strip(),
     }
 
 
@@ -127,7 +128,7 @@ def get_commit_stats() -> dict:
         logger.warning("Could not get commit stats")
         return {"files_changed": 0, "insertions": 0, "deletions": 0}
 
-    lines = result.get("stdout", "").strip().split('\n')
+    lines = result.get("stdout", "").strip().split("\n")
     if not lines:
         return {"files_changed": 0, "insertions": 0, "deletions": 0}
 
@@ -137,9 +138,9 @@ def get_commit_stats() -> dict:
     insertions = 0
     deletions = 0
 
-    files_match = re.search(r'(\d+) files? changed', summary)
-    ins_match = re.search(r'(\d+) insertions?', summary)
-    del_match = re.search(r'(\d+) deletions?', summary)
+    files_match = re.search(r"(\d+) files? changed", summary)
+    ins_match = re.search(r"(\d+) insertions?", summary)
+    del_match = re.search(r"(\d+) deletions?", summary)
 
     if files_match:
         files_changed = int(files_match.group(1))
@@ -151,7 +152,7 @@ def get_commit_stats() -> dict:
     return {
         "files_changed": files_changed,
         "insertions": insertions,
-        "deletions": deletions
+        "deletions": deletions,
     }
 
 
@@ -239,7 +240,9 @@ def commit_user_prologue(requested_files: set) -> dict | None:
     if not user_files:
         return None  # No user changes to commit
 
-    logger.info(f"User prologue: committing {len(user_files)} dirty file(s) as [JARVIS:U]")
+    logger.info(
+        f"User prologue: committing {len(user_files)} dirty file(s) as [JARVIS:U]"
+    )
 
     # Stage only the user files
     stage_result = stage_files(user_files)

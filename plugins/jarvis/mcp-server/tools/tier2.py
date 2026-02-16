@@ -5,6 +5,7 @@ Content types: observation, pattern, summary, relationship, hint, plan.
 
 Tier 2 content can be promoted to Tier 1 (file-backed) via the promotion module.
 """
+
 import logging
 import time
 from datetime import datetime, timezone
@@ -13,10 +14,25 @@ from typing import Optional
 from .memory import _get_collection
 from .namespaces import (
     ContentType,
-    observation_id, pattern_id, summary_id, code_id,
-    relationship_id, hint_id, plan_id, learning_id, decision_id, worklog_id,
-    NAMESPACE_OBS, NAMESPACE_PATTERN, NAMESPACE_SUMMARY, NAMESPACE_CODE,
-    NAMESPACE_REL, NAMESPACE_HINT, NAMESPACE_PLAN, NAMESPACE_LEARNING, NAMESPACE_DECISION,
+    observation_id,
+    pattern_id,
+    summary_id,
+    code_id,
+    relationship_id,
+    hint_id,
+    plan_id,
+    learning_id,
+    decision_id,
+    worklog_id,
+    NAMESPACE_OBS,
+    NAMESPACE_PATTERN,
+    NAMESPACE_SUMMARY,
+    NAMESPACE_CODE,
+    NAMESPACE_REL,
+    NAMESPACE_HINT,
+    NAMESPACE_PLAN,
+    NAMESPACE_LEARNING,
+    NAMESPACE_DECISION,
     NAMESPACE_WORKLOG,
 )
 from .secret_scan import scan_for_secrets
@@ -24,8 +40,16 @@ from .secret_scan import scan_for_secrets
 logger = logging.getLogger("jarvis-core")
 
 VALID_CONTENT_TYPES = (
-    "observation", "pattern", "summary", "code",
-    "relationship", "hint", "plan", "learning", "decision", "worklog"
+    "observation",
+    "pattern",
+    "summary",
+    "code",
+    "relationship",
+    "hint",
+    "plan",
+    "learning",
+    "decision",
+    "worklog",
 )
 
 # Map content_type string to (ContentType enum, NAMESPACE constant, ID generator)
@@ -75,23 +99,23 @@ def tier2_write(
         return {
             "success": False,
             "error": f"Invalid content_type '{content_type}'. "
-                     f"Valid types: {', '.join(VALID_CONTENT_TYPES)}"
+            f"Valid types: {', '.join(VALID_CONTENT_TYPES)}",
         }
-    
+
     # Validate name requirement
     if content_type in ("pattern", "plan", "decision") and not name:
         return {
             "success": False,
-            "error": f"content_type '{content_type}' requires a name parameter"
+            "error": f"content_type '{content_type}' requires a name parameter",
         }
-    
+
     # Validate importance score
     if not 0.0 <= importance_score <= 1.0:
         return {
             "success": False,
-            "error": f"importance_score must be between 0.0 and 1.0, got {importance_score}"
+            "error": f"importance_score must be between 0.0 and 1.0, got {importance_score}",
         }
-    
+
     # Secret scan
     if not skip_secret_scan:
         detections = scan_for_secrets(content)
@@ -101,10 +125,10 @@ def tier2_write(
                 "error": "Secret detected in content",
                 "detections": detections,
             }
-    
+
     # Generate ID
     type_const, namespace, id_gen = _TYPE_MAP[content_type]
-    
+
     if content_type == "observation":
         doc_id = id_gen()  # Auto-generates timestamp
     elif content_type == "pattern":
@@ -126,7 +150,7 @@ def tier2_write(
         else:
             return {
                 "success": False,
-                "error": "relationship type requires name in format 'entity_a::entity_b'"
+                "error": "relationship type requires name in format 'entity_a::entity_b'",
             }
     elif content_type == "hint":
         # For hint, name should be "topic::seq"
@@ -145,7 +169,7 @@ def tier2_write(
         doc_id = id_gen()  # Auto-generates timestamp
     else:
         return {"success": False, "error": f"Unknown content_type: {content_type}"}
-    
+
     # Build metadata
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     metadata = {
@@ -159,7 +183,7 @@ def tier2_write(
         "created_at": now_iso,
         "updated_at": now_iso,
     }
-    
+
     if tags:
         metadata["tags"] = ",".join(tags)
     if session_id:
@@ -168,15 +192,11 @@ def tier2_write(
         metadata["name"] = name
     if extra_metadata:
         metadata.update(extra_metadata)
-    
+
     # Write to ChromaDB
     try:
         collection = _get_collection()
-        collection.upsert(
-            ids=[doc_id],
-            documents=[content],
-            metadatas=[metadata]
-        )
+        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         result = {
             "success": True,
             "id": doc_id,
@@ -187,6 +207,7 @@ def tier2_write(
         # Post-write conflict detection (all Tier 2 types)
         try:
             from .conflict import detect_conflicts
+
             superseded = detect_conflicts(doc_id, content)
             if superseded:
                 result["conflicts_resolved"] = len(superseded)
@@ -202,42 +223,42 @@ def tier2_write(
 
 def tier2_read(doc_id: str) -> dict:
     """Read Tier 2 content from ChromaDB and increment retrieval count.
-    
+
     Args:
         doc_id: Document ID to read
-    
+
     Returns:
         Result dict with success, found, id, content, metadata
     """
     try:
         collection = _get_collection()
         result = collection.get(ids=[doc_id])
-        
+
         if not result["ids"]:
             return {
                 "success": True,
                 "found": False,
                 "id": doc_id,
             }
-        
+
         # Get current retrieval count and increment
         metadata = result["metadatas"][0]
         retrieval_count = float(metadata.get("retrieval_count", "0"))
         retrieval_count += 1
-        
+
         # Update retrieval count and updated_at
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         updated_metadata = {**metadata}
         updated_metadata["retrieval_count"] = str(retrieval_count)
         updated_metadata["updated_at"] = now_iso
-        
+
         # Write back
         collection.upsert(
             ids=[doc_id],
             documents=[result["documents"][0]],
-            metadatas=[updated_metadata]
+            metadatas=[updated_metadata],
         )
-        
+
         return {
             "success": True,
             "found": True,
@@ -251,8 +272,10 @@ def tier2_read(doc_id: str) -> dict:
 
 
 VALID_SORT_OPTIONS = (
-    "importance_desc", "importance_asc",
-    "created_at_desc", "created_at_asc",
+    "importance_desc",
+    "importance_asc",
+    "created_at_desc",
+    "created_at_asc",
     "none",
 )
 
@@ -283,20 +306,20 @@ def tier2_list(
     """
     try:
         collection = _get_collection()
-        
+
         # Build where clause for ChromaDB
         conditions = [{"tier": "chromadb"}]
-        
+
         if content_type:
             if content_type not in VALID_CONTENT_TYPES:
                 return {
                     "success": False,
                     "error": f"Invalid content_type '{content_type}'. "
-                             f"Valid types: {', '.join(VALID_CONTENT_TYPES)}"
+                    f"Valid types: {', '.join(VALID_CONTENT_TYPES)}",
                 }
             type_const, _, _ = _TYPE_MAP[content_type]
             conditions.append({"type": type_const})
-        
+
         if source:
             conditions.append({"source": source})
 
@@ -308,21 +331,21 @@ def tier2_list(
             where = conditions[0]
         else:
             where = {"$and": conditions}
-        
+
         # Get all matching documents (ChromaDB doesn't support numeric comparisons)
         result = collection.get(where=where)
-        
+
         # Apply min_importance filter in Python
         docs = []
         for i, doc_id in enumerate(result["ids"]):
             metadata = result["metadatas"][i]
-            
+
             # Apply importance filter
             if min_importance is not None:
                 importance = float(metadata.get("importance_score", "0.5"))
                 if importance < min_importance:
                     continue
-            
+
             entry = {
                 "id": doc_id,
                 "metadata": metadata,
@@ -330,18 +353,21 @@ def tier2_list(
             if include_content:
                 entry["content"] = result["documents"][i]
             docs.append(entry)
-        
+
         # Validate sort_by
         if sort_by not in VALID_SORT_OPTIONS:
             return {
                 "success": False,
                 "error": f"Invalid sort_by '{sort_by}'. "
-                         f"Valid options: {', '.join(VALID_SORT_OPTIONS)}"
+                f"Valid options: {', '.join(VALID_SORT_OPTIONS)}",
             }
 
         # Sort before applying limit
         if sort_by == "importance_desc":
-            docs.sort(key=lambda d: float(d["metadata"].get("importance_score", "0.5")), reverse=True)
+            docs.sort(
+                key=lambda d: float(d["metadata"].get("importance_score", "0.5")),
+                reverse=True,
+            )
         elif sort_by == "importance_asc":
             docs.sort(key=lambda d: float(d["metadata"].get("importance_score", "0.5")))
         elif sort_by == "created_at_desc":
@@ -366,16 +392,16 @@ def tier2_list(
 
 def tier2_delete(doc_id: str) -> dict:
     """Delete Tier 2 content from ChromaDB.
-    
+
     Args:
         doc_id: Document ID to delete
-    
+
     Returns:
         Result dict with success, id, deleted
     """
     try:
         collection = _get_collection()
-        
+
         # Check if exists
         result = collection.get(ids=[doc_id])
         if not result["ids"]:
@@ -385,10 +411,10 @@ def tier2_delete(doc_id: str) -> dict:
                 "deleted": False,
                 "reason": "not found",
             }
-        
+
         # Delete
         collection.delete(ids=[doc_id])
-        
+
         return {
             "success": True,
             "id": doc_id,
@@ -414,7 +440,9 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
     """
     try:
         collection = _get_collection()
-        metadata["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        metadata["updated_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         return {"success": True, "doc_id": doc_id, "updated": True}
     except Exception as e:

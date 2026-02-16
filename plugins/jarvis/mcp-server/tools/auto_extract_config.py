@@ -3,6 +3,7 @@
 Stop hook observes full conversation turns (not individual tool calls),
 so this module only handles prerequisites checking — no filtering logic.
 """
+
 import importlib.util
 import os
 import shutil
@@ -42,12 +43,14 @@ def check_prerequisites(config: dict) -> dict:
         has_anthropic = False
         try:
             import importlib.util
+
             has_anthropic = importlib.util.find_spec("anthropic") is not None
         except (ImportError, ValueError):
             pass
 
         # Check claude CLI availability
         import shutil
+
         has_claude_cli = shutil.which("claude") is not None
 
         details["has_api_key"] = has_api_key
@@ -56,18 +59,26 @@ def check_prerequisites(config: dict) -> dict:
 
         if mode == "background-api":
             if not has_api_key:
-                issues.append("ANTHROPIC_API_KEY not found in environment — required for background-api mode")
+                issues.append(
+                    "ANTHROPIC_API_KEY not found in environment — required for background-api mode"
+                )
             if not has_anthropic:
-                issues.append("'anthropic' package not installed — run: pip install anthropic")
+                issues.append(
+                    "'anthropic' package not installed — run: pip install anthropic"
+                )
         elif mode == "background-cli":
             if not has_claude_cli:
-                issues.append("'claude' binary not found on PATH — required for background-cli mode")
+                issues.append(
+                    "'claude' binary not found on PATH — required for background-cli mode"
+                )
         else:
             # Smart "background" mode: at least one backend must be available
             api_ok = has_api_key and has_anthropic
             cli_ok = has_claude_cli
             if not api_ok and not cli_ok:
-                issues.append("No extraction backend available — set ANTHROPIC_API_KEY or ensure 'claude' is on PATH")
+                issues.append(
+                    "No extraction backend available — set ANTHROPIC_API_KEY or ensure 'claude' is on PATH"
+                )
             # Informational: note which backends are available
             backends = []
             if api_ok:

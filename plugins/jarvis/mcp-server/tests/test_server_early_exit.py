@@ -1,4 +1,5 @@
 """Tests for server early-exit when MCP transport is not 'local'."""
+
 import pytest
 
 
@@ -11,6 +12,7 @@ class TestMainSyncEarlyExit:
 
         with pytest.raises(SystemExit) as exc_info:
             from server import main_sync
+
             main_sync()
 
         assert exc_info.value.code == 0
@@ -21,6 +23,7 @@ class TestMainSyncEarlyExit:
 
         with pytest.raises(SystemExit) as exc_info:
             from server import main_sync
+
             main_sync()
 
         assert exc_info.value.code == 0

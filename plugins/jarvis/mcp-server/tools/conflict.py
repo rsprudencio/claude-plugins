@@ -14,6 +14,7 @@ Superseded entries get ``status: "superseded"`` and ``superseded_by``
 metadata; they are then filtered out of query paths (per-prompt
 injection, pattern detection) automatically.
 """
+
 import json
 import logging
 import os
@@ -61,6 +62,7 @@ def _tokenize(text: str) -> set[str]:
 
 # ── Candidate finding ───────────────────────────────────────────────────────
 
+
 def find_conflict_candidates(
     doc_id: str,
     content: str,
@@ -95,7 +97,9 @@ def find_conflict_candidates(
     new_words = _tokenize(content)
     candidates = []
 
-    for cid, distance, doc_content, metadata in zip(ids, distances, documents, metadatas):
+    for cid, distance, doc_content, metadata in zip(
+        ids, distances, documents, metadatas
+    ):
         if cid == doc_id:
             continue
         if (metadata or {}).get("status") == "superseded":
@@ -110,12 +114,14 @@ def find_conflict_candidates(
         jaccard = len(new_words & old_words) / max(len(union), 1)
 
         if jaccard < config["divergence_threshold"]:
-            candidates.append({
-                "id": cid,
-                "content": doc_content,
-                "similarity": similarity,
-                "jaccard": jaccard,
-            })
+            candidates.append(
+                {
+                    "id": cid,
+                    "content": doc_content,
+                    "similarity": similarity,
+                    "jaccard": jaccard,
+                }
+            )
 
     return candidates
 
@@ -151,6 +157,7 @@ def _call_haiku_raw(prompt: str, max_tokens: int = 200) -> Optional[str]:
     if api_key:
         try:
             import anthropic
+
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
@@ -199,9 +206,7 @@ def verify_conflicts_with_llm(
     Returns list of confirmed conflicting IDs. Falls back to trusting
     rule-based results if LLM call fails.
     """
-    formatted = "\n".join(
-        f"[{i}] {c['content']}" for i, c in enumerate(candidates)
-    )
+    formatted = "\n".join(f"[{i}] {c['content']}" for i, c in enumerate(candidates))
     prompt = CONFLICT_VERIFICATION_PROMPT.format(
         new_content=new_content,
         candidates_formatted=formatted,
@@ -226,6 +231,7 @@ def verify_conflicts_with_llm(
 
 # ── Mark superseded ─────────────────────────────────────────────────────────
 
+
 def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
     """Add ``status: superseded`` and ``superseded_by`` to *old_doc_id*.
 
@@ -242,7 +248,9 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
         metadata = {**(result["metadatas"][0] or {})}
         metadata["status"] = "superseded"
         metadata["superseded_by"] = new_doc_id
-        metadata["superseded_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        metadata["superseded_at"] = datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
 
         collection.upsert(
             ids=[old_doc_id],
@@ -256,6 +264,7 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
 
 
 # ── Conflict log ────────────────────────────────────────────────────────────
+
 
 def _resolve_log_dir() -> Path:
     """Resolve telemetry directory, respecting JARVIS_HOME."""
@@ -300,6 +309,7 @@ def log_conflict(
 
 # ── Orchestrator ────────────────────────────────────────────────────────────
 
+
 def detect_conflicts(doc_id: str, content: str) -> list[str]:
     """Run the full conflict-detection pipeline for a newly written entry.
 
@@ -333,14 +343,19 @@ def detect_conflicts(doc_id: str, content: str) -> list[str]:
         old_id = candidate["id"]
         verdict = "superseded" if old_id in confirmed_ids else "retained"
         log_conflict(
-            old_id, doc_id,
-            candidate["similarity"], candidate["jaccard"],
-            method, verdict,
+            old_id,
+            doc_id,
+            candidate["similarity"],
+            candidate["jaccard"],
+            method,
+            verdict,
         )
         if verdict == "superseded" and mark_superseded(old_id, doc_id):
             superseded.append(old_id)
 
     if superseded:
-        logger.info(f"Conflict detection: {len(superseded)} entries superseded by {doc_id}")
+        logger.info(
+            f"Conflict detection: {len(superseded)} entries superseded by {doc_id}"
+        )
 
     return superseded

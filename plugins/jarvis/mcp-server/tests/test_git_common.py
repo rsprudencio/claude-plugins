@@ -1,4 +1,5 @@
 """Tests for git_common.py shared git utilities."""
+
 import subprocess
 from unittest.mock import Mock
 import pytest
@@ -98,6 +99,7 @@ class TestRunGitCommand:
 
     def test_command_timeout_returns_error(self, mock_config, git_repo, monkeypatch):
         """Command timeout returns error."""
+
         def mock_timeout(*args, **kwargs):
             raise subprocess.TimeoutExpired(cmd=args[0], timeout=1)
 
@@ -113,6 +115,7 @@ class TestRunGitCommand:
         """Git command in non-repo returns error."""
         # temp_vault has git repo, so remove it
         import shutil
+
         git_dir = temp_vault / ".git"
         if git_dir.exists():
             shutil.rmtree(git_dir)

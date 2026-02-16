@@ -1,4 +1,5 @@
 """Tests for git_ops.py git query and management operations."""
+
 import pytest
 
 from tools.git_ops import (
@@ -30,6 +31,7 @@ class TestGetStatus:
         test_file = git_repo / "staged.txt"
         test_file.write_text("content")
         import os
+
         os.system(f"cd {git_repo} && git add staged.txt")
 
         result = get_status()
@@ -63,6 +65,7 @@ class TestGetStatus:
     def test_mixed_status(self, mock_config, git_repo):
         """Handles mix of staged, unstaged, and untracked."""
         import os
+
         # Staged
         staged = git_repo / "staged.txt"
         staged.write_text("staged")
@@ -121,7 +124,9 @@ class TestParseLastCommit:
         assert "subject" in result
         assert isinstance(result["subject"], str)
 
-    def test_extracts_jarvis_protocol_tag(self, mock_config, git_repo_with_jarvis_commits):
+    def test_extracts_jarvis_protocol_tag(
+        self, mock_config, git_repo_with_jarvis_commits
+    ):
         """Extracts JARVIS protocol tag from commit message."""
         result = parse_last_commit()
 
@@ -151,10 +156,12 @@ class TestParseLastCommit:
         """Fails gracefully when no commits exist."""
         # temp_vault has no commits
         import shutil
+
         git_dir = temp_vault / ".git"
         if git_dir.exists():
             shutil.rmtree(git_dir)
         import os
+
         os.system(f"cd {temp_vault} && git init -q")
 
         result = parse_last_commit()
@@ -179,10 +186,7 @@ class TestPushToRemote:
         from tools import git_ops as git_ops_module
 
         def mock_push(*args, **kwargs):
-            return True, {
-                "success": True,
-                "stderr": "Everything up-to-date"
-            }
+            return True, {"success": True, "stderr": "Everything up-to-date"}
 
         monkeypatch.setattr(git_ops_module, "run_git_command", mock_push)
 
@@ -196,10 +200,7 @@ class TestPushToRemote:
         from tools import git_ops as git_ops_module
 
         def mock_push(*args, **kwargs):
-            return True, {
-                "success": True,
-                "stderr": "Branch pushed"
-            }
+            return True, {"success": True, "stderr": "Branch pushed"}
 
         monkeypatch.setattr(git_ops_module, "run_git_command", mock_push)
 
@@ -213,10 +214,7 @@ class TestPushToRemote:
         from tools import git_ops as git_ops_module
 
         def mock_push(*args, **kwargs):
-            return True, {
-                "success": True,
-                "stderr": "Push output message"
-            }
+            return True, {"success": True, "stderr": "Push output message"}
 
         monkeypatch.setattr(git_ops_module, "run_git_command", mock_push)
 
@@ -240,7 +238,7 @@ class TestPushToRemote:
             return False, {
                 "success": False,
                 "error": "rejected",
-                "stderr": "non-fast-forward"
+                "stderr": "non-fast-forward",
             }
 
         monkeypatch.setattr(git_ops_module, "run_git_command", mock_rejected)
@@ -264,12 +262,12 @@ class TestMoveFiles:
         source = git_repo / "source.txt"
         source.write_text("content")
         import os
-        os.system(f"cd {git_repo} && git add source.txt && git commit -q -m 'Add source'")
 
-        result = move_files([{
-            "source": "source.txt",
-            "destination": "dest.txt"
-        }])
+        os.system(
+            f"cd {git_repo} && git add source.txt && git commit -q -m 'Add source'"
+        )
+
+        result = move_files([{"source": "source.txt", "destination": "dest.txt"}])
 
         assert result["success"] is True
         assert len(result["moved"]) == 1
@@ -277,6 +275,7 @@ class TestMoveFiles:
     def test_move_multiple_files(self, mock_config, git_repo):
         """Move multiple files."""
         import os
+
         for i in range(3):
             f = git_repo / f"file{i}.txt"
             f.write_text(f"content{i}")
@@ -284,8 +283,7 @@ class TestMoveFiles:
         os.system(f"cd {git_repo} && git commit -q -m 'Add files'")
 
         moves = [
-            {"source": f"file{i}.txt", "destination": f"moved{i}.txt"}
-            for i in range(3)
+            {"source": f"file{i}.txt", "destination": f"moved{i}.txt"} for i in range(3)
         ]
 
         result = move_files(moves)
@@ -295,53 +293,47 @@ class TestMoveFiles:
     def test_rename_file(self, mock_config, git_repo):
         """Rename file in same directory."""
         import os
+
         source = git_repo / "old_name.txt"
         source.write_text("content")
         os.system(f"cd {git_repo} && git add old_name.txt && git commit -q -m 'Add'")
 
-        result = move_files([{
-            "source": "old_name.txt",
-            "destination": "new_name.txt"
-        }])
+        result = move_files([{"source": "old_name.txt", "destination": "new_name.txt"}])
 
         assert "moved" in result
 
     def test_source_not_found_fails(self, mock_config, git_repo):
         """Reports error when source doesn't exist."""
-        result = move_files([{
-            "source": "nonexistent.txt",
-            "destination": "dest.txt"
-        }])
+        result = move_files([{"source": "nonexistent.txt", "destination": "dest.txt"}])
 
         assert result["success"] is False or len(result.get("errors", [])) > 0
 
     def test_missing_source_key_fails(self, mock_config, git_repo):
         """Handles missing source key."""
-        result = move_files([{
-            "destination": "dest.txt"
-        }])
+        result = move_files([{"destination": "dest.txt"}])
 
         assert len(result.get("errors", [])) > 0
 
     def test_missing_destination_key_fails(self, mock_config, git_repo):
         """Handles missing destination key."""
-        result = move_files([{
-            "source": "source.txt"
-        }])
+        result = move_files([{"source": "source.txt"}])
 
         assert len(result.get("errors", [])) > 0
 
     def test_partial_success_returns_errors(self, mock_config, git_repo):
         """Returns both moved and errors."""
         import os
+
         good = git_repo / "good.txt"
         good.write_text("content")
         os.system(f"cd {git_repo} && git add good.txt && git commit -q -m 'Add'")
 
-        result = move_files([
-            {"source": "good.txt", "destination": "moved.txt"},
-            {"source": "bad.txt", "destination": "dest.txt"}
-        ])
+        result = move_files(
+            [
+                {"source": "good.txt", "destination": "moved.txt"},
+                {"source": "bad.txt", "destination": "dest.txt"},
+            ]
+        )
 
         assert "moved" in result
         assert "errors" in result
@@ -431,6 +423,7 @@ class TestRollbackCommit:
         from tools import git_ops as git_ops_module
 
         call_count = [0]
+
         def mock_revert(args, *other, **kwargs):
             call_count[0] += 1
             if "revert" in args:
@@ -470,11 +463,7 @@ class TestRollbackCommit:
         from tools import git_ops as git_ops_module
 
         def mock_conflict(*args, **kwargs):
-            return False, {
-                "success": False,
-                "error": "conflict",
-                "stderr": "CONFLICT"
-            }
+            return False, {"success": False, "error": "conflict", "stderr": "CONFLICT"}
 
         monkeypatch.setattr(git_ops_module, "run_git_command", mock_conflict)
 

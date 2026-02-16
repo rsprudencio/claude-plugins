@@ -5,6 +5,7 @@ before writing to prevent accidental secret storage.
 
 Similar to file_ops.FORBIDDEN_COMPONENTS, this is a pre-write safety gate.
 """
+
 import re
 from typing import Optional
 
@@ -30,8 +31,7 @@ def _get_compiled() -> dict:
     global _compiled
     if _compiled is None:
         _compiled = {
-            name: re.compile(pattern)
-            for name, pattern in SECRET_PATTERNS.items()
+            name: re.compile(pattern) for name, pattern in SECRET_PATTERNS.items()
         }
     return _compiled
 
@@ -71,10 +71,12 @@ def scan_for_secrets(content: str) -> list[dict]:
         for secret_type, pattern in compiled.items():
             for match in pattern.finditer(line):
                 matched_text = match.group(0)
-                detections.append({
-                    "type": secret_type,
-                    "line": line_num,
-                    "redacted_preview": redact(matched_text),
-                })
+                detections.append(
+                    {
+                        "type": secret_type,
+                        "line": line_num,
+                        "redacted_preview": redact(matched_text),
+                    }
+                )
 
     return detections

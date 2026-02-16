@@ -1,4 +1,5 @@
 """Pytest fixtures for Jarvis Tools tests."""
+
 import json
 import os
 import shutil
@@ -52,9 +53,7 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         "vault_path": str(temp_vault),
         "vault_confirmed": True,
         "configured_at": "2026-02-02T12:00:00Z",
-        "memory": {
-            "db_path": temp_db_dir  # Use isolated test database
-        }
+        "memory": {"db_path": temp_db_dir},  # Use isolated test database
     }
     config_file.write_text(json.dumps(config_data))
 
@@ -145,7 +144,9 @@ def git_repo(temp_vault: Path) -> Path:
     # Create initial commit
     test_file = temp_vault / "test.txt"
     test_file.write_text("Initial content")
-    os.system(f'cd {temp_vault} && git add test.txt && git commit -q -m "Initial commit"')
+    os.system(
+        f'cd {temp_vault} && git add test.txt && git commit -q -m "Initial commit"'
+    )
 
     return temp_vault
 
@@ -158,15 +159,15 @@ def git_repo_with_jarvis_commits(git_repo: Path) -> Path:
     journal_file.write_text("# Test Entry\n\nTest content")
 
     # Commit with JARVIS protocol tag
-    os.system(f'cd {git_repo} && git add {journal_file}')
-    commit_msg = 'Jarvis CREATE: Test journal entry\n\n[JARVIS:Cc:20260123153045]'
+    os.system(f"cd {git_repo} && git add {journal_file}")
+    commit_msg = "Jarvis CREATE: Test journal entry\n\n[JARVIS:Cc:20260123153045]"
     os.system(f'cd {git_repo} && git commit -q -m "{commit_msg}"')
 
     # Create another commit
     note_file = git_repo / "notes" / "test-note.md"
     note_file.write_text("# Test Note")
-    os.system(f'cd {git_repo} && git add {note_file}')
-    edit_msg = 'Jarvis EDIT: Update test note\n\n[JARVIS:Ea]'
+    os.system(f"cd {git_repo} && git add {note_file}")
+    edit_msg = "Jarvis EDIT: Update test note\n\n[JARVIS:Ea]"
     os.system(f'cd {git_repo} && git commit -q -m "{edit_msg}"')
 
     return git_repo
@@ -180,6 +181,7 @@ def mock_subprocess(monkeypatch):
 
     class SubprocessMock:
         """Helper to mock subprocess.run with custom behaviors."""
+
         def __init__(self):
             self.call_count = 0
             self.mock_return = None
@@ -204,7 +206,11 @@ def mock_subprocess(monkeypatch):
                 if isinstance(self.mock_side_effect, Exception):
                     raise self.mock_side_effect
                 return self.mock_side_effect(*args, **kwargs)
-            return self.mock_return if self.mock_return else Mock(returncode=0, stdout="", stderr="")
+            return (
+                self.mock_return
+                if self.mock_return
+                else Mock(returncode=0, stdout="", stderr="")
+            )
 
     mock = SubprocessMock()
     monkeypatch.setattr(subprocess, "run", mock)

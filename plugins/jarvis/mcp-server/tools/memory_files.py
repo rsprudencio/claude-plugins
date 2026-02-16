@@ -7,6 +7,7 @@ Handles read/write for:
 Files use YAML frontmatter for metadata, making them Obsidian-visible
 and git-auditable. This is the Tier 1 (file SSoT) layer.
 """
+
 import os
 import re
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from .config import get_verified_vault_path
 from .paths import get_path
 
 # Valid memory name: lowercase alphanumeric with hyphens, no leading/trailing hyphen
-NAME_PATTERN = re.compile(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
+NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
 # Minimum name length (single chars are allowed via separate check)
 MIN_NAME_LEN = 2
@@ -31,7 +32,7 @@ def validate_name(name: str) -> Optional[str]:
         return "Name cannot be empty"
     if len(name) < MIN_NAME_LEN:
         # Allow single alphanumeric chars
-        if len(name) == 1 and re.match(r'^[a-z0-9]$', name):
+        if len(name) == 1 and re.match(r"^[a-z0-9]$", name):
             return None
         return f"Name too short: '{name}' (minimum {MIN_NAME_LEN} chars)"
     if not NAME_PATTERN.match(name):
@@ -61,7 +62,7 @@ def get_project_dir(project: str) -> tuple[str, str]:
     (default: ~/.jarvis/memories/<project>/).
     """
     # Sanitize project name
-    safe_project = re.sub(r'[^a-z0-9-]', '', project.lower().strip())
+    safe_project = re.sub(r"[^a-z0-9-]", "", project.lower().strip())
     if not safe_project:
         return "", f"Invalid project name: '{project}'"
     try:
@@ -73,8 +74,9 @@ def get_project_dir(project: str) -> tuple[str, str]:
         return "", str(e)
 
 
-def resolve_memory_path(name: str, scope: str = "global",
-                        project: Optional[str] = None) -> tuple[str, str]:
+def resolve_memory_path(
+    name: str, scope: str = "global", project: Optional[str] = None
+) -> tuple[str, str]:
     """Resolve name + scope to full file path.
 
     Args:
@@ -102,10 +104,16 @@ def resolve_memory_path(name: str, scope: str = "global",
     return os.path.join(base_dir, f"{name}.md"), ""
 
 
-def _format_frontmatter(name: str, scope: str, importance: str,
-                        tags: list, version: int,
-                        created: str, modified: str,
-                        project: Optional[str] = None) -> str:
+def _format_frontmatter(
+    name: str,
+    scope: str,
+    importance: str,
+    tags: list,
+    version: int,
+    created: str,
+    modified: str,
+    project: Optional[str] = None,
+) -> str:
     """Generate YAML frontmatter string."""
     lines = [
         "---",
@@ -119,12 +127,14 @@ def _format_frontmatter(name: str, scope: str, importance: str,
         lines.append("tags:")
         for tag in tags:
             lines.append(f"  - {tag}")
-    lines.extend([
-        f"created: {created}",
-        f"modified: {modified}",
-        f"version: {version}",
-        "---",
-    ])
+    lines.extend(
+        [
+            f"created: {created}",
+            f"modified: {modified}",
+            f"version: {version}",
+            "---",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -134,43 +144,50 @@ def _parse_memory_frontmatter(content: str) -> dict:
     Handles the specific fields we write (name, scope, importance, etc.).
     Reuses the same regex approach as memory.py._parse_frontmatter.
     """
-    match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
     if not match:
         return {}
 
     fm = {}
-    for line in match.group(1).split('\n'):
-        if ':' in line and not line.strip().startswith('-'):
-            key, _, value = line.partition(':')
+    for line in match.group(1).split("\n"):
+        if ":" in line and not line.strip().startswith("-"):
+            key, _, value = line.partition(":")
             fm[key.strip()] = value.strip().strip('"').strip("'")
 
     # Parse list-style tags
-    tag_match = re.search(r'tags:\s*\n((?:\s+-\s+.*\n)*)', match.group(1) + '\n')
+    tag_match = re.search(r"tags:\s*\n((?:\s+-\s+.*\n)*)", match.group(1) + "\n")
     if tag_match:
-        tags = re.findall(r'-\s+(.+)', tag_match.group(1))
-        fm['tags'] = [t.strip().strip('"').strip("'") for t in tags]
-    elif 'tags' in fm:
+        tags = re.findall(r"-\s+(.+)", tag_match.group(1))
+        fm["tags"] = [t.strip().strip('"').strip("'") for t in tags]
+    elif "tags" in fm:
         # Single-line tags: convert comma-separated to list
-        fm['tags'] = [t.strip() for t in fm['tags'].split(',') if t.strip()]
+        fm["tags"] = [t.strip() for t in fm["tags"].split(",") if t.strip()]
 
     # Convert version to int if present
-    if 'version' in fm:
+    if "version" in fm:
         try:
-            fm['version'] = int(fm['version'])
+            fm["version"] = int(fm["version"])
         except (ValueError, TypeError):
-            fm['version'] = 1
+            fm["version"] = 1
 
     return fm
 
 
 def _strip_frontmatter(content: str) -> str:
     """Remove YAML frontmatter from content."""
-    return re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, count=1, flags=re.DOTALL)
+    return re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, count=1, flags=re.DOTALL)
 
 
-def write_memory_file(path: str, name: str, content: str, scope: str,
-                      project: Optional[str], importance: str,
-                      tags: list, overwrite: bool) -> dict:
+def write_memory_file(
+    path: str,
+    name: str,
+    content: str,
+    scope: str,
+    project: Optional[str],
+    importance: str,
+    tags: list,
+    overwrite: bool,
+) -> dict:
     """Write markdown file with YAML frontmatter.
 
     Args:
@@ -199,7 +216,7 @@ def write_memory_file(path: str, name: str, content: str, scope: str,
             }
         # Read existing to preserve created_at and bump version
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, "r", encoding="utf-8") as f:
                 existing = f.read()
             fm = _parse_memory_frontmatter(existing)
             created_at = fm.get("created", now_iso)
@@ -211,16 +228,21 @@ def write_memory_file(path: str, name: str, content: str, scope: str,
 
     version = existing_version + 1 if os.path.isfile(path) else 1
     frontmatter = _format_frontmatter(
-        name=name, scope=scope, importance=importance,
-        tags=tags, version=version, created=created_at,
-        modified=now_iso, project=project,
+        name=name,
+        scope=scope,
+        importance=importance,
+        tags=tags,
+        version=version,
+        created=created_at,
+        modified=now_iso,
+        project=project,
     )
 
     full_content = frontmatter + content
 
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(full_content)
         return {
             "success": True,
@@ -245,7 +267,7 @@ def read_memory_file(path: str) -> dict:
         return {"success": False, "error": f"File not found: {path}"}
 
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             full_content = f.read()
 
         metadata = _parse_memory_frontmatter(full_content)
@@ -261,10 +283,13 @@ def read_memory_file(path: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def list_memory_files(scope: str = "global", project: Optional[str] = None,
-                      tag: Optional[str] = None,
-                      importance: Optional[str] = None,
-                      include_content: bool = False) -> list:
+def list_memory_files(
+    scope: str = "global",
+    project: Optional[str] = None,
+    tag: Optional[str] = None,
+    importance: Optional[str] = None,
+    include_content: bool = False,
+) -> list:
     """Scan filesystem for memory files, parse frontmatter, apply filters.
 
     Args:
@@ -310,7 +335,7 @@ def list_memory_files(scope: str = "global", project: Optional[str] = None,
                 continue
             filepath = os.path.join(directory, filename)
             try:
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
                 fm = _parse_memory_frontmatter(content)
             except Exception:

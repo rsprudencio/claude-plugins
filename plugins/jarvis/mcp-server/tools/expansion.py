@@ -6,6 +6,7 @@ when the query vocabulary doesn't match the document vocabulary.
 MVP: rule-based only (dictionary synonyms + intent patterns).
 Haiku-based expansion deferred to future release.
 """
+
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -105,7 +106,7 @@ def _extract_expansion_terms(
     # Synonym expansion
     for trigger, expansions in synonyms.items():
         # Match trigger as a whole word
-        if re.search(rf'\b{re.escape(trigger)}\b', query_lower):
+        if re.search(rf"\b{re.escape(trigger)}\b", query_lower):
             terms.extend(expansions)
 
     # Intent detection

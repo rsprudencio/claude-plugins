@@ -1,4 +1,5 @@
 """Integration tests for system_check module."""
+
 import sys
 import pytest
 from unittest.mock import patch, MagicMock
@@ -25,7 +26,7 @@ class TestCheckPythonVersion:
         assert "current" in details
         assert details["platform"] in ("Darwin", "Linux", "Windows")
 
-    @patch('sys.version_info', (3, 9, 5, 'final', 0))
+    @patch("sys.version_info", (3, 9, 5, "final", 0))
     def test_check_python_version_fails(self):
         """Test Python version check fails with old version."""
         is_valid, message, details = check_python_version()
@@ -38,20 +39,24 @@ class TestCheckPythonVersion:
 class TestCheckUV:
     """Tests for uv/uvx checking."""
 
-    @patch('tools.system_check.which')
+    @patch("tools.system_check.which")
     def test_check_uv_uvx_found(self, mock_which):
         """Test uvx found."""
-        mock_which.side_effect = lambda cmd, enriched: "/usr/local/bin/uvx" if cmd == "uvx" else None
+        mock_which.side_effect = lambda cmd, enriched: (
+            "/usr/local/bin/uvx" if cmd == "uvx" else None
+        )
 
         is_valid, message, details = check_uv()
         assert is_valid == True
         assert "✓ uvx found" in message
         assert details["uvx_path"] == "/usr/local/bin/uvx"
 
-    @patch('tools.system_check.which')
+    @patch("tools.system_check.which")
     def test_check_uv_only_uv_found(self, mock_which):
         """Test only uv found (uvx should be available too)."""
-        mock_which.side_effect = lambda cmd, enriched: "/usr/local/bin/uv" if cmd == "uv" else None
+        mock_which.side_effect = lambda cmd, enriched: (
+            "/usr/local/bin/uv" if cmd == "uv" else None
+        )
 
         is_valid, message, details = check_uv()
         assert is_valid == True
@@ -59,7 +64,7 @@ class TestCheckUV:
         assert "uvx should be available" in message
         assert details["uv_path"] == "/usr/local/bin/uv"
 
-    @patch('tools.system_check.which')
+    @patch("tools.system_check.which")
     def test_check_uv_not_found(self, mock_which):
         """Test uv not found."""
         mock_which.return_value = None
@@ -71,11 +76,13 @@ class TestCheckUV:
         assert details["uv_path"] is None
         assert details["uvx_path"] is None
 
-    @patch('tools.system_check.which')
-    @patch('subprocess.run')
+    @patch("tools.system_check.which")
+    @patch("subprocess.run")
     def test_check_uv_with_version(self, mock_run, mock_which):
         """Test uvx version extraction."""
-        mock_which.side_effect = lambda cmd, enriched: "/usr/local/bin/uvx" if cmd == "uvx" else None
+        mock_which.side_effect = lambda cmd, enriched: (
+            "/usr/local/bin/uvx" if cmd == "uvx" else None
+        )
 
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -91,7 +98,7 @@ class TestCheckUV:
 class TestCheckGit:
     """Tests for git checking."""
 
-    @patch('tools.system_check.which')
+    @patch("tools.system_check.which")
     def test_check_git_found(self, mock_which):
         """Test git found."""
         mock_which.return_value = "/usr/bin/git"
@@ -101,7 +108,7 @@ class TestCheckGit:
         assert "✓ git found" in message
         assert details["git_path"] == "/usr/bin/git"
 
-    @patch('tools.system_check.which')
+    @patch("tools.system_check.which")
     def test_check_git_not_found(self, mock_which):
         """Test git not found."""
         mock_which.return_value = None
@@ -112,8 +119,8 @@ class TestCheckGit:
         assert "not found" in message
         assert details["git_path"] is None
 
-    @patch('tools.system_check.which')
-    @patch('subprocess.run')
+    @patch("tools.system_check.which")
+    @patch("subprocess.run")
     def test_check_git_with_version(self, mock_run, mock_which):
         """Test git version extraction."""
         mock_which.return_value = "/usr/bin/git"
@@ -132,7 +139,7 @@ class TestCheckGit:
 class TestPlatformSpecific:
     """Tests for platform-specific checks."""
 
-    @patch('platform.system')
+    @patch("platform.system")
     def test_check_platform_specific_darwin(self, mock_system):
         """Test platform-specific checks on macOS."""
         mock_system.return_value = "Darwin"
@@ -140,7 +147,7 @@ class TestPlatformSpecific:
         checks = check_platform_specific()
         assert isinstance(checks, list)
 
-    @patch('platform.system')
+    @patch("platform.system")
     def test_check_platform_specific_windows(self, mock_system):
         """Test platform-specific checks on Windows."""
         mock_system.return_value = "Windows"
@@ -190,10 +197,12 @@ class TestRunSystemCheck:
         assert "uv" in summary
         assert "git" in summary
 
-    @patch('tools.system_check.check_python_version')
-    @patch('tools.system_check.check_uv')
-    @patch('tools.system_check.check_git')
-    def test_run_system_check_healthy_when_all_pass(self, mock_git, mock_uv, mock_python):
+    @patch("tools.system_check.check_python_version")
+    @patch("tools.system_check.check_uv")
+    @patch("tools.system_check.check_git")
+    def test_run_system_check_healthy_when_all_pass(
+        self, mock_git, mock_uv, mock_python
+    ):
         """Test healthy=True when all critical checks pass."""
         mock_python.return_value = (True, "✓ Python 3.11.6", {"current": "3.11.6"})
         mock_uv.return_value = (True, "✓ uvx found", {"uvx_path": "/usr/bin/uvx"})
@@ -203,13 +212,19 @@ class TestRunSystemCheck:
         assert result["healthy"] == True
         assert len(result["critical_issues"]) == 0
 
-    @patch('tools.system_check.check_python_version')
-    @patch('tools.system_check.check_uv')
-    @patch('tools.system_check.check_git')
-    def test_run_system_check_unhealthy_when_check_fails(self, mock_git, mock_uv, mock_python):
+    @patch("tools.system_check.check_python_version")
+    @patch("tools.system_check.check_uv")
+    @patch("tools.system_check.check_git")
+    def test_run_system_check_unhealthy_when_check_fails(
+        self, mock_git, mock_uv, mock_python
+    ):
         """Test healthy=False when any critical check fails."""
         mock_python.return_value = (True, "✓ Python 3.11.6", {"current": "3.11.6"})
-        mock_uv.return_value = (False, "✗ uv not found", {"uv_path": None, "uvx_path": None})
+        mock_uv.return_value = (
+            False,
+            "✗ uv not found",
+            {"uv_path": None, "uvx_path": None},
+        )
         mock_git.return_value = (True, "✓ git found", {"git_path": "/usr/bin/git"})
 
         result = run_system_check()
@@ -239,10 +254,14 @@ class TestFormatCheckResult:
         assert "Platform:" in output
         assert "Machine:" in output
 
-    @patch('tools.system_check.check_uv')
+    @patch("tools.system_check.check_uv")
     def test_format_check_result_with_issues(self, mock_uv):
         """Test formatting when there are critical issues."""
-        mock_uv.return_value = (False, "✗ uv not found", {"uv_path": None, "uvx_path": None})
+        mock_uv.return_value = (
+            False,
+            "✗ uv not found",
+            {"uv_path": None, "uvx_path": None},
+        )
 
         result = run_system_check()
         output = format_check_result(result, verbose=False)

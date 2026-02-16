@@ -7,6 +7,7 @@ enabling Docker deployment via uvicorn.
 Usage:
     uvicorn http_app:app --host 0.0.0.0 --port 8741
 """
+
 import json
 import os
 import sys
@@ -22,6 +23,7 @@ def _get_version():
     """Get plugin version from package metadata or JARVIS_VERSION env var."""
     try:
         from importlib.metadata import version
+
         return version("jarvis-core")
     except Exception:
         return os.environ.get("JARVIS_VERSION", "unknown")
@@ -30,28 +32,36 @@ def _get_version():
 _VERSION = _get_version()
 
 session_manager = StreamableHTTPSessionManager(
-    app=server, stateless=True, json_response=True,
+    app=server,
+    stateless=True,
+    json_response=True,
 )
 
 
 async def health_response(scope, receive, send):
     """Minimal ASGI response for /health endpoint."""
-    body = json.dumps({"status": "ok", "server": "jarvis-core", "version": _VERSION}).encode()
-    await send({
-        "type": "http.response.start",
-        "status": 200,
-        "headers": [[b"content-type", b"application/json"]],
-    })
+    body = json.dumps(
+        {"status": "ok", "server": "jarvis-core", "version": _VERSION}
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [[b"content-type", b"application/json"]],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 
 async def not_found(scope, receive, send):
     body = json.dumps({"error": "Not found"}).encode()
-    await send({
-        "type": "http.response.start",
-        "status": 404,
-        "headers": [[b"content-type", b"application/json"]],
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 404,
+            "headers": [[b"content-type", b"application/json"]],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 

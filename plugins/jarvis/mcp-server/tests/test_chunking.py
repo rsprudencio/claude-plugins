@@ -1,4 +1,5 @@
 """Tests for markdown chunking module."""
+
 import pytest
 from tools.chunking import (
     chunk_markdown,
@@ -165,8 +166,7 @@ class TestChunkMarkdown:
         assert result.chunks[0].heading == ""
 
     def test_document_with_headings_splits(self):
-        sections = ["## Section {}\n\n{}".format(i, "Content " * 50)
-                     for i in range(5)]
+        sections = ["## Section {}\n\n{}".format(i, "Content " * 50) for i in range(5)]
         content = "---\ntype: note\n---\n# Title\n\n" + "\n\n".join(sections)
         result = chunk_markdown(content)
         assert result.was_chunked is True
@@ -191,8 +191,7 @@ class TestChunkMarkdown:
         assert result.was_chunked is False
 
     def test_chunk_indices_sequential(self):
-        sections = ["## Section {}\n\n{}".format(i, "Word " * 80)
-                     for i in range(4)]
+        sections = ["## Section {}\n\n{}".format(i, "Word " * 80) for i in range(4)]
         content = "\n\n".join(sections)
         result = chunk_markdown(content)
         for i, chunk in enumerate(result.chunks):
@@ -217,7 +216,9 @@ class TestChunkMarkdown:
         big_section = "## Big Section\n\n" + "\n\n".join(
             ["Paragraph {} content. " * 10 for _ in range(20)]
         )
-        result = chunk_markdown(big_section, config={"max_chunk_chars": 300, "min_chunk_chars": 50})
+        result = chunk_markdown(
+            big_section, config={"max_chunk_chars": 300, "min_chunk_chars": 50}
+        )
         assert result.was_chunked is True
         assert result.total > 1
 

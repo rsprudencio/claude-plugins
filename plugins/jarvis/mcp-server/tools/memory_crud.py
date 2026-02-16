@@ -7,17 +7,25 @@ Storage locations:
 - Global:  <vault>/.jarvis/strategic/<name>.md
 - Project: <vault>/.jarvis/memories/<project>/<name>.md
 """
+
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
 from .memory import _get_collection
 from .memory_files import (
-    resolve_memory_path, write_memory_file, read_memory_file,
-    list_memory_files, delete_memory_file, validate_name,
+    resolve_memory_path,
+    write_memory_file,
+    read_memory_file,
+    list_memory_files,
+    delete_memory_file,
+    validate_name,
 )
 from .namespaces import (
-    ContentType, global_memory_id, project_memory_id, memory_namespace,
+    ContentType,
+    global_memory_id,
+    project_memory_id,
+    memory_namespace,
     parse_id,
 )
 from .secret_scan import scan_for_secrets
@@ -28,18 +36,22 @@ VALID_IMPORTANCE = ("low", "medium", "high", "critical")
 VALID_SCOPES = ("global", "project")
 
 
-def _build_chromadb_id(name: str, scope: str,
-                       project: Optional[str] = None) -> str:
+def _build_chromadb_id(name: str, scope: str, project: Optional[str] = None) -> str:
     """Build the ChromaDB document ID for a memory."""
     if scope == "project" and project:
         return project_memory_id(project, name)
     return global_memory_id(name)
 
 
-def _build_memory_metadata(name: str, scope: str, importance: str,
-                           tags: list, project: Optional[str] = None,
-                           created: Optional[str] = None,
-                           modified: Optional[str] = None) -> dict:
+def _build_memory_metadata(
+    name: str,
+    scope: str,
+    importance: str,
+    tags: list,
+    project: Optional[str] = None,
+    created: Optional[str] = None,
+    modified: Optional[str] = None,
+) -> dict:
     """Build ChromaDB metadata for a memory document."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     namespace = memory_namespace(project)
@@ -63,10 +75,16 @@ def _build_memory_metadata(name: str, scope: str, importance: str,
     return meta
 
 
-def memory_write(name: str, content: str, scope: str = "global",
-                 project: Optional[str] = None, tags: Optional[list] = None,
-                 importance: str = "medium", overwrite: bool = False,
-                 skip_secret_scan: bool = False) -> dict:
+def memory_write(
+    name: str,
+    content: str,
+    scope: str = "global",
+    project: Optional[str] = None,
+    tags: Optional[list] = None,
+    importance: str = "medium",
+    overwrite: bool = False,
+    skip_secret_scan: bool = False,
+) -> dict:
     """Write a memory file and index in ChromaDB.
 
     Args:
@@ -91,11 +109,17 @@ def memory_write(name: str, content: str, scope: str = "global",
 
     # Validate scope
     if scope not in VALID_SCOPES:
-        return {"success": False, "error": f"Invalid scope: '{scope}'. Use: {VALID_SCOPES}"}
+        return {
+            "success": False,
+            "error": f"Invalid scope: '{scope}'. Use: {VALID_SCOPES}",
+        }
 
     # Validate importance
     if importance not in VALID_IMPORTANCE:
-        return {"success": False, "error": f"Invalid importance: '{importance}'. Use: {VALID_IMPORTANCE}"}
+        return {
+            "success": False,
+            "error": f"Invalid importance: '{importance}'. Use: {VALID_IMPORTANCE}",
+        }
 
     # Validate project requirement
     if scope == "project" and not project:
@@ -121,8 +145,13 @@ def memory_write(name: str, content: str, scope: str = "global",
 
     # Write file
     write_result = write_memory_file(
-        path=path, name=name, content=content, scope=scope,
-        project=project, importance=importance, tags=tags,
+        path=path,
+        name=name,
+        content=content,
+        scope=scope,
+        project=project,
+        importance=importance,
+        tags=tags,
         overwrite=overwrite,
     )
     if not write_result.get("success"):
@@ -134,12 +163,19 @@ def memory_write(name: str, content: str, scope: str = "global",
     try:
         collection = _get_collection()
         metadata = _build_memory_metadata(
-            name=name, scope=scope, importance=importance,
-            tags=tags, project=project,
+            name=name,
+            scope=scope,
+            importance=importance,
+            tags=tags,
+            project=project,
         )
         # Store full content (with frontmatter) for search
         file_result = read_memory_file(path)
-        full_content = file_result.get("content", content) if file_result.get("success") else content
+        full_content = (
+            file_result.get("content", content)
+            if file_result.get("success")
+            else content
+        )
 
         collection.upsert(
             ids=[doc_id],
@@ -162,8 +198,9 @@ def memory_write(name: str, content: str, scope: str = "global",
     }
 
 
-def memory_read(name: str, scope: str = "global",
-                project: Optional[str] = None) -> dict:
+def memory_read(
+    name: str, scope: str = "global", project: Optional[str] = None
+) -> dict:
     """Read a memory by name.
 
     Tries ChromaDB first (fast path), falls back to file read.
@@ -194,6 +231,7 @@ def memory_read(name: str, scope: str = "global",
             return {
                 "success": True,
                 "found": True,
+                "id": doc_id,
                 "name": name,
                 "scope": scope,
                 "content": result["documents"][0],
@@ -213,6 +251,7 @@ def memory_read(name: str, scope: str = "global",
         return {
             "success": True,
             "found": True,
+            "id": doc_id,
             "name": name,
             "scope": scope,
             "content": file_result["content"],
@@ -236,10 +275,13 @@ def memory_read(name: str, scope: str = "global",
     }
 
 
-def memory_list(scope: str = "all", project: Optional[str] = None,
-                tag: Optional[str] = None,
-                importance: Optional[str] = None,
-                include_content: bool = False) -> dict:
+def memory_list(
+    scope: str = "all",
+    project: Optional[str] = None,
+    tag: Optional[str] = None,
+    importance: Optional[str] = None,
+    include_content: bool = False,
+) -> dict:
     """List memory files with optional filters.
 
     Args:
@@ -253,8 +295,10 @@ def memory_list(scope: str = "all", project: Optional[str] = None,
         Result dict with memories list and total count
     """
     memories = list_memory_files(
-        scope=scope, project=project,
-        tag=tag, importance=importance,
+        scope=scope,
+        project=project,
+        tag=tag,
+        importance=importance,
         include_content=include_content,
     )
 
@@ -263,8 +307,11 @@ def memory_list(scope: str = "all", project: Optional[str] = None,
         collection = _get_collection()
         for mem in memories:
             doc_id = _build_chromadb_id(
-                mem["name"], mem["scope"], mem.get("project"),
+                mem["name"],
+                mem["scope"],
+                mem.get("project"),
             )
+            mem["id"] = doc_id
             try:
                 result = collection.get(ids=[doc_id])
                 mem["indexed"] = bool(result["ids"])
@@ -285,9 +332,12 @@ def memory_list(scope: str = "all", project: Optional[str] = None,
     }
 
 
-def memory_delete(name: str, scope: str = "global",
-                  project: Optional[str] = None,
-                  confirm: bool = False) -> dict:
+def memory_delete(
+    name: str,
+    scope: str = "global",
+    project: Optional[str] = None,
+    confirm: bool = False,
+) -> dict:
     """Delete a memory file and its ChromaDB entry.
 
     Args:

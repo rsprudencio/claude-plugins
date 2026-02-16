@@ -1,4 +1,5 @@
 """Jarvis configuration loader with setup verification."""
+
 import json
 import os
 from pathlib import Path
@@ -88,7 +89,10 @@ def verify_config() -> Tuple[bool, str]:
 
     # Check vault_path exists
     if not config.get("vault_path"):
-        return False, "No vault_path configured. Run /jarvis-settings to set up your vault"
+        return (
+            False,
+            "No vault_path configured. Run /jarvis-settings to set up your vault",
+        )
 
     # Check setup was completed (not just a random config file)
     if not config.get("vault_confirmed"):
@@ -139,7 +143,7 @@ def get_memory_config() -> dict:
 
 def get_promotion_config() -> dict:
     """Get promotion subsystem configuration with defaults.
-    
+
     Returns config dict with promotion thresholds and behavior:
     - importance_threshold: Minimum importance score to auto-promote (0.85)
     - retrieval_count_threshold: Min retrieval count for promotion (3)
@@ -147,7 +151,7 @@ def get_promotion_config() -> dict:
     - age_importance_score: Importance threshold for aged content (0.7)
     - on_promoted_file_deleted: What to do when promoted file is deleted
       ("remove" or "revert_to_chromadb")
-    
+
     Backward-compatible: configs without 'promotion' section get defaults.
     """
     config = get_config()
@@ -292,7 +296,6 @@ def get_expansion_config() -> dict:
     }
     memory_config = config.get("memory", {})
     return {**defaults, **memory_config.get("expansion", {})}
-
 
 
 def get_reranking_config() -> dict:

@@ -1,4 +1,5 @@
 """Tests for Tier 2 conflict detection."""
+
 import json
 import os
 import tempfile
@@ -50,7 +51,9 @@ class TestHasNegationSignals:
         assert has_negation_signals("This is not recommended") is True
 
     def test_negative_neutral(self):
-        assert has_negation_signals("I like using pattern X for handling errors") is False
+        assert (
+            has_negation_signals("I like using pattern X for handling errors") is False
+        )
 
     def test_negative_observation(self):
         assert has_negation_signals("User worked on the API integration today") is False
@@ -177,7 +180,9 @@ class TestFindConflictCandidates:
         collection.upsert(
             ids=["obs::old1"],
             documents=["Use pattern X for error handling"],
-            metadatas=[{"tier": "chromadb", "type": "observation", "status": "superseded"}],
+            metadatas=[
+                {"tier": "chromadb", "type": "observation", "status": "superseded"}
+            ],
         )
         config = {
             "similarity_threshold": 0.0,  # Accept everything
@@ -248,7 +253,9 @@ class TestVerifyConflictsWithLlm:
         config = {}
         with patch("tools.conflict._call_haiku_raw") as mock_haiku:
             mock_haiku.return_value = '{"contradicted": [0, 2]}'
-            result = verify_conflicts_with_llm("actually stop using X and Z", candidates, config)
+            result = verify_conflicts_with_llm(
+                "actually stop using X and Z", candidates, config
+            )
         assert result == ["obs::old1", "obs::old3"]
 
     def test_fallback_on_failure(self):
@@ -304,7 +311,9 @@ class TestMarkSuperseded:
         collection.upsert(
             ids=["obs::old1"],
             documents=["old content"],
-            metadatas=[{"tier": "chromadb", "type": "observation", "source": "auto-extract"}],
+            metadatas=[
+                {"tier": "chromadb", "type": "observation", "source": "auto-extract"}
+            ],
         )
         result = mark_superseded("obs::old1", "obs::new1")
         assert result is True
@@ -320,13 +329,15 @@ class TestMarkSuperseded:
         collection.upsert(
             ids=["obs::old1"],
             documents=["old content"],
-            metadatas=[{
-                "tier": "chromadb",
-                "type": "observation",
-                "source": "auto-extract",
-                "tags": "foo,bar",
-                "importance_score": "0.8",
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "source": "auto-extract",
+                    "tags": "foo,bar",
+                    "importance_score": "0.8",
+                }
+            ],
         )
         mark_superseded("obs::old1", "obs::new1")
 
@@ -353,7 +364,9 @@ class TestCrossTypeConflict:
         collection.upsert(
             ids=["pattern::use-singleton"],
             documents=["Use singleton pattern for database connections"],
-            metadatas=[{"tier": "chromadb", "type": "pattern", "namespace": "pattern::"}],
+            metadatas=[
+                {"tier": "chromadb", "type": "pattern", "namespace": "pattern::"}
+            ],
         )
         # The candidate finder queries all tier=chromadb, so patterns are included
         config = {
@@ -376,7 +389,9 @@ class TestCrossTypeConflict:
         collection.upsert(
             ids=["decision::use-redux"],
             documents=["Decided to use Redux for state management"],
-            metadatas=[{"tier": "chromadb", "type": "decision", "namespace": "decision::"}],
+            metadatas=[
+                {"tier": "chromadb", "type": "decision", "namespace": "decision::"}
+            ],
         )
         config = {
             "similarity_threshold": 0.0,
@@ -398,17 +413,22 @@ class TestCrossTypeConflict:
 class TestDetectConflicts:
 
     def test_disabled(self, mock_config):
-        mock_config.set(memory={
-            "conflict_detection": {"enabled": False},
-        })
+        mock_config.set(
+            memory={
+                "conflict_detection": {"enabled": False},
+            }
+        )
         from tools.config import clear_config_cache
+
         clear_config_cache()
         result = detect_conflicts("obs::new1", "actually stop doing X")
         assert result == []
 
     def test_no_negation(self, mock_config):
         """Content without negation signals skips entirely."""
-        result = detect_conflicts("obs::new1", "User worked on the API integration today")
+        result = detect_conflicts(
+            "obs::new1", "User worked on the API integration today"
+        )
         assert result == []
 
     def test_rule_based_pipeline(self, mock_config):
@@ -432,15 +452,23 @@ class TestDetectConflicts:
     @patch("tools.conflict.verify_conflicts_with_llm")
     @patch("tools.conflict.find_conflict_candidates")
     def test_with_llm(self, mock_find, mock_verify, mock_config):
-        mock_config.set(memory={
-            "conflict_detection": {"enabled": True, "use_llm": True},
-        })
+        mock_config.set(
+            memory={
+                "conflict_detection": {"enabled": True, "use_llm": True},
+            }
+        )
         from tools.config import clear_config_cache
+
         clear_config_cache()
 
         mock_find.return_value = [
             {"id": "obs::old1", "content": "use X", "similarity": 0.8, "jaccard": 0.2},
-            {"id": "obs::old2", "content": "use Y", "similarity": 0.75, "jaccard": 0.15},
+            {
+                "id": "obs::old2",
+                "content": "use Y",
+                "similarity": 0.75,
+                "jaccard": 0.15,
+            },
         ]
         # LLM says only old1 is contradicted
         mock_verify.return_value = ["obs::old1"]
@@ -458,7 +486,9 @@ class TestDetectConflicts:
             metadatas=[{"tier": "chromadb", "type": "observation"}],
         )
 
-        result = detect_conflicts("obs::new1", "actually stop using X, it causes issues")
+        result = detect_conflicts(
+            "obs::new1", "actually stop using X, it causes issues"
+        )
 
         assert "obs::old1" in result
         assert "obs::old2" not in result
@@ -480,19 +510,27 @@ class TestFilterSuperseded:
         collection.upsert(
             ids=["obs::active"],
             documents=["active observation"],
-            metadatas=[{
-                "tier": "chromadb", "type": "observation",
-                "namespace": "obs::", "created_at": now,
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "namespace": "obs::",
+                    "created_at": now,
+                }
+            ],
         )
         collection.upsert(
             ids=["obs::stale"],
             documents=["stale observation"],
-            metadatas=[{
-                "tier": "chromadb", "type": "observation",
-                "namespace": "obs::", "created_at": now,
-                "status": "superseded",
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "namespace": "obs::",
+                    "created_at": now,
+                    "status": "superseded",
+                }
+            ],
         )
 
         recent = _fetch_recent_observations(lookback_minutes=60)
@@ -510,19 +548,27 @@ class TestFilterSuperseded:
         collection.upsert(
             ids=["obs::active"],
             documents=["Python error handling best practices"],
-            metadatas=[{
-                "tier": "chromadb", "type": "observation",
-                "namespace": "obs::", "updated_at": now,
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "namespace": "obs::",
+                    "updated_at": now,
+                }
+            ],
         )
         collection.upsert(
             ids=["obs::stale"],
             documents=["Python error handling best practices outdated version"],
-            metadatas=[{
-                "tier": "chromadb", "type": "observation",
-                "namespace": "obs::", "updated_at": now,
-                "status": "superseded",
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "namespace": "obs::",
+                    "updated_at": now,
+                    "status": "superseded",
+                }
+            ],
         )
 
         result = semantic_context("Python error handling", threshold=0.0, budget=8000)
@@ -540,10 +586,14 @@ class TestFilterSuperseded:
         collection.upsert(
             ids=["obs::legacy"],
             documents=["legacy observation without status field"],
-            metadatas=[{
-                "tier": "chromadb", "type": "observation",
-                "namespace": "obs::", "created_at": now,
-            }],
+            metadatas=[
+                {
+                    "tier": "chromadb",
+                    "type": "observation",
+                    "namespace": "obs::",
+                    "created_at": now,
+                }
+            ],
         )
 
         recent = _fetch_recent_observations(lookback_minutes=60)

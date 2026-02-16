@@ -1,4 +1,5 @@
 """Tests for config verification."""
+
 import pytest
 from tools.config import verify_config, get_verified_vault_path
 
@@ -65,6 +66,7 @@ class TestGetVerifiedVaultPath:
     def test_expands_home_directory(self, mock_config):
         """Should expand ~ in vault path."""
         import os
+
         home = os.path.expanduser("~")
         mock_config.set(vault_path="~/test_vault_12345")
 
@@ -250,7 +252,9 @@ class TestEnvVarOverrides:
         jarvis_home = tmp_path / "custom_jarvis"
         jarvis_home.mkdir()
         config_file = jarvis_home / "config.json"
-        config_file.write_text('{"vault_path": "/custom/vault", "vault_confirmed": true}')
+        config_file.write_text(
+            '{"vault_path": "/custom/vault", "vault_confirmed": true}'
+        )
 
         monkeypatch.setenv("JARVIS_HOME", str(jarvis_home))
 
@@ -259,7 +263,9 @@ class TestEnvVarOverrides:
 
         config_module._config_cache = None
 
-    def test_jarvis_vault_path_overrides_config(self, tmp_path, mock_config, monkeypatch):
+    def test_jarvis_vault_path_overrides_config(
+        self, tmp_path, mock_config, monkeypatch
+    ):
         """JARVIS_VAULT_PATH env var should override vault_path from config."""
         from tools.config import get_vault_path
 
@@ -282,7 +288,9 @@ class TestEnvVarOverrides:
         path = get_vault_path()
         assert path == str(mock_config.vault_path)
 
-    def test_docker_mode_skips_vault_confirmed(self, tmp_path, mock_config, monkeypatch):
+    def test_docker_mode_skips_vault_confirmed(
+        self, tmp_path, mock_config, monkeypatch
+    ):
         """In Docker mode (JARVIS_VAULT_PATH set), vault_confirmed is not required."""
         from tools.config import verify_config
 

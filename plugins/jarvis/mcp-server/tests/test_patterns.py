@@ -1,4 +1,5 @@
 """Tests for pattern detection module."""
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
@@ -78,9 +79,7 @@ class TestExtractSignature:
 
     def test_combined_sources(self):
         sig = extract_signature(
-            "Fixed error handling",
-            tags=["bugfix"],
-            title="Config error"
+            "Fixed error handling", tags=["bugfix"], title="Config error"
         )
         assert "fixed" in sig
         assert "error" in sig
@@ -383,7 +382,7 @@ class TestPromotion:
             "content": "Existing pattern",
             "metadata": {
                 "signature_tokens": "config,error,handling,module",
-            }
+            },
         }
 
         with patch("tools.patterns.tier2_list") as mock_list:
@@ -561,8 +560,16 @@ class TestScanPipeline:
             mock_list.return_value = {
                 "success": True,
                 "documents": [
-                    {"id": "obs::new", "content": "new", "metadata": {"created_at": recent}},
-                    {"id": "obs::old", "content": "old", "metadata": {"created_at": old}},
+                    {
+                        "id": "obs::new",
+                        "content": "new",
+                        "metadata": {"created_at": recent},
+                    },
+                    {
+                        "id": "obs::old",
+                        "content": "old",
+                        "metadata": {"created_at": old},
+                    },
                 ],
             }
             result = _fetch_recent_observations(lookback_minutes=10)
@@ -604,6 +611,7 @@ class TestPatternDetectionConfig:
 
     def test_defaults(self, mock_config):
         from tools.config import get_pattern_detection_config
+
         config = get_pattern_detection_config()
         assert config["enabled"] is True
         assert config["scan_interval_seconds"] == 300
@@ -618,12 +626,14 @@ class TestPatternDetectionConfig:
         from tools.config import get_pattern_detection_config
         import tools.config as config_module
 
-        mock_config.set(memory={
-            "pattern_detection": {
-                "enabled": False,
-                "promotion_threshold": 5,
+        mock_config.set(
+            memory={
+                "pattern_detection": {
+                    "enabled": False,
+                    "promotion_threshold": 5,
+                }
             }
-        })
+        )
         config = get_pattern_detection_config()
         assert config["enabled"] is False
         assert config["promotion_threshold"] == 5
@@ -641,6 +651,7 @@ class TestBackgroundTaskRegistry:
 
     def test_registry_includes_pattern_detection(self):
         from server import get_background_tasks
+
         tasks = get_background_tasks()
         assert len(tasks) >= 1, "Registry must include at least pattern_detection_loop"
         # Verify the coroutine is from the patterns module

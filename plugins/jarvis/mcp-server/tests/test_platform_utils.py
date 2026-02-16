@@ -1,4 +1,5 @@
 """Unit tests for platform_utils module."""
+
 import os
 import pytest
 import platform
@@ -68,35 +69,35 @@ class TestVersion:
 class TestOSDetection:
     """Tests for OS detection."""
 
-    @patch('platform.system')
+    @patch("platform.system")
     def test_detect_macos(self, mock_system):
         """Test macOS detection."""
         mock_system.return_value = "Darwin"
         assert detect_os() == "macOS"
 
-    @patch('platform.system')
+    @patch("platform.system")
     def test_detect_windows(self, mock_system):
         """Test Windows detection."""
         mock_system.return_value = "Windows"
         assert detect_os() == "Windows"
 
-    @patch('platform.system')
-    @patch('tools.platform_utils._is_wsl')
+    @patch("platform.system")
+    @patch("tools.platform_utils._is_wsl")
     def test_detect_linux(self, mock_is_wsl, mock_system):
         """Test Linux detection (not WSL)."""
         mock_system.return_value = "Linux"
         mock_is_wsl.return_value = False
         assert detect_os() == "Linux"
 
-    @patch('platform.system')
-    @patch('tools.platform_utils._is_wsl')
+    @patch("platform.system")
+    @patch("tools.platform_utils._is_wsl")
     def test_detect_wsl(self, mock_is_wsl, mock_system):
         """Test WSL detection."""
         mock_system.return_value = "Linux"
         mock_is_wsl.return_value = True
         assert detect_os() == "WSL"
 
-    @patch('platform.system')
+    @patch("platform.system")
     def test_detect_unknown(self, mock_system):
         """Test unknown OS."""
         mock_system.return_value = "FreeBSD"
@@ -108,13 +109,16 @@ class TestOSDetection:
         assert _is_wsl() == True
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch('builtins.open', mock_open(read_data="Linux version 5.10.16.3-microsoft-standard-WSL2"))
+    @patch(
+        "builtins.open",
+        mock_open(read_data="Linux version 5.10.16.3-microsoft-standard-WSL2"),
+    )
     def test_is_wsl_proc_version(self):
         """Test WSL detection via /proc/version."""
         assert _is_wsl() == True
 
     @patch.dict(os.environ, {}, clear=True)
-    @patch('builtins.open', mock_open(read_data="Linux version 5.15.0-1-amd64"))
+    @patch("builtins.open", mock_open(read_data="Linux version 5.15.0-1-amd64"))
     def test_is_not_wsl(self):
         """Test non-WSL Linux."""
         assert _is_wsl() == False
@@ -123,7 +127,7 @@ class TestOSDetection:
 class TestCommandDetection:
     """Tests for command finding."""
 
-    @patch('shutil.which')
+    @patch("shutil.which")
     def test_which_found_in_path(self, mock_which):
         """Test command found in standard PATH."""
         mock_which.return_value = "/usr/bin/git"
@@ -131,38 +135,42 @@ class TestCommandDetection:
         assert result == "/usr/bin/git"
         mock_which.assert_called_once_with("git")
 
-    @patch('shutil.which')
+    @patch("shutil.which")
     def test_which_not_found_no_enrichment(self, mock_which):
         """Test command not found without enrichment."""
         mock_which.return_value = None
         result = which("uv", enriched=False)
         assert result is None
 
-    @patch('shutil.which')
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.is_file')
+    @patch("shutil.which")
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.is_file")
     def test_which_found_in_enriched_path(self, mock_is_file, mock_exists, mock_which):
         """Test command found in enriched paths."""
         mock_which.return_value = None
         mock_exists.return_value = True
         mock_is_file.return_value = True
 
-        with patch('tools.platform_utils._get_enriched_paths') as mock_paths:
+        with patch("tools.platform_utils._get_enriched_paths") as mock_paths:
             mock_paths.return_value = [Path.home() / ".local" / "bin"]
             result = which("uv", enriched=True)
             assert result is not None
 
-    @patch('tools.platform_utils.which')
+    @patch("tools.platform_utils.which")
     def test_which_python_prefers_python3(self, mock_which):
         """Test which_python prefers python3."""
-        mock_which.side_effect = lambda cmd, enriched: "/usr/bin/python3" if cmd == "python3" else None
+        mock_which.side_effect = lambda cmd, enriched: (
+            "/usr/bin/python3" if cmd == "python3" else None
+        )
         result = which_python()
         assert result == "/usr/bin/python3"
 
-    @patch('tools.platform_utils.which')
+    @patch("tools.platform_utils.which")
     def test_which_python_fallback_to_python(self, mock_which):
         """Test which_python falls back to python."""
-        mock_which.side_effect = lambda cmd, enriched: "/usr/bin/python" if cmd == "python" else None
+        mock_which.side_effect = lambda cmd, enriched: (
+            "/usr/bin/python" if cmd == "python" else None
+        )
         result = which_python()
         assert result == "/usr/bin/python"
 
@@ -170,9 +178,9 @@ class TestCommandDetection:
 class TestEnrichedPaths:
     """Tests for enriched PATH generation."""
 
-    @patch('platform.system')
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.is_dir')
+    @patch("platform.system")
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.is_dir")
     def test_get_enriched_paths_unix(self, mock_is_dir, mock_exists, mock_system):
         """Test enriched paths on Unix systems."""
         mock_system.return_value = "Linux"
@@ -186,13 +194,16 @@ class TestEnrichedPaths:
         assert any(".local/bin" in p for p in path_strings)
         assert any(".cargo/bin" in p for p in path_strings)
 
-    @patch('platform.system')
-    @patch.dict(os.environ, {
-        "LOCALAPPDATA": "C:\\Users\\Test\\AppData\\Local",
-        "PROGRAMFILES": "C:\\Program Files"
-    })
-    @patch('pathlib.Path.exists')
-    @patch('pathlib.Path.is_dir')
+    @patch("platform.system")
+    @patch.dict(
+        os.environ,
+        {
+            "LOCALAPPDATA": "C:\\Users\\Test\\AppData\\Local",
+            "PROGRAMFILES": "C:\\Program Files",
+        },
+    )
+    @patch("pathlib.Path.exists")
+    @patch("pathlib.Path.is_dir")
     def test_get_enriched_paths_windows(self, mock_is_dir, mock_exists, mock_system):
         """Test enriched paths on Windows."""
         mock_system.return_value = "Windows"
@@ -293,7 +304,7 @@ class TestInstallInstructions:
         assert "macOS" in instructions
         assert "Install unknown-tool" in instructions["macOS"]
 
-    @patch('tools.platform_utils.detect_os')
+    @patch("tools.platform_utils.detect_os")
     def test_format_error_message_macos(self, mock_detect_os):
         """Test error message formatting on macOS."""
         mock_detect_os.return_value = "macOS"
@@ -301,7 +312,7 @@ class TestInstallInstructions:
         assert "✗ python: not found" in message
         assert "brew install" in message or "python.org" in message
 
-    @patch('tools.platform_utils.detect_os')
+    @patch("tools.platform_utils.detect_os")
     def test_format_error_message_windows(self, mock_detect_os):
         """Test error message formatting on Windows."""
         mock_detect_os.return_value = "Windows"

@@ -8,6 +8,7 @@ The detection loop runs as a background asyncio task alongside the MCP server.
 All ChromaDB operations are synchronous, so each scan is offloaded to a thread
 via ``asyncio.to_thread`` to keep the event loop responsive.
 """
+
 import asyncio
 import hashlib
 import logging
@@ -22,35 +23,184 @@ logger = logging.getLogger("jarvis-core")
 
 # ── Stop words (filtered from signatures) ────────────────────────────────────
 
-STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "was", "were", "are", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "must",
-    "i", "me", "my", "we", "our", "you", "your", "he", "she", "it",
-    "they", "them", "this", "that", "these", "those", "what", "which",
-    "who", "whom", "how", "when", "where", "why",
-    "of", "in", "to", "for", "with", "on", "at", "from", "by", "as",
-    "into", "about", "between", "through", "during", "before", "after",
-    "above", "below", "up", "down", "out", "off", "over", "under",
-    "and", "but", "or", "nor", "not", "no", "so", "if", "then", "than",
-    "too", "very", "just", "also", "more", "most", "some", "any", "all",
-    "each", "every", "both", "few", "many", "much", "own", "other",
-    "such", "only", "same", "here", "there", "again", "once",
-})
+STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "was",
+        "were",
+        "are",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "need",
+        "must",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "how",
+        "when",
+        "where",
+        "why",
+        "of",
+        "in",
+        "to",
+        "for",
+        "with",
+        "on",
+        "at",
+        "from",
+        "by",
+        "as",
+        "into",
+        "about",
+        "between",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "up",
+        "down",
+        "out",
+        "off",
+        "over",
+        "under",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "not",
+        "no",
+        "so",
+        "if",
+        "then",
+        "than",
+        "too",
+        "very",
+        "just",
+        "also",
+        "more",
+        "most",
+        "some",
+        "any",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "many",
+        "much",
+        "own",
+        "other",
+        "such",
+        "only",
+        "same",
+        "here",
+        "there",
+        "again",
+        "once",
+    }
+)
 
 # ── Pattern type keyword sets ────────────────────────────────────────────────
 
 PATTERN_KEYWORDS: dict[str, set[str]] = {
-    "bug": {"error", "bug", "fix", "nil", "null", "crash", "exception",
-            "failure", "broken", "issue", "wrong", "unexpected", "traceback"},
-    "refactor": {"refactor", "split", "extract", "rename", "consolidate",
-                 "simplify", "cleanup", "reorganize", "decouple", "modularize"},
-    "architecture": {"interface", "abstraction", "pattern", "design", "module",
-                     "layer", "boundary", "separation", "dependency", "coupling"},
-    "anti-pattern": {"workaround", "hack", "todo", "fixme", "technical-debt",
-                     "hardcode", "magic-number", "duplicate", "copy-paste"},
-    "best-practice": {"test", "lint", "validate", "document", "typing",
-                      "coverage", "logging", "monitoring", "review"},
+    "bug": {
+        "error",
+        "bug",
+        "fix",
+        "nil",
+        "null",
+        "crash",
+        "exception",
+        "failure",
+        "broken",
+        "issue",
+        "wrong",
+        "unexpected",
+        "traceback",
+    },
+    "refactor": {
+        "refactor",
+        "split",
+        "extract",
+        "rename",
+        "consolidate",
+        "simplify",
+        "cleanup",
+        "reorganize",
+        "decouple",
+        "modularize",
+    },
+    "architecture": {
+        "interface",
+        "abstraction",
+        "pattern",
+        "design",
+        "module",
+        "layer",
+        "boundary",
+        "separation",
+        "dependency",
+        "coupling",
+    },
+    "anti-pattern": {
+        "workaround",
+        "hack",
+        "todo",
+        "fixme",
+        "technical-debt",
+        "hardcode",
+        "magic-number",
+        "duplicate",
+        "copy-paste",
+    },
+    "best-practice": {
+        "test",
+        "lint",
+        "validate",
+        "document",
+        "typing",
+        "coverage",
+        "logging",
+        "monitoring",
+        "review",
+    },
 }
 
 # ── Token extraction regex ───────────────────────────────────────────────────
@@ -60,15 +210,17 @@ _TOKEN_RE = re.compile(r"[a-z][a-z0-9_-]{1,}")
 
 # ── Data structures ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class PatternCandidate:
     """An in-memory cluster of similar observations not yet promoted."""
-    key: str                          # SHA-256 of sorted signature tokens
-    signature: frozenset              # immutable token set (for hashing)
+
+    key: str  # SHA-256 of sorted signature tokens
+    signature: frozenset  # immutable token set (for hashing)
     pattern_type: str
     frequency: int
-    first_seen: str                   # ISO timestamp
-    last_seen: str                    # ISO timestamp
+    first_seen: str  # ISO timestamp
+    last_seen: str  # ISO timestamp
     observation_ids: list = field(default_factory=list)
     title: str = ""
 
@@ -79,8 +231,10 @@ _candidates: dict[str, PatternCandidate] = {}
 
 # ── Pure functions ───────────────────────────────────────────────────────────
 
-def extract_signature(content: str, tags: Optional[list] = None,
-                      title: Optional[str] = None) -> set[str]:
+
+def extract_signature(
+    content: str, tags: Optional[list] = None, title: Optional[str] = None
+) -> set[str]:
     """Extract a token set from observation content, tags, and title.
 
     Tokenizes to lowercase alphanumeric tokens, strips stop words,
@@ -125,7 +279,9 @@ def classify_pattern_type(signature: set[str], content: str = "") -> str:
     best_type = "general"
     best_count = 0
 
-    combined = signature | set(_TOKEN_RE.findall(content.lower())) if content else signature
+    combined = (
+        signature | set(_TOKEN_RE.findall(content.lower())) if content else signature
+    )
 
     for ptype, keywords in PATTERN_KEYWORDS.items():
         count = len(combined & keywords)
@@ -169,8 +325,10 @@ def _signature_key(signature: frozenset) -> str:
 
 # ── Candidate management ────────────────────────────────────────────────────
 
-def create_or_merge_candidate(signature: set[str], obs_id: str, obs_content: str,
-                              similarity_threshold: float) -> Optional[PatternCandidate]:
+
+def create_or_merge_candidate(
+    signature: set[str], obs_id: str, obs_content: str, similarity_threshold: float
+) -> Optional[PatternCandidate]:
     """Find the best matching candidate or create a new one.
 
     Returns the candidate that was created or merged into, or None if the
@@ -234,7 +392,8 @@ def cleanup_candidates(max_candidates: int, expiry_days: int) -> int:
 
     # Remove expired
     expired_keys = [
-        k for k, c in _candidates.items()
+        k
+        for k, c in _candidates.items()
         if datetime.fromisoformat(c.last_seen) < cutoff
     ]
     for k in expired_keys:
@@ -244,10 +403,7 @@ def cleanup_candidates(max_candidates: int, expiry_days: int) -> int:
     # LRU eviction if still over limit
     if len(_candidates) > max_candidates:
         # Sort by last_seen ascending (oldest first)
-        sorted_keys = sorted(
-            _candidates.keys(),
-            key=lambda k: _candidates[k].last_seen
-        )
+        sorted_keys = sorted(_candidates.keys(), key=lambda k: _candidates[k].last_seen)
         to_remove = len(_candidates) - max_candidates
         for k in sorted_keys[:to_remove]:
             del _candidates[k]
@@ -258,7 +414,10 @@ def cleanup_candidates(max_candidates: int, expiry_days: int) -> int:
 
 # ── Promotion ────────────────────────────────────────────────────────────────
 
-def _find_existing_pattern_match(signature: frozenset, merge_threshold: float) -> Optional[str]:
+
+def _find_existing_pattern_match(
+    signature: frozenset, merge_threshold: float
+) -> Optional[str]:
     """Check if a similar pattern already exists in ChromaDB.
 
     Returns the existing pattern's doc ID if Jaccard >= merge_threshold, else None.
@@ -292,7 +451,9 @@ def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> di
     # Check for existing similar pattern
     existing_id = _find_existing_pattern_match(candidate.signature, merge_threshold)
     if existing_id:
-        logger.info(f"Pattern candidate '{candidate.title}' matches existing {existing_id}, skipping")
+        logger.info(
+            f"Pattern candidate '{candidate.title}' matches existing {existing_id}, skipping"
+        )
         return {
             "success": True,
             "action": "merged",
@@ -337,6 +498,7 @@ def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> di
 
 
 # ── Scan pipeline ────────────────────────────────────────────────────────────
+
 
 def _fetch_recent_observations(lookback_minutes: int) -> list:
     """Fetch observations created within the lookback window."""
@@ -387,14 +549,15 @@ def scan_once(config: dict) -> dict:
             tags=tags,
             title=meta.get("title", ""),
         )
-        result = create_or_merge_candidate(sig, obs["id"], obs.get("content", ""), threshold)
+        result = create_or_merge_candidate(
+            sig, obs["id"], obs.get("content", ""), threshold
+        )
         if result:
             candidates_updated += 1
 
     # Check candidates for promotion
     to_promote = [
-        c for c in list(_candidates.values())
-        if c.frequency >= promotion_threshold
+        c for c in list(_candidates.values()) if c.frequency >= promotion_threshold
     ]
     for candidate in to_promote:
         result = promote_candidate(candidate, merge_threshold)

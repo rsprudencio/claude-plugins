@@ -75,8 +75,7 @@ class ChromaDBExplorer:
             sys.exit(1)
 
         self.client = chromadb.PersistentClient(
-            path=str(self.db_path),
-            settings=Settings(anonymized_telemetry=False)
+            path=str(self.db_path), settings=Settings(anonymized_telemetry=False)
         )
 
     def list_collections(self):
@@ -110,13 +109,15 @@ class ChromaDBExplorer:
             return default
 
     SORT_KEYS = {
-        "importance": lambda r: ChromaDBExplorer._safe_float(r["metadata"].get("importance_score")),
-        "size":       lambda r: len(r["document"]) if r["document"] else 0,
-        "type":       lambda r: str(r["metadata"].get("type", "")),
-        "tier":       lambda r: str(r["metadata"].get("tier", "")),
-        "created":    lambda r: str(r["metadata"].get("created_at", "")),
-        "id":         lambda r: r["id"],
-        "relevance":  lambda r: ChromaDBExplorer._safe_float(r.get("relevance")),
+        "importance": lambda r: ChromaDBExplorer._safe_float(
+            r["metadata"].get("importance_score")
+        ),
+        "size": lambda r: len(r["document"]) if r["document"] else 0,
+        "type": lambda r: str(r["metadata"].get("type", "")),
+        "tier": lambda r: str(r["metadata"].get("tier", "")),
+        "created": lambda r: str(r["metadata"].get("created_at", "")),
+        "id": lambda r: r["id"],
+        "relevance": lambda r: ChromaDBExplorer._safe_float(r.get("relevance")),
     }
 
     @staticmethod
@@ -130,7 +131,9 @@ class ChromaDBExplorer:
                 "document": documents[i] if documents else "",
             }
             if distances is not None:
-                row["relevance"] = (1 - distances[i]) if distances[i] is not None else None
+                row["relevance"] = (
+                    (1 - distances[i]) if distances[i] is not None else None
+                )
             rows.append(row)
         return rows
 
@@ -176,10 +179,10 @@ class ChromaDBExplorer:
             # Collapse whitespace for a clean single line
             flat = " ".join(document.split())
             if len(flat) > remaining:
-                preview = flat[:remaining - 1] + "\u2026"
+                preview = flat[: remaining - 1] + "\u2026"
             else:
                 preview = flat
-            print(f"{prefix}\"{preview}\"")
+            print(f'{prefix}"{preview}"')
         else:
             print(prefix.rstrip())
 
@@ -219,9 +222,15 @@ class ChromaDBExplorer:
 
         print()
 
-    def show_collection(self, name: str = "jarvis", limit: int = 20,
-                        full: bool = False, oneline: bool = False,
-                        sort_key: Optional[str] = None, reverse: bool = False):
+    def show_collection(
+        self,
+        name: str = "jarvis",
+        limit: int = 20,
+        full: bool = False,
+        oneline: bool = False,
+        sort_key: Optional[str] = None,
+        reverse: bool = False,
+    ):
         """Show documents in a collection."""
         try:
             coll = self.client.get_collection(name)
@@ -261,7 +270,9 @@ class ChromaDBExplorer:
             print(f"Error: Collection '{collection}' not found. {e}")
             return
 
-        results = coll.get(ids=[doc_id], include=["documents", "metadatas", "embeddings"])
+        results = coll.get(
+            ids=[doc_id], include=["documents", "metadatas", "embeddings"]
+        )
 
         if not results["ids"]:
             print(f"Document '{doc_id}' not found in collection '{collection}'")
@@ -283,9 +294,15 @@ class ChromaDBExplorer:
         print(document)
         print("-" * 60)
 
-    def search(self, query: str, collection: str = "jarvis", n_results: int = 5,
-               oneline: bool = False, sort_key: Optional[str] = None,
-               reverse: bool = False):
+    def search(
+        self,
+        query: str,
+        collection: str = "jarvis",
+        n_results: int = 5,
+        oneline: bool = False,
+        sort_key: Optional[str] = None,
+        reverse: bool = False,
+    ):
         """Semantic search in a collection."""
         try:
             coll = self.client.get_collection(collection)
@@ -296,7 +313,7 @@ class ChromaDBExplorer:
         results = coll.query(
             query_texts=[query],
             n_results=n_results,
-            include=["documents", "metadatas", "distances"]
+            include=["documents", "metadatas", "distances"],
         )
 
         if not oneline:
@@ -309,8 +326,10 @@ class ChromaDBExplorer:
             return
 
         rows = self._to_rows(
-            results["ids"][0], results["metadatas"][0],
-            results["documents"][0], results["distances"][0],
+            results["ids"][0],
+            results["metadatas"][0],
+            results["documents"][0],
+            results["distances"][0],
         )
         self._sort_rows(rows, sort_key, reverse)
 
@@ -328,64 +347,41 @@ def main():
     parser.add_argument(
         "--db-path",
         default="~/.jarvis/memory_db",
-        help="Path to ChromaDB database (default: ~/.jarvis/memory_db)"
+        help="Path to ChromaDB database (default: ~/.jarvis/memory_db)",
     )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List all collections"
-    )
+    parser.add_argument("--list", action="store_true", help="List all collections")
     parser.add_argument(
         "--show",
         metavar="COLLECTION",
-        help="Show documents in a collection (default: jarvis)"
+        help="Show documents in a collection (default: jarvis)",
+    )
+    parser.add_argument("--doc", metavar="DOC_ID", help="Show full document by ID")
+    parser.add_argument(
+        "--search", metavar="QUERY", help="Semantic search in collection"
     )
     parser.add_argument(
-        "--doc",
-        metavar="DOC_ID",
-        help="Show full document by ID"
+        "--collection", default="jarvis", help="Collection name (default: jarvis)"
     )
     parser.add_argument(
-        "--search",
-        metavar="QUERY",
-        help="Semantic search in collection"
+        "--limit", type=int, default=20, help="Limit results (default: 20)"
     )
     parser.add_argument(
-        "--collection",
-        default="jarvis",
-        help="Collection name (default: jarvis)"
+        "--full", action="store_true", help="Show full document content (no truncation)"
     )
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=20,
-        help="Limit results (default: 20)"
-    )
-    parser.add_argument(
-        "--full",
-        action="store_true",
-        help="Show full document content (no truncation)"
-    )
-    parser.add_argument(
-        "--oneline",
-        action="store_true",
-        help="Compact one-line-per-document view"
+        "--oneline", action="store_true", help="Compact one-line-per-document view"
     )
     parser.add_argument(
         "--sort",
         metavar="KEY",
         choices=list(ChromaDBExplorer.SORT_KEYS),
-        help="Sort results by: importance, size, type, tier, created, id, relevance"
+        help="Sort results by: importance, size, type, tier, created, id, relevance",
     )
     parser.add_argument(
-        "--reverse",
-        action="store_true",
-        help="Reverse sort order (descending)"
+        "--reverse", action="store_true", help="Reverse sort order (descending)"
     )
     parser.add_argument(
-        "--no-pager",
-        action="store_true",
-        help="Disable pager (less) for output"
+        "--no-pager", action="store_true", help="Disable pager (less) for output"
     )
 
     args = parser.parse_args()
@@ -396,20 +392,35 @@ def main():
         if args.list:
             explorer.list_collections()
         elif args.show:
-            explorer.show_collection(args.show, limit=args.limit, full=args.full,
-                                     oneline=args.oneline,
-                                     sort_key=args.sort, reverse=args.reverse)
+            explorer.show_collection(
+                args.show,
+                limit=args.limit,
+                full=args.full,
+                oneline=args.oneline,
+                sort_key=args.sort,
+                reverse=args.reverse,
+            )
         elif args.doc:
             explorer.show_document(args.doc, collection=args.collection)
         elif args.search:
-            explorer.search(args.search, collection=args.collection,
-                            n_results=args.limit, oneline=args.oneline,
-                            sort_key=args.sort, reverse=args.reverse)
+            explorer.search(
+                args.search,
+                collection=args.collection,
+                n_results=args.limit,
+                oneline=args.oneline,
+                sort_key=args.sort,
+                reverse=args.reverse,
+            )
         else:
             # Default: show jarvis collection
-            explorer.show_collection("jarvis", limit=args.limit, full=args.full,
-                                     oneline=args.oneline,
-                                     sort_key=args.sort, reverse=args.reverse)
+            explorer.show_collection(
+                "jarvis",
+                limit=args.limit,
+                full=args.full,
+                oneline=args.oneline,
+                sort_key=args.sort,
+                reverse=args.reverse,
+            )
 
 
 if __name__ == "__main__":

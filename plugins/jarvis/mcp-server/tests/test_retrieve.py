@@ -1,4 +1,5 @@
 """Tests for unified retrieve module — routing reads/searches."""
+
 import pytest
 from tools.retrieve import retrieve
 from tools.tier2 import tier2_write
@@ -180,7 +181,9 @@ class TestRetrieveList:
         result = retrieve(list_type="tier2", sort_by="importance_asc")
         assert result["success"]
         if result["total"] >= 2:
-            scores = [float(d["metadata"]["importance_score"]) for d in result["documents"]]
+            scores = [
+                float(d["metadata"]["importance_score"]) for d in result["documents"]
+            ]
             assert scores == sorted(scores)
 
 
@@ -206,14 +209,14 @@ class TestRetrieveIncludeContent:
         result = retrieve(list_type="tier2", include_content=True)
         assert result["success"]
         found = any(
-            doc.get("content") == "Tier2 visible"
-            for doc in result["documents"]
+            doc.get("content") == "Tier2 visible" for doc in result["documents"]
         )
         assert found, "Expected content when include_content=True"
 
     def test_memory_default_excludes_content(self, mock_config):
         """retrieve(list_type='memory') defaults include_content=False."""
         from tools.store import store
+
         store(content="Memory list test", type="memory", name="retrieve-list-test")
 
         result = retrieve(list_type="memory")
@@ -224,6 +227,7 @@ class TestRetrieveIncludeContent:
     def test_memory_include_content_true(self, mock_config):
         """retrieve(list_type='memory', include_content=True) includes content."""
         from tools.store import store
+
         store(content="Memory body here", type="memory", name="retrieve-content-test")
 
         result = retrieve(list_type="memory", include_content=True)

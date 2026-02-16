@@ -92,10 +92,30 @@ def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
 # --- Prompt Filtering ---
 
 _SKIP_PATTERNS = {
-    "yes", "no", "ok", "sure", "thanks", "thank you", "go ahead",
-    "done", "next", "continue", "correct", "right", "got it",
-    "sounds good", "perfect", "great", "fine", "agreed",
-    "yep", "nope", "nah", "yeah", "yup", "okay",
+    "yes",
+    "no",
+    "ok",
+    "sure",
+    "thanks",
+    "thank you",
+    "go ahead",
+    "done",
+    "next",
+    "continue",
+    "correct",
+    "right",
+    "got it",
+    "sounds good",
+    "perfect",
+    "great",
+    "fine",
+    "agreed",
+    "yep",
+    "nope",
+    "nah",
+    "yeah",
+    "yup",
+    "okay",
 }
 
 
@@ -125,7 +145,10 @@ def _should_skip_prompt(query: str) -> Tuple[bool, str]:
         return True, "code_block"
 
     # Auto-extract Haiku prompt (fired via `claude -p` subprocess)
-    if "You are analyzing a conversation turn between a user and an AI assistant" in stripped[:100]:
+    if (
+        "You are analyzing a conversation turn between a user and an AI assistant"
+        in stripped[:100]
+    ):
         return True, "auto_extract_prompt"
 
     return False, ""
@@ -133,12 +156,15 @@ def _should_skip_prompt(query: str) -> Tuple[bool, str]:
 
 # --- Prompt Extraction from Hook JSON ---
 
+
 def _extract_prompt(hook_json: str) -> str:
     """Extract prompt text from UserPromptSubmit hook input JSON."""
     try:
         data = json.loads(hook_json)
         # Try known key names for the prompt text
-        prompt = data.get("prompt") or data.get("user_prompt") or data.get("message") or ""
+        prompt = (
+            data.get("prompt") or data.get("user_prompt") or data.get("message") or ""
+        )
         if isinstance(prompt, dict):
             prompt = prompt.get("text", prompt.get("content", ""))
         return str(prompt)
@@ -147,6 +173,7 @@ def _extract_prompt(hook_json: str) -> str:
 
 
 # --- Output Formatting ---
+
 
 def _format_memories(matches: list, query_ms: float) -> str:
     """Format search results as XML for injection into Claude's context.
@@ -182,6 +209,7 @@ def _format_memories(matches: list, query_ms: float) -> str:
 
 # --- Main Entry Point ---
 
+
 def main():
     """Run per-prompt semantic search and output results to stdout."""
     if len(sys.argv) < 2:
@@ -216,6 +244,7 @@ def main():
     debug = False
     try:
         from tools.config import get_per_prompt_config
+
         config = get_per_prompt_config()
         debug = config.get("debug", False)
     except Exception:
@@ -269,14 +298,14 @@ def main():
         n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
         n_tier2 = len(matches) - n_vault
         budget = result.get("budget_used", {})
-        sources = " ".join(
-            f'{m["source"]}({m["relevance"]})'
-            for m in matches
+        sources = " ".join(f'{m["source"]}({m["relevance"]})' for m in matches)
+        _debug_log(
+            "FOUND",
+            f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
+            f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
+            prompt_text,
+            injected=output,
         )
-        _debug_log("FOUND",
-                   f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
-                   f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
-                   prompt_text, injected=output)
 
     if output:
         print(output)

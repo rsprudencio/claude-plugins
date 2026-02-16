@@ -1,4 +1,5 @@
 """Tests for todoist_api module (SDK-based)."""
+
 import json
 import os
 from datetime import date, timedelta
@@ -9,6 +10,7 @@ import pytest
 
 # Ensure the mcp-server directory is importable
 import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import todoist_api
@@ -17,6 +19,7 @@ import todoist_api
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_task(**kwargs):
     """Create a mock Task object."""
@@ -294,8 +297,7 @@ class TestAddTasks:
 
     def test_add_multiple(self, mock_api):
         mock_api.add_task.side_effect = [
-            make_task(id=f"new{i}", content=f"Task {i}")
-            for i in range(3)
+            make_task(id=f"new{i}", content=f"Task {i}") for i in range(3)
         ]
 
         tasks = [{"content": f"Task {i}"} for i in range(3)]
@@ -306,14 +308,18 @@ class TestAddTasks:
     def test_add_with_all_fields(self, mock_api):
         mock_api.add_task.return_value = make_task(id="new1", content="Work task")
 
-        result = todoist_api.add_tasks([{
-            "content": "Work task",
-            "description": "Details here",
-            "dueString": "tomorrow",
-            "priority": "p1",
-            "labels": ["work"],
-            "projectId": "proj1",
-        }])
+        result = todoist_api.add_tasks(
+            [
+                {
+                    "content": "Work task",
+                    "description": "Details here",
+                    "dueString": "tomorrow",
+                    "priority": "p1",
+                    "labels": ["work"],
+                    "projectId": "proj1",
+                }
+            ]
+        )
         assert result["success"] is True
         # Verify kwargs passed to SDK
         call_kwargs = mock_api.add_task.call_args[1]
@@ -352,10 +358,12 @@ class TestAddTasks:
             Exception("API error"),
         ]
 
-        result = todoist_api.add_tasks([
-            {"content": "OK"},
-            {"content": "Fail"},
-        ])
+        result = todoist_api.add_tasks(
+            [
+                {"content": "OK"},
+                {"content": "Fail"},
+            ]
+        )
         assert result["success"] is False
         assert result["created_count"] == 1
         assert result["error_count"] == 1
@@ -398,12 +406,18 @@ class TestCompleteTasks:
 
 class TestUpdateTasks:
     def test_update_labels(self, mock_api):
-        mock_api.update_task.return_value = make_task(id="t1", labels=["jarvis-ingested"])
+        mock_api.update_task.return_value = make_task(
+            id="t1", labels=["jarvis-ingested"]
+        )
 
-        result = todoist_api.update_tasks([{
-            "id": "t1",
-            "labels": ["jarvis-ingested"],
-        }])
+        result = todoist_api.update_tasks(
+            [
+                {
+                    "id": "t1",
+                    "labels": ["jarvis-ingested"],
+                }
+            ]
+        )
         assert result["success"] is True
         assert result["updated_count"] == 1
 
@@ -435,10 +449,12 @@ class TestUpdateTasks:
             Exception("API error"),
         ]
 
-        result = todoist_api.update_tasks([
-            {"id": "t1", "content": "OK"},
-            {"id": "t2", "content": "Fail"},
-        ])
+        result = todoist_api.update_tasks(
+            [
+                {"id": "t1", "content": "OK"},
+                {"id": "t2", "content": "Fail"},
+            ]
+        )
         assert result["success"] is False
         assert result["updated_count"] == 1
 
@@ -516,7 +532,9 @@ class TestFindProjects:
 
 class TestAddProjects:
     def test_add_single(self, mock_api):
-        mock_api.add_project.return_value = make_project(id="new1", name="MyProject", is_inbox_project=False)
+        mock_api.add_project.return_value = make_project(
+            id="new1", name="MyProject", is_inbox_project=False
+        )
 
         result = todoist_api.add_projects([{"name": "MyProject"}])
         assert result["success"] is True
@@ -528,22 +546,28 @@ class TestAddProjects:
             for i in range(2)
         ]
 
-        result = todoist_api.add_projects([
-            {"name": "Proj0"},
-            {"name": "Proj1"},
-        ])
+        result = todoist_api.add_projects(
+            [
+                {"name": "Proj0"},
+                {"name": "Proj1"},
+            ]
+        )
         assert result["success"] is True
         assert result["created_count"] == 2
 
     def test_add_with_parent(self, mock_api):
-        mock_api.add_project.return_value = make_project(id="sub1", name="Sub", is_inbox_project=False)
+        mock_api.add_project.return_value = make_project(
+            id="sub1", name="Sub", is_inbox_project=False
+        )
 
         todoist_api.add_projects([{"name": "Sub", "parentId": "parent1"}])
         call_kwargs = mock_api.add_project.call_args[1]
         assert call_kwargs["parent_id"] == "parent1"
 
     def test_add_with_view_style(self, mock_api):
-        mock_api.add_project.return_value = make_project(id="p1", name="Board", is_inbox_project=False)
+        mock_api.add_project.return_value = make_project(
+            id="p1", name="Board", is_inbox_project=False
+        )
 
         todoist_api.add_projects([{"name": "Board", "viewStyle": "board"}])
         call_kwargs = mock_api.add_project.call_args[1]
@@ -701,7 +725,9 @@ class TestHelpers:
         assert todoist_api._parse_duration("1.5h") == (90, "minute")
 
     def test_task_to_dict(self):
-        task = make_task(id="t1", content="Hello", due=make_due(), duration=make_duration(30))
+        task = make_task(
+            id="t1", content="Hello", due=make_due(), duration=make_duration(30)
+        )
         d = todoist_api._task_to_dict(task)
         assert d["id"] == "t1"
         assert d["content"] == "Hello"
@@ -730,6 +756,7 @@ class TestServerHandlers:
     def test_all_tools_have_handlers(self):
         """Every tool in TOOLS list has a corresponding handler."""
         import server
+
         tool_names = {t.name for t in server.TOOLS}
         handler_names = set(server.HANDLERS.keys())
         assert tool_names == handler_names
@@ -737,11 +764,13 @@ class TestServerHandlers:
     def test_tool_count(self):
         """Exactly 9 tools defined."""
         import server
+
         assert len(server.TOOLS) == 9
 
     def test_handler_unknown_tool(self):
         """Unknown tool name returns error."""
         import server
+
         handler = server.HANDLERS.get("nonexistent")
         assert handler is None
 

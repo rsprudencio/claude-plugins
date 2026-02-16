@@ -6,6 +6,7 @@ Routes reads based on parameters:
 - name -> memory read by name (memory_crud.memory_read)
 - list_type -> list content (tier2_list or memory_list)
 """
+
 from typing import Optional
 
 
@@ -42,7 +43,7 @@ def retrieve(
         return {
             "success": False,
             "error": "Provide one of: query (search), id (read by ID), "
-                     "name (memory name), list_type ('tier2' or 'memory')",
+            "name (memory name), list_type ('tier2' or 'memory')",
         }
     if routing_params > 1:
         return {
@@ -53,6 +54,7 @@ def retrieve(
     # Route 1: Semantic search
     if query:
         from .query import query_vault
+
         return query_vault(query=query, n_results=n_results, filter=filter)
 
     # Route 2: ID-based read
@@ -62,42 +64,81 @@ def retrieve(
     # Route 3: Memory read by name
     if name:
         from .memory_crud import memory_read
+
         return memory_read(name=name, scope=scope, project=project)
 
     # Route 4: List content
     if list_type:
         return _list_content(
-            list_type=list_type, type_filter=type_filter,
-            min_importance=min_importance, source=source,
-            scope=scope, project=project,
-            tag=tag, importance=importance, limit=limit,
-            sort_by=sort_by, include_content=include_content,
+            list_type=list_type,
+            type_filter=type_filter,
+            min_importance=min_importance,
+            source=source,
+            scope=scope,
+            project=project,
+            tag=tag,
+            importance=importance,
+            limit=limit,
+            sort_by=sort_by,
+            include_content=include_content,
         )
 
     return {"success": False, "error": "No valid routing parameter provided"}
 
 
 def _read_by_id(doc_id: str, include_metadata: bool):
-    """Route ID-based reads by prefix."""
+    """Route ID-based reads by prefix and normalize the response format."""
     from .namespaces import get_tier, TIER_CHROMADB
 
     tier = get_tier(doc_id)
     if tier == TIER_CHROMADB:
         # Tier 2: use tier2_read (increments retrieval_count)
         from .tier2 import tier2_read
+
         return tier2_read(doc_id)
     else:
         # Tier 1: use doc_read for ChromaDB-indexed content
         from .query import doc_read
-        return doc_read(ids=[doc_id], include_metadata=include_metadata)
+
+        result = doc_read(ids=[doc_id], include_metadata=include_metadata)
+
+        # Normalize to same format as tier2_read for single-ID lookup
+        if result.get("success") and result.get("documents"):
+            doc = result["documents"][0]
+            return {
+                "success": True,
+                "found": True,
+                "id": doc.get("id"),
+                "path": doc.get("path"),
+                "content": doc.get("document"),
+                "metadata": doc.get("metadata"),
+            }
+        else:
+            return {
+                "success": result.get("success", False),
+                "found": False,
+                "id": doc_id,
+                "error": result.get("error") if not result.get("documents") else None,
+            }
 
 
-def _list_content(list_type, type_filter, min_importance, source,
-                  scope, project, tag, importance, limit,
-                  sort_by="importance_desc", include_content=False):
+def _list_content(
+    list_type,
+    type_filter,
+    min_importance,
+    source,
+    scope,
+    project,
+    tag,
+    importance,
+    limit,
+    sort_by="importance_desc",
+    include_content=False,
+):
     """Route list operations."""
     if list_type == "tier2":
         from .tier2 import tier2_list
+
         return tier2_list(
             content_type=type_filter,
             min_importance=min_importance,
@@ -108,9 +149,12 @@ def _list_content(list_type, type_filter, min_importance, source,
         )
     elif list_type == "memory":
         from .memory_crud import memory_list
+
         return memory_list(
-            scope=scope, project=project,
-            tag=tag, importance=importance,
+            scope=scope,
+            project=project,
+            tag=tag,
+            importance=importance,
             include_content=include_content,
         )
     else:

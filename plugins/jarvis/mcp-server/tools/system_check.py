@@ -2,6 +2,7 @@
 
 Checks all prerequisites for running Jarvis on Windows, Linux, and macOS.
 """
+
 import sys
 import subprocess
 import platform
@@ -27,7 +28,7 @@ def check_python_version() -> Tuple[bool, str, Dict]:
     required = (3, 10)
     # Handle both namedtuple (normal) and tuple (when mocked in tests)
     version_info = sys.version_info
-    if isinstance(version_info, tuple) and not hasattr(version_info, 'major'):
+    if isinstance(version_info, tuple) and not hasattr(version_info, "major"):
         major, minor, micro = version_info[0], version_info[1], version_info[2]
     else:
         major, minor, micro = version_info.major, version_info.minor, version_info.micro
@@ -64,10 +65,7 @@ def check_uv() -> Tuple[bool, str, Dict]:
     if uvx_path:
         try:
             result = subprocess.run(
-                [uvx_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                [uvx_path, "--version"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 version = extract_version(result.stdout)
@@ -103,17 +101,16 @@ def check_git() -> Tuple[bool, str, Dict]:
     if git_path:
         try:
             result = subprocess.run(
-                [git_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                [git_path, "--version"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 version = extract_version(result.stdout)
                 if version:
                     details["version"] = str(version)
                 else:
-                    details["version"] = result.stdout.strip().replace("git version ", "")
+                    details["version"] = result.stdout.strip().replace(
+                        "git version ", ""
+                    )
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
@@ -121,8 +118,6 @@ def check_git() -> Tuple[bool, str, Dict]:
         return True, f"✓ git found at {git_path}", details
     else:
         return False, format_error_message("git", "not found on PATH"), details
-
-
 
 
 def check_platform_specific() -> List[Tuple[bool, str, Dict]]:
@@ -138,40 +133,45 @@ def check_platform_specific() -> List[Tuple[bool, str, Dict]]:
         # Check for Git for Windows specifically
         git_for_windows = Path(r"C:\Program Files\Git\bin\git.exe")
         if git_for_windows.exists():
-            checks.append((
-                True,
-                f"✓ Git for Windows detected",
-                {"path": str(git_for_windows), "note": "Recommended for Windows"}
-            ))
+            checks.append(
+                (
+                    True,
+                    f"✓ Git for Windows detected",
+                    {"path": str(git_for_windows), "note": "Recommended for Windows"},
+                )
+            )
 
         # Warn about symlinks
-        checks.append((
-            True,
-            "⚠ Symbolic links require admin privileges on Windows (not critical)",
-            {"note": "Some advanced features may be limited"}
-        ))
+        checks.append(
+            (
+                True,
+                "⚠ Symbolic links require admin privileges on Windows (not critical)",
+                {"note": "Some advanced features may be limited"},
+            )
+        )
 
     elif system == "Darwin":
         # Check if Xcode command line tools are installed
         try:
             result = subprocess.run(
-                ["xcode-select", "-p"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["xcode-select", "-p"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                checks.append((
-                    True,
-                    "✓ Xcode Command Line Tools installed",
-                    {"path": result.stdout.strip()}
-                ))
+                checks.append(
+                    (
+                        True,
+                        "✓ Xcode Command Line Tools installed",
+                        {"path": result.stdout.strip()},
+                    )
+                )
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            checks.append((
-                True,
-                "○ Xcode Command Line Tools not detected (not critical)",
-                {"note": "Install with: xcode-select --install"}
-            ))
+            checks.append(
+                (
+                    True,
+                    "○ Xcode Command Line Tools not detected (not critical)",
+                    {"note": "Install with: xcode-select --install"},
+                )
+            )
 
     return checks
 
@@ -240,7 +240,7 @@ def run_system_check() -> Dict:
             "python": details["python"]["current"],
             "uv": bool(details["uv"]["uvx_path"] or details["uv"]["uv_path"]),
             "git": bool(details["git"]["git_path"]),
-        }
+        },
     }
 
 
@@ -268,7 +268,11 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
         if name in result["details"]:
             check_details = result["details"][name]
             if name == "python":
-                status = "✓" if check_details["current"] >= check_details["required"] else "✗"
+                status = (
+                    "✓"
+                    if check_details["current"] >= check_details["required"]
+                    else "✗"
+                )
                 lines.append(f"  {status} Python {check_details['current']}")
             elif name == "uv":
                 if check_details["uvx_path"]:
@@ -310,7 +314,9 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
     # Platform-specific notes
     if result["details"].get("platform_specific"):
         # Only show section if there are actual notes to display
-        notes_to_show = [note for note in result["details"]["platform_specific"] if "note" in note]
+        notes_to_show = [
+            note for note in result["details"]["platform_specific"] if "note" in note
+        ]
         if notes_to_show:
             lines.append("Platform Notes:")
             for note in notes_to_show:
@@ -320,9 +326,13 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
     # Verbose details
     if verbose:
         lines.append("Detailed Information:")
-        lines.append(f"  Platform: {result['details']['platform']['system']} {result['details']['platform']['release']}")
+        lines.append(
+            f"  Platform: {result['details']['platform']['system']} {result['details']['platform']['release']}"
+        )
         lines.append(f"  Machine: {result['details']['platform']['machine']}")
-        lines.append(f"  Python: {result['details']['python']['implementation']} {result['details']['python']['current']}")
+        lines.append(
+            f"  Python: {result['details']['python']['implementation']} {result['details']['python']['current']}"
+        )
         lines.append("")
 
     return "\n".join(lines)

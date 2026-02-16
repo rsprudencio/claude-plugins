@@ -187,18 +187,26 @@ _FILE_PATH_KEYS = ("file_path", "relative_path", "path")
 _MAX_FILE_PATHS = 10
 
 # Session-level extraction constants
-_FIRST_USER_MAX_CHARS = 300       # Cap for first user message context
-_MIN_CHARS_PER_TURN = 150         # Floor allocation per turn in budget
-_BUDGET_BASE = 2000               # Base chars (matches current single-turn behavior)
-_BUDGET_OUTPUT_SCALE = 0.04       # 4% of output tokens as chars (1% * 4 chars/token)
-_BUDGET_HARD_MAX = 8000           # Ceiling on content budget
-_MAX_OBSERVATIONS = 3             # Cap on observations per extraction
-_MAX_WORKLOGS = 1                 # One worklog per extraction (single primary task)
-_HAIKU_MAX_TOKENS = 1000          # Up from 800 (room for worklog in same response)
-_WORKLOG_ACTIVITY_TYPES = frozenset({
-    "coding", "debugging", "reviewing", "configuring",
-    "planning", "discussing", "researching", "other",
-})
+_FIRST_USER_MAX_CHARS = 300  # Cap for first user message context
+_MIN_CHARS_PER_TURN = 150  # Floor allocation per turn in budget
+_BUDGET_BASE = 2000  # Base chars (matches current single-turn behavior)
+_BUDGET_OUTPUT_SCALE = 0.04  # 4% of output tokens as chars (1% * 4 chars/token)
+_BUDGET_HARD_MAX = 8000  # Ceiling on content budget
+_MAX_OBSERVATIONS = 3  # Cap on observations per extraction
+_MAX_WORKLOGS = 1  # One worklog per extraction (single primary task)
+_HAIKU_MAX_TOKENS = 1000  # Up from 800 (room for worklog in same response)
+_WORKLOG_ACTIVITY_TYPES = frozenset(
+    {
+        "coding",
+        "debugging",
+        "reviewing",
+        "configuring",
+        "planning",
+        "discussing",
+        "researching",
+        "other",
+    }
+)
 
 
 def _parse_output_tokens(token_usage: str) -> int:
@@ -272,8 +280,9 @@ def write_watermark(session_id: str, last_line: int) -> None:
         raise
 
 
-def read_transcript_from(transcript_path: str, start_line: int,
-                         max_lines: int = 500) -> tuple[list[tuple[int, str]], int]:
+def read_transcript_from(
+    transcript_path: str, start_line: int, max_lines: int = 500
+) -> tuple[list[tuple[int, str]], int]:
     """Read transcript JSONL lines from a starting position.
 
     Args:
@@ -382,15 +391,17 @@ def parse_all_turns(indexed_lines: list[tuple[int, str]]) -> list[dict]:
             input_tokens = usage.get("input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
 
-            turns.append({
-                "user_text": pending_user,
-                "assistant_text": assistant_text,
-                "tool_names": unique_tools,
-                "token_usage": f"{input_tokens} in, {output_tokens} out",
-                "relevant_files": list(all_file_paths_ordered)[:_MAX_FILE_PATHS],
-                "start_line_idx": pending_user_line,
-                "end_line_idx": abs_idx,
-            })
+            turns.append(
+                {
+                    "user_text": pending_user,
+                    "assistant_text": assistant_text,
+                    "tool_names": unique_tools,
+                    "token_usage": f"{input_tokens} in, {output_tokens} out",
+                    "relevant_files": list(all_file_paths_ordered)[:_MAX_FILE_PATHS],
+                    "start_line_idx": pending_user_line,
+                    "end_line_idx": abs_idx,
+                }
+            )
 
             pending_user = None
             pending_user_line = -1
@@ -416,7 +427,9 @@ def pick_best_turn(turns: list[dict], min_chars: int = 200) -> dict | None:
     best_score = -1
 
     for turn in turns:
-        total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        total_chars = len(turn.get("user_text", "")) + len(
+            turn.get("assistant_text", "")
+        )
         if total_chars < min_chars:
             continue
 
@@ -446,7 +459,9 @@ def filter_substantive_turns(turns: list[dict], min_chars: int = 200) -> list[di
     """
     result = []
     for turn in turns:
-        total_chars = len(turn.get("user_text", "")) + len(turn.get("assistant_text", ""))
+        total_chars = len(turn.get("user_text", "")) + len(
+            turn.get("assistant_text", "")
+        )
         if total_chars >= min_chars:
             result.append(turn)
     return result
@@ -679,7 +694,6 @@ def check_substance(turn: dict, min_chars: int = 200) -> bool:
     return total_chars >= min_chars
 
 
-
 def truncate(text: str, max_chars: int) -> str:
     """Truncate text to max_chars with ellipsis if needed."""
     if len(text) <= max_chars:
@@ -704,7 +718,9 @@ def build_turn_prompt(turn: dict, project_name: str = "", git_branch: str = "") 
     tool_list = ", ".join(tool_names) if tool_names else "None"
     token_usage = turn.get("token_usage", "unknown")
     relevant_files = turn.get("relevant_files", [])
-    files_list = "\n".join(f"- {f}" for f in relevant_files) if relevant_files else "None"
+    files_list = (
+        "\n".join(f"- {f}" for f in relevant_files) if relevant_files else "None"
+    )
 
     return EXTRACTION_PROMPT.format(
         user_text=user_text,
@@ -717,9 +733,14 @@ def build_turn_prompt(turn: dict, project_name: str = "", git_branch: str = "") 
     )
 
 
-def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
-                         project_name: str = "", git_branch: str = "",
-                         workstreams: list[str] | None = None) -> str:
+def build_session_prompt(
+    turns: list[dict],
+    first_user_text: str,
+    budget: int,
+    project_name: str = "",
+    git_branch: str = "",
+    workstreams: list[str] | None = None,
+) -> str:
     """Build a session-level extraction prompt combining ALL turns.
 
     Two-pass budget allocation (truncate, never exclude):
@@ -779,7 +800,10 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
             assistant_text = turn.get("assistant_text", "")
         else:
             # Long turn — proportional share of remaining budget
-            share = max(_MIN_CHARS_PER_TURN, int(remaining_budget * raw_size / total_long_weight))
+            share = max(
+                _MIN_CHARS_PER_TURN,
+                int(remaining_budget * raw_size / total_long_weight),
+            )
             user_budget = max(50, share // 4)
             assistant_budget = share - user_budget
             user_text = truncate(turn.get("user_text", ""), user_budget)
@@ -796,7 +820,9 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
         out_tokens = _parse_output_tokens(turn.get("token_usage", ""))
         in_tokens = 0
         try:
-            in_tokens = int(turn.get("token_usage", "").split(",")[0].strip().split()[0])
+            in_tokens = int(
+                turn.get("token_usage", "").split(",")[0].strip().split()[0]
+            )
         except (ValueError, IndexError):
             pass
         total_input += in_tokens
@@ -806,7 +832,9 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
 
     # Use relevant_files from the last turn (already accumulated by parse_all_turns)
     last_turn_files = turns[-1].get("relevant_files", []) if turns else []
-    files_list = "\n".join(f"- {f}" for f in last_turn_files) if last_turn_files else "None"
+    files_list = (
+        "\n".join(f"- {f}" for f in last_turn_files) if last_turn_files else "None"
+    )
 
     all_tools_str = ", ".join(sorted(all_tools)) if all_tools else "None"
     total_usage = f"{total_input} in, {total_output} out"
@@ -830,12 +858,20 @@ def build_session_prompt(turns: list[dict], first_user_text: str, budget: int,
     )
 
 
-def _log_extraction(backend: str, input_tokens: int, output_tokens: int,
-                    observation_stored: bool = False, obs_id: str = None,
-                    importance: float = 0.0, tags: list = None,
-                    prompt: str = "", observation_content: str = "",
-                    scope: str = "", hook_input: str = "",
-                    debug: bool = False):
+def _log_extraction(
+    backend: str,
+    input_tokens: int,
+    output_tokens: int,
+    observation_stored: bool = False,
+    obs_id: str = None,
+    importance: float = 0.0,
+    tags: list = None,
+    prompt: str = "",
+    observation_content: str = "",
+    scope: str = "",
+    hook_input: str = "",
+    debug: bool = False,
+):
     """Log full extraction pipeline: raw hook input → prompt → result.
 
     Logs a structured multi-line block per extraction for complete auditability.
@@ -925,8 +961,7 @@ def _parse_haiku_text(text: str) -> dict | None:
     if text.startswith("```"):
         lines = text.split("\n")
         text = "\n".join(
-            line for line in lines
-            if not line.strip().startswith("```")
+            line for line in lines if not line.strip().startswith("```")
         ).strip()
 
     try:
@@ -935,7 +970,9 @@ def _parse_haiku_text(text: str) -> dict | None:
         return None
 
 
-def _extract_with_backend(backend_name: str, backend_fn, prompt: str) -> tuple[dict, int, int] | None:
+def _extract_with_backend(
+    backend_name: str, backend_fn, prompt: str
+) -> tuple[dict, int, int] | None:
     """Common wrapper for API/CLI extraction.
 
     Args:
@@ -973,7 +1010,9 @@ def _call_api_backend(prompt: str) -> tuple[str, int, int] | None:
         return None
 
     if anthropic is None:
-        print("anthropic package not installed, skipping API extraction", file=sys.stderr)
+        print(
+            "anthropic package not installed, skipping API extraction", file=sys.stderr
+        )
         return None
 
     try:
@@ -1015,7 +1054,9 @@ def _call_cli_backend(prompt: str) -> tuple[str, int, int] | None:
     """
     claude_bin = shutil.which("claude")
     if not claude_bin:
-        print("claude binary not found on PATH, skipping CLI extraction", file=sys.stderr)
+        print(
+            "claude binary not found on PATH, skipping CLI extraction", file=sys.stderr
+        )
         return None
 
     try:
@@ -1070,7 +1111,9 @@ def call_haiku_cli(prompt: str) -> tuple[dict, int, int] | None:
     return _extract_with_backend("CLI", _call_cli_backend, prompt)
 
 
-def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, str] | None:
+def call_haiku(
+    prompt: str, mode: str = "background"
+) -> tuple[dict, int, int, str] | None:
     """Route extraction to the appropriate backend based on mode.
 
     Args:
@@ -1098,10 +1141,18 @@ def call_haiku(prompt: str, mode: str = "background") -> tuple[dict, int, int, s
     return (*result, "CLI") if result else None
 
 
-def store_observation(content: str, importance_score: float, tags: list, source_label: str,
-                      project_path: str = "", git_branch: str = "",
-                      relevant_files: list | None = None, scope: str = "",
-                      session_id: str = "", transcript_line: int = -1) -> dict:
+def store_observation(
+    content: str,
+    importance_score: float,
+    tags: list,
+    source_label: str,
+    project_path: str = "",
+    git_branch: str = "",
+    relevant_files: list | None = None,
+    scope: str = "",
+    session_id: str = "",
+    transcript_line: int = -1,
+) -> dict:
     """Store an observation via tier2_write.
 
     Args:
@@ -1168,18 +1219,21 @@ def normalize_extraction_response(parsed: dict | None) -> list[dict]:
         if not isinstance(obs_list, list):
             return []
         return [
-            obs for obs in obs_list
+            obs
+            for obs in obs_list
             if isinstance(obs, dict) and obs.get("content", "").strip()
         ]
 
     # Legacy schema: {"has_observation": true, "content": ...}
     if parsed.get("has_observation") and parsed.get("content", "").strip():
-        return [{
-            "content": parsed["content"],
-            "importance_score": parsed.get("importance_score", 0.5),
-            "tags": parsed.get("tags", []),
-            "scope": parsed.get("scope", ""),
-        }]
+        return [
+            {
+                "content": parsed["content"],
+                "importance_score": parsed.get("importance_score", 0.5),
+                "tags": parsed.get("tags", []),
+                "scope": parsed.get("scope", ""),
+            }
+        ]
 
     return []
 
@@ -1231,12 +1285,14 @@ def normalize_worklog_response(parsed: dict | None) -> list[dict]:
     if not isinstance(tags, list):
         tags = []
 
-    return [{
-        "task_summary": task_summary.strip(),
-        "workstream": workstream.strip(),
-        "activity_type": activity_type,
-        "tags": tags,
-    }]
+    return [
+        {
+            "task_summary": task_summary.strip(),
+            "workstream": workstream.strip(),
+            "activity_type": activity_type,
+            "tags": tags,
+        }
+    ]
 
 
 def jaccard_similarity(text_a: str, text_b: str) -> float:
@@ -1266,9 +1322,15 @@ _DEDUP_JACCARD_THRESHOLD = 0.7
 _DEDUP_RELEVANCE_THRESHOLD = 0.95
 
 
-def _log_dedup(content_type: str, text: str, matched: str, score: float,
-               threshold: float, metric: str = "jaccard",
-               debug: bool = False):
+def _log_dedup(
+    content_type: str,
+    text: str,
+    matched: str,
+    score: float,
+    threshold: float,
+    metric: str = "jaccard",
+    debug: bool = False,
+):
     """Log a dedup discard to the debug file.
 
     Args:
@@ -1295,9 +1357,13 @@ def _log_dedup(content_type: str, text: str, matched: str, score: float,
         pass
 
 
-def _has_jaccard_duplicate(text: str, candidates: list[str],
-                           threshold: float = _DEDUP_JACCARD_THRESHOLD,
-                           content_type: str = "", debug: bool = False) -> bool:
+def _has_jaccard_duplicate(
+    text: str,
+    candidates: list[str],
+    threshold: float = _DEDUP_JACCARD_THRESHOLD,
+    content_type: str = "",
+    debug: bool = False,
+) -> bool:
     """Check if any candidate text is a Jaccard duplicate of the given text.
 
     Args:
@@ -1320,8 +1386,9 @@ def _has_jaccard_duplicate(text: str, candidates: list[str],
     return False
 
 
-def is_duplicate_observation(content: str, threshold: float = _DEDUP_RELEVANCE_THRESHOLD,
-                             debug: bool = False) -> bool:
+def is_duplicate_observation(
+    content: str, threshold: float = _DEDUP_RELEVANCE_THRESHOLD, debug: bool = False
+) -> bool:
     """Check if a semantically similar observation already exists globally.
 
     Uses ChromaDB embedding relevance score directly. If the top result's
@@ -1349,15 +1416,25 @@ def is_duplicate_observation(content: str, threshold: float = _DEDUP_RELEVANCE_T
     relevance = top.get("relevance", 0.0)
 
     if relevance >= threshold:
-        _log_dedup("observation", content, top.get("preview", ""),
-                   relevance, threshold, metric="relevance", debug=debug)
+        _log_dedup(
+            "observation",
+            content,
+            top.get("preview", ""),
+            relevance,
+            threshold,
+            metric="relevance",
+            debug=debug,
+        )
         return True
     return False
 
 
-def is_duplicate_worklog(task_summary: str, session_id: str,
-                         threshold: float = _DEDUP_JACCARD_THRESHOLD,
-                         debug: bool = False) -> bool:
+def is_duplicate_worklog(
+    task_summary: str,
+    session_id: str,
+    threshold: float = _DEDUP_JACCARD_THRESHOLD,
+    debug: bool = False,
+) -> bool:
     """Check if a similar worklog already exists for this session.
 
     Session-scoped: queries only worklogs from the same session, then
@@ -1374,8 +1451,9 @@ def is_duplicate_worklog(task_summary: str, session_id: str,
         return False
 
     candidates = [d.get("content", "") for d in result["documents"]]
-    return _has_jaccard_duplicate(task_summary, candidates, threshold,
-                                 content_type="worklog", debug=debug)
+    return _has_jaccard_duplicate(
+        task_summary, candidates, threshold, content_type="worklog", debug=debug
+    )
 
 
 def discover_workstreams(limit: int = 30) -> list[str]:
@@ -1410,11 +1488,18 @@ def discover_workstreams(limit: int = 30) -> list[str]:
     return sorted(workstreams)
 
 
-def store_worklog(task_summary: str, workstream: str, activity_type: str,
-                  tags: list, source_label: str,
-                  project_path: str = "", git_branch: str = "",
-                  relevant_files: list | None = None,
-                  session_id: str = "", transcript_line: int = -1) -> dict:
+def store_worklog(
+    task_summary: str,
+    workstream: str,
+    activity_type: str,
+    tags: list,
+    source_label: str,
+    project_path: str = "",
+    git_branch: str = "",
+    relevant_files: list | None = None,
+    session_id: str = "",
+    transcript_line: int = -1,
+) -> dict:
     """Store a worklog entry via tier2_write.
 
     Args:
@@ -1486,7 +1571,10 @@ def main():
     """
     # Args: <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]
     if len(sys.argv) < 4:
-        print("Usage: extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]", file=sys.stderr)
+        print(
+            "Usage: extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     mcp_server_dir = sys.argv[1]
@@ -1500,6 +1588,7 @@ def main():
 
     # Load config for thresholds
     from tools.config import get_auto_extract_config, get_worklog_config
+
     config = get_auto_extract_config()
     debug = config.get("debug", False)
     min_chars = config.get("min_turn_chars", 200)
@@ -1512,14 +1601,18 @@ def main():
     # Worklog config
     worklog_config = get_worklog_config()
     worklog_enabled = worklog_config.get("enabled", True)
-    worklog_dedup_threshold = worklog_config.get("dedup_threshold", _DEDUP_JACCARD_THRESHOLD)
+    worklog_dedup_threshold = worklog_config.get(
+        "dedup_threshold", _DEDUP_JACCARD_THRESHOLD
+    )
 
     # Step 1: Read watermark
     watermark = read_watermark(session_id)
 
     # Step 2: Read new transcript lines
     start_from = watermark + 1  # Start after last processed line
-    indexed_lines, total_lines = read_transcript_from(transcript_path, start_from, max_lines)
+    indexed_lines, total_lines = read_transcript_from(
+        transcript_path, start_from, max_lines
+    )
 
     if not indexed_lines:
         print("No new transcript lines since last extraction", file=sys.stderr)
@@ -1541,11 +1634,13 @@ def main():
     # This is a cost optimization: don't call Haiku on near-empty sessions.
     # If the conversation has enough text, Haiku decides what's worth remembering.
     total_text = sum(
-        len(t.get("user_text", "")) + len(t.get("assistant_text", ""))
-        for t in turns
+        len(t.get("user_text", "")) + len(t.get("assistant_text", "")) for t in turns
     )
     if total_text < min_chars:
-        print(f"Conversation too short ({total_text} chars < {min_chars})", file=sys.stderr)
+        print(
+            f"Conversation too short ({total_text} chars < {min_chars})",
+            file=sys.stderr,
+        )
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
@@ -1563,8 +1658,11 @@ def main():
     # Step 7: Build session prompt with ALL turns
     project_name = os.path.basename(project_path) if project_path else ""
     prompt = build_session_prompt(
-        turns, first_user_text, budget,
-        project_name=project_name, git_branch=git_branch,
+        turns,
+        first_user_text,
+        budget,
+        project_name=project_name,
+        git_branch=git_branch,
         workstreams=workstreams if worklog_enabled else None,
     )
 
@@ -1587,10 +1685,18 @@ def main():
         worklogs = normalize_worklog_response(raw_extraction)
 
     if not observations and not worklogs:
-        print("No observations or worklogs extracted (routine session)", file=sys.stderr)
-        _log_extraction(backend, input_tokens, output_tokens,
-                        observation_stored=False, prompt=prompt,
-                        hook_input=hook_input, debug=debug)
+        print(
+            "No observations or worklogs extracted (routine session)", file=sys.stderr
+        )
+        _log_extraction(
+            backend,
+            input_tokens,
+            output_tokens,
+            observation_stored=False,
+            prompt=prompt,
+            hook_input=hook_input,
+            debug=debug,
+        )
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
@@ -1617,38 +1723,58 @@ def main():
         if scope not in ("project", "global"):
             scope = ""
 
-        if is_duplicate_observation(content, threshold=obs_dedup_threshold, debug=debug):
+        if is_duplicate_observation(
+            content, threshold=obs_dedup_threshold, debug=debug
+        ):
             print(f"Skipping duplicate observation {i + 1}", file=sys.stderr)
             continue
 
         result = store_observation(
-            content, importance, tags, "auto-extract:stop-hook",
-            project_path=project_path, git_branch=git_branch,
-            relevant_files=relevant_files, scope=scope,
-            session_id=session_id, transcript_line=absolute_line,
+            content,
+            importance,
+            tags,
+            "auto-extract:stop-hook",
+            project_path=project_path,
+            git_branch=git_branch,
+            relevant_files=relevant_files,
+            scope=scope,
+            session_id=session_id,
+            transcript_line=absolute_line,
         )
 
         if result.get("success"):
-            obs_id = result.get('id', 'unknown')
+            obs_id = result.get("id", "unknown")
             stored_count += 1
             print(f"Stored observation {stored_count}: {obs_id}", file=sys.stderr)
             # Log prompt + hook_input only for first observation to avoid debug log bloat
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=True, obs_id=obs_id,
-                            importance=importance, tags=tags,
-                            prompt=prompt if i == 0 else "",
-                            observation_content=content,
-                            scope=scope,
-                            hook_input=hook_input if i == 0 else "",
-                            debug=debug)
+            _log_extraction(
+                backend,
+                input_tokens,
+                output_tokens,
+                observation_stored=True,
+                obs_id=obs_id,
+                importance=importance,
+                tags=tags,
+                prompt=prompt if i == 0 else "",
+                observation_content=content,
+                scope=scope,
+                hook_input=hook_input if i == 0 else "",
+                debug=debug,
+            )
         else:
-            print(f"Failed to store observation: {result.get('error')}", file=sys.stderr)
-            _log_extraction(backend, input_tokens, output_tokens,
-                            observation_stored=False,
-                            prompt=prompt if i == 0 else "",
-                            observation_content=content,
-                            hook_input=hook_input if i == 0 else "",
-                            debug=debug)
+            print(
+                f"Failed to store observation: {result.get('error')}", file=sys.stderr
+            )
+            _log_extraction(
+                backend,
+                input_tokens,
+                output_tokens,
+                observation_stored=False,
+                prompt=prompt if i == 0 else "",
+                observation_content=content,
+                hook_input=hook_input if i == 0 else "",
+                debug=debug,
+            )
 
     if stored_count == 0 and observations:
         print("No observations stored (all empty or failed)", file=sys.stderr)
@@ -1656,21 +1782,34 @@ def main():
     # Step 10b: Store worklog entry (if not a duplicate)
     if worklogs:
         wl = worklogs[0]  # Max 1 worklog per extraction
-        if not is_duplicate_worklog(wl["task_summary"], session_id, threshold=worklog_dedup_threshold, debug=debug):
+        if not is_duplicate_worklog(
+            wl["task_summary"],
+            session_id,
+            threshold=worklog_dedup_threshold,
+            debug=debug,
+        ):
             wl_result = store_worklog(
                 task_summary=wl["task_summary"],
                 workstream=wl["workstream"],
                 activity_type=wl["activity_type"],
                 tags=wl.get("tags", []),
                 source_label="auto-extract:stop-hook:worklog",
-                project_path=project_path, git_branch=git_branch,
-                relevant_files=relevant_files, session_id=session_id,
+                project_path=project_path,
+                git_branch=git_branch,
+                relevant_files=relevant_files,
+                session_id=session_id,
                 transcript_line=absolute_line,
             )
             if wl_result.get("success"):
-                print(f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]", file=sys.stderr)
+                print(
+                    f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]",
+                    file=sys.stderr,
+                )
             else:
-                print(f"Failed to store worklog: {wl_result.get('error')}", file=sys.stderr)
+                print(
+                    f"Failed to store worklog: {wl_result.get('error')}",
+                    file=sys.stderr,
+                )
         else:
             print("Worklog skipped (duplicate in session)", file=sys.stderr)
 

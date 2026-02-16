@@ -43,16 +43,34 @@ from protocol import (
     ProtocolTag,
     ProtocolValidator,
     format_commit_message,
-    VALID_OPERATIONS
+    VALID_OPERATIONS,
 )
-from tools.commit import stage_files, execute_commit, get_commit_stats, reindex_committed_files, commit_user_prologue
+from tools.commit import (
+    stage_files,
+    execute_commit,
+    get_commit_stats,
+    reindex_committed_files,
+    commit_user_prologue,
+)
 from tools.file_ops import read_vault_file, list_vault_dir, file_exists_in_vault
 from tools.git_ops import (
-    parse_last_commit, get_status, push_to_remote, move_files,
-    query_history, rollback_commit, file_history, rewrite_commit_messages
+    parse_last_commit,
+    get_status,
+    push_to_remote,
+    move_files,
+    query_history,
+    rollback_commit,
+    file_history,
+    rewrite_commit_messages,
 )
 from tools.memory import index_vault, index_file
-from tools.paths import get_path, get_relative_path, list_all_paths, validate_paths_config, PathNotConfiguredError
+from tools.paths import (
+    get_path,
+    get_relative_path,
+    list_all_paths,
+    validate_paths_config,
+    PathNotConfiguredError,
+)
 from tools.query import collection_stats
 from tools.promotion import promote, check_promotion_criteria
 from tools.store import store
@@ -61,8 +79,8 @@ from tools.remove import remove
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stderr
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,
 )
 logger = logging.getLogger("jarvis-core")
 
@@ -79,33 +97,36 @@ TOOLS = [
                 "operation": {
                     "type": "string",
                     "enum": ["create", "edit", "delete", "move", "user"],
-                    "description": "Operation type"
+                    "description": "Operation type",
                 },
                 "description": {"type": "string", "description": "Commit message"},
-                "entry_id": {"type": "string", "description": "14-digit timestamp (optional)"},
+                "entry_id": {
+                    "type": "string",
+                    "description": "14-digit timestamp (optional)",
+                },
                 "trigger_mode": {
                     "type": "string",
                     "enum": ["conversational", "agent"],
-                    "default": "conversational"
+                    "default": "conversational",
                 },
                 "files": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Files to stage (optional)"
-                }
+                    "description": "Files to stage (optional)",
+                },
             },
-            "required": ["operation", "description"]
-        }
+            "required": ["operation", "description"],
+        },
     ),
     Tool(
         name="jarvis_status",
         description="Get current git status (staged, unstaged, untracked files).",
-        inputSchema={"type": "object", "properties": {}}
+        inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="jarvis_parse_last_commit",
         description="Parse info about the most recent commit.",
-        inputSchema={"type": "object", "properties": {}}
+        inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="jarvis_push",
@@ -114,8 +135,8 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "branch": {"type": "string", "description": "Branch to push (optional)"}
-            }
-        }
+            },
+        },
     ),
     Tool(
         name="jarvis_move_files",
@@ -129,14 +150,14 @@ TOOLS = [
                         "type": "object",
                         "properties": {
                             "source": {"type": "string"},
-                            "destination": {"type": "string"}
+                            "destination": {"type": "string"},
                         },
-                        "required": ["source", "destination"]
-                    }
+                        "required": ["source", "destination"],
+                    },
                 }
             },
-            "required": ["moves"]
-        }
+            "required": ["moves"],
+        },
     ),
     Tool(
         name="jarvis_query_history",
@@ -147,13 +168,22 @@ TOOLS = [
                 "operation": {
                     "type": "string",
                     "enum": ["create", "edit", "delete", "move", "user", "all"],
-                    "description": "Filter by operation type (default: all)"
+                    "description": "Filter by operation type (default: all)",
                 },
-                "since": {"type": "string", "description": "Time filter (e.g., 'today', '1 week ago')"},
-                "limit": {"type": "integer", "description": "Max results (default: 10)"},
-                "file": {"type": "string", "description": "Filter by file path (optional)"}
-            }
-        }
+                "since": {
+                    "type": "string",
+                    "description": "Time filter (e.g., 'today', '1 week ago')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default: 10)",
+                },
+                "file": {
+                    "type": "string",
+                    "description": "Filter by file path (optional)",
+                },
+            },
+        },
     ),
     Tool(
         name="jarvis_rollback",
@@ -161,10 +191,13 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "commit_hash": {"type": "string", "description": "Commit hash to revert"}
+                "commit_hash": {
+                    "type": "string",
+                    "description": "Commit hash to revert",
+                }
             },
-            "required": ["commit_hash"]
-        }
+            "required": ["commit_hash"],
+        },
     ),
     Tool(
         name="jarvis_file_history",
@@ -173,10 +206,13 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "file_path": {"type": "string", "description": "Path to the file"},
-                "limit": {"type": "integer", "description": "Max results (default: 10)"}
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default: 10)",
+                },
             },
-            "required": ["file_path"]
-        }
+            "required": ["file_path"],
+        },
     ),
     Tool(
         name="jarvis_rewrite_commit_messages",
@@ -186,15 +222,15 @@ TOOLS = [
             "properties": {
                 "count": {
                     "type": "integer",
-                    "description": "Number of recent commits to process (default: 1)"
+                    "description": "Number of recent commits to process (default: 1)",
                 },
                 "patterns": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Sed regex patterns to remove. Default: ['Co-Authored-By:.*']"
-                }
-            }
-        }
+                    "description": "Sed regex patterns to remove. Default: ['Co-Authored-By:.*']",
+                },
+            },
+        },
     ),
     # Unified content API
     Tool(
@@ -203,36 +239,111 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "Content to store (required for write/append modes and type-based writes)"},
-                "id": {"type": "string", "description": "Document ID from jarvis_retrieve — update existing content. Routes by prefix: vault::* -> file, memory::* -> memory, obs::/pattern::/* -> tier2."},
-                "relative_path": {"type": "string", "description": "Vault-relative path for NEW file writes (e.g., 'journal/2026/02/entry.md'). Use when creating content with no prior ID."},
+                "content": {
+                    "type": "string",
+                    "description": "Content to store (required for write/append modes and type-based writes)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Document ID from jarvis_retrieve — update existing content. Routes by prefix: vault::* -> file, memory::* -> memory, obs::/pattern::/* -> tier2.",
+                },
+                "relative_path": {
+                    "type": "string",
+                    "description": "Vault-relative path for NEW file writes (e.g., 'journal/2026/02/entry.md'). Use when creating content with no prior ID.",
+                },
                 "type": {
                     "type": "string",
-                    "enum": ["memory", "observation", "pattern", "learning", "decision", "summary", "code", "relationship", "hint", "plan"],
-                    "description": "Content type for NEW content. 'memory' = strategic (file-backed). Others = ephemeral (ChromaDB)."
+                    "enum": [
+                        "memory",
+                        "observation",
+                        "pattern",
+                        "learning",
+                        "decision",
+                        "summary",
+                        "code",
+                        "relationship",
+                        "hint",
+                        "plan",
+                        "worklog",
+                    ],
+                    "description": "Content type for NEW content. 'memory' = strategic (file-backed). Others = ephemeral (ChromaDB).",
                 },
-                "name": {"type": "string", "description": "Name/slug for addressable content. Required for: memory, pattern, plan, decision."},
+                "name": {
+                    "type": "string",
+                    "description": "Name/slug for addressable content. Required for: memory, pattern, plan, decision.",
+                },
                 "mode": {
-                    "type": "string", "enum": ["write", "append", "edit"], "default": "write",
-                    "description": "For vault file writes: 'write' (create/overwrite), 'append' (add to existing), 'edit' (find-and-replace)"
+                    "type": "string",
+                    "enum": ["write", "append", "edit"],
+                    "default": "write",
+                    "description": "For vault file writes: 'write' (create/overwrite), 'append' (add to existing), 'edit' (find-and-replace)",
                 },
-                "old_string": {"type": "string", "description": "For edit mode: exact string to find"},
-                "new_string": {"type": "string", "description": "For edit mode: replacement string"},
-                "separator": {"type": "string", "default": "\n", "description": "For append mode: prepended before content"},
-                "replace_all": {"type": "boolean", "default": False, "description": "For edit mode: replace all occurrences"},
-                "importance": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Importance score 0.0-1.0"},
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
-                "scope": {"type": "string", "enum": ["global", "project"], "default": "global", "description": "For memory type: scope"},
-                "project": {"type": "string", "description": "For project-scoped memories"},
-                "source": {"type": "string", "description": "Source label (default varies by route)"},
+                "old_string": {
+                    "type": "string",
+                    "description": "For edit mode: exact string to find",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "For edit mode: replacement string",
+                },
+                "separator": {
+                    "type": "string",
+                    "default": "\n",
+                    "description": "For append mode: prepended before content",
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "For edit mode: replace all occurrences",
+                },
+                "importance": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Importance score 0.0-1.0",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for categorization",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "default": "global",
+                    "description": "For memory type: scope",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "For project-scoped memories",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Source label (default varies by route)",
+                },
                 "session_id": {"type": "string", "description": "Session identifier"},
-                "extra_metadata": {"type": "object", "description": "Additional metadata key-value pairs"},
-                "overwrite": {"type": "boolean", "default": False, "description": "For memory type: allow overwriting (auto-set to true for id-based updates)"},
-                "auto_index": {"type": "boolean", "default": True, "description": "Auto-index .md files to ChromaDB"},
-                "skip_secret_scan": {"type": "boolean", "default": False, "description": "Skip secret detection"}
+                "extra_metadata": {
+                    "type": "object",
+                    "description": "Additional metadata key-value pairs",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "For memory type: allow overwriting (auto-set to true for id-based updates)",
+                },
+                "auto_index": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Auto-index .md files to ChromaDB",
+                },
+                "skip_secret_scan": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Skip secret detection",
+                },
             },
-            "required": ["content"]
-        }
+            "required": ["content"],
+        },
     ),
     Tool(
         name="jarvis_retrieve",
@@ -240,30 +351,94 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Semantic search query (searches all indexed content)"},
-                "id": {"type": "string", "description": "Document ID to read (routes automatically by ID prefix)"},
-                "name": {"type": "string", "description": "Strategic memory name to read"},
-                "list_type": {"type": "string", "enum": ["tier2", "memory"], "description": "List content: 'tier2' (ephemeral) or 'memory' (strategic)"},
-                "n_results": {"type": "integer", "default": 5, "description": "Max results for query mode"},
-                "type_filter": {"type": "string", "description": "Filter by content type when listing"},
-                "min_importance": {"type": "number", "minimum": 0.0, "maximum": 1.0, "description": "Min importance score for tier2 listing"},
-                "source": {"type": "string", "description": "Filter by source for tier2 listing"},
-                "scope": {"type": "string", "enum": ["global", "project", "all"], "default": "global", "description": "Scope for memory reads/lists"},
-                "project": {"type": "string", "description": "Project name for scoped memories"},
-                "tag": {"type": "string", "description": "Filter by tag for memory listing"},
-                "importance": {"type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Filter by importance for memory listing"},
-                "limit": {"type": "integer", "default": 20, "description": "Max results for list mode"},
-                "filter": {"type": "object", "description": "Metadata filter for query mode (directory, type, importance, tags)"},
-                "include_metadata": {"type": "boolean", "default": True, "description": "Include metadata in ID-based reads"},
-                "include_content": {"type": "boolean", "default": False, "description": "Include document content in list results (for list_type='memory' and 'tier2')"},
+                "query": {
+                    "type": "string",
+                    "description": "Semantic search query (searches all indexed content)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Document ID to read (routes automatically by ID prefix)",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Strategic memory name to read",
+                },
+                "list_type": {
+                    "type": "string",
+                    "enum": ["tier2", "memory"],
+                    "description": "List content: 'tier2' (ephemeral) or 'memory' (strategic)",
+                },
+                "n_results": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Max results for query mode",
+                },
+                "type_filter": {
+                    "type": "string",
+                    "description": "Filter by content type when listing",
+                },
+                "min_importance": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Min importance score for tier2 listing",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Filter by source for tier2 listing",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project", "all"],
+                    "default": "global",
+                    "description": "Scope for memory reads/lists",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name for scoped memories",
+                },
+                "tag": {
+                    "type": "string",
+                    "description": "Filter by tag for memory listing",
+                },
+                "importance": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by importance for memory listing",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Max results for list mode",
+                },
+                "filter": {
+                    "type": "object",
+                    "description": "Metadata filter for query mode (directory, type, importance, tags)",
+                },
+                "include_metadata": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Include metadata in ID-based reads",
+                },
+                "include_content": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include document content in list results (for list_type='memory' and 'tier2')",
+                },
                 "sort_by": {
                     "type": "string",
-                    "enum": ["importance_desc", "importance_asc", "created_at_desc", "created_at_asc", "none"],
+                    "enum": [
+                        "importance_desc",
+                        "importance_asc",
+                        "created_at_desc",
+                        "created_at_asc",
+                        "none",
+                    ],
                     "default": "importance_desc",
-                    "description": "Sort order for tier2 list mode (default: importance_desc)"
-                }
-            }
-        }
+                    "description": "Sort order for tier2 list mode (default: importance_desc)",
+                },
+            },
+        },
     ),
     Tool(
         name="jarvis_remove",
@@ -271,16 +446,32 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Document ID to delete (from jarvis_retrieve results). Works for vault and tier2 content."},
-                "name": {"type": "string", "description": "Strategic memory name to delete"},
-                "scope": {"type": "string", "enum": ["global", "project"], "default": "global"},
-                "project": {"type": "string", "description": "Project name for scoped memories"},
-                "confirm": {"type": "boolean", "default": False, "description": "Required for global memory deletion (safety gate)"}
-            }
-        }
+                "id": {
+                    "type": "string",
+                    "description": "Document ID to delete (from jarvis_retrieve results). Works for vault and tier2 content.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Strategic memory name to delete",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "project"],
+                    "default": "global",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Project name for scoped memories",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Required for global memory deletion (safety gate)",
+                },
+            },
+        },
     ),
     # Vault file operations (read-only filesystem access)
-
     Tool(
         name="jarvis_read_vault_file",
         description="Read a file from within the vault directory.",
@@ -289,11 +480,11 @@ TOOLS = [
             "properties": {
                 "relative_path": {
                     "type": "string",
-                    "description": "Path relative to vault root"
+                    "description": "Path relative to vault root",
                 }
             },
-            "required": ["relative_path"]
-        }
+            "required": ["relative_path"],
+        },
     ),
     Tool(
         name="jarvis_list_vault_dir",
@@ -303,10 +494,10 @@ TOOLS = [
             "properties": {
                 "relative_path": {
                     "type": "string",
-                    "description": "Path relative to vault root (default: vault root)"
+                    "description": "Path relative to vault root (default: vault root)",
                 }
-            }
-        }
+            },
+        },
     ),
     Tool(
         name="jarvis_file_exists",
@@ -316,11 +507,11 @@ TOOLS = [
             "properties": {
                 "relative_path": {
                     "type": "string",
-                    "description": "Path relative to vault root"
+                    "description": "Path relative to vault root",
                 }
             },
-            "required": ["relative_path"]
-        }
+            "required": ["relative_path"],
+        },
     ),
     # Memory operations (ChromaDB semantic indexing)
     Tool(
@@ -331,18 +522,18 @@ TOOLS = [
             "properties": {
                 "force": {
                     "type": "boolean",
-                    "description": "Re-index all files, even already indexed (default: false)"
+                    "description": "Re-index all files, even already indexed (default: false)",
                 },
                 "directory": {
                     "type": "string",
-                    "description": "Only index files in this subdirectory (optional)"
+                    "description": "Only index files in this subdirectory (optional)",
                 },
                 "include_sensitive": {
                     "type": "boolean",
-                    "description": "Include documents/ and people/ directories (default: false)"
-                }
-            }
-        }
+                    "description": "Include documents/ and people/ directories (default: false)",
+                },
+            },
+        },
     ),
     Tool(
         name="jarvis_index_file",
@@ -352,11 +543,11 @@ TOOLS = [
             "properties": {
                 "relative_path": {
                     "type": "string",
-                    "description": "Path relative to vault root"
+                    "description": "Path relative to vault root",
                 }
             },
-            "required": ["relative_path"]
-        }
+            "required": ["relative_path"],
+        },
     ),
     # Memory stats
     Tool(
@@ -368,15 +559,15 @@ TOOLS = [
                 "sample_size": {
                     "type": "integer",
                     "description": "Number of sample entries to include (default: 5)",
-                    "default": 5
+                    "default": 5,
                 },
                 "detailed": {
                     "type": "boolean",
                     "description": "Include per-type/namespace breakdowns and storage size (default: false)",
-                    "default": False
-                }
-            }
-        }
+                    "default": False,
+                },
+            },
+        },
     ),
     # Path configuration tools
     Tool(
@@ -387,24 +578,24 @@ TOOLS = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'db_path')"
+                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'db_path')",
                 },
                 "substitutions": {
                     "type": "object",
-                    "description": "Template variable replacements (e.g., {\"YYYY\": \"2026\", \"MM\": \"02\"})"
+                    "description": 'Template variable replacements (e.g., {"YYYY": "2026", "MM": "02"})',
                 },
                 "ensure_exists": {
                     "type": "boolean",
-                    "description": "Create directory if it does not exist (default: false)"
-                }
+                    "description": "Create directory if it does not exist (default: false)",
+                },
             },
-            "required": ["name"]
-        }
+            "required": ["name"],
+        },
     ),
     Tool(
         name="jarvis_list_paths",
         description="List all configured paths with their resolved values. Diagnostic tool.",
-        inputSchema={"type": "object", "properties": {}}
+        inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
         name="jarvis_promote",
@@ -414,16 +605,16 @@ TOOLS = [
             "properties": {
                 "doc_id": {
                     "type": "string",
-                    "description": "Tier 2 document ID to promote"
+                    "description": "Tier 2 document ID to promote",
                 }
             },
-            "required": ["doc_id"]
-        }
+            "required": ["doc_id"],
+        },
     ),
     Tool(
         name="jarvis_get_format_reference",
         description="Get the active file format reference (syntax guide + journal entry template). Returns the format guide content and configured extension. Call this before creating new vault files to know the correct syntax.",
-        inputSchema={"type": "object", "properties": {}}
+        inputSchema={"type": "object", "properties": {}},
     ),
 ]
 
@@ -447,16 +638,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             operation=args.get("operation", "all"),
             since=args.get("since"),
             limit=args.get("limit", 10),
-            file_path=args.get("file")
+            file_path=args.get("file"),
         ),
         "jarvis_rollback": lambda args: rollback_commit(args.get("commit_hash")),
         "jarvis_file_history": lambda args: file_history(
-            args.get("file_path"),
-            args.get("limit", 10)
+            args.get("file_path"), args.get("limit", 10)
         ),
         "jarvis_rewrite_commit_messages": lambda args: rewrite_commit_messages(
-            count=args.get("count", 1),
-            patterns=args.get("patterns")
+            count=args.get("count", 1), patterns=args.get("patterns")
         ),
         # Unified content API
         "jarvis_store": lambda args: store(**args),
@@ -476,21 +665,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         "jarvis_index_vault": lambda args: index_vault(
             force=args.get("force", False),
             directory=args.get("directory"),
-            include_sensitive=args.get("include_sensitive", False)
+            include_sensitive=args.get("include_sensitive", False),
         ),
-        "jarvis_index_file": lambda args: index_file(
-            args.get("relative_path", "")
-        ),
+        "jarvis_index_file": lambda args: index_file(args.get("relative_path", "")),
         "jarvis_collection_stats": lambda args: collection_stats(
-            sample_size=args.get("sample_size", 5),
-            detailed=args.get("detailed", False)
+            sample_size=args.get("sample_size", 5), detailed=args.get("detailed", False)
         ),
         # Path configuration
         "jarvis_resolve_path": lambda args: handle_resolve_path(args),
         "jarvis_list_paths": lambda args: handle_list_paths(),
-        "jarvis_promote": lambda args: promote(
-            doc_id=args.get("doc_id", "")
-        ),
+        "jarvis_promote": lambda args: promote(doc_id=args.get("doc_id", "")),
         "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
     }
 
@@ -508,7 +692,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
-        return [TextContent(type="text", text=json.dumps({"success": False, "error": str(e)}))]
+        return [
+            TextContent(
+                type="text", text=json.dumps({"success": False, "error": str(e)})
+            )
+        ]
 
 
 async def handle_commit(args: dict) -> dict:
@@ -524,7 +712,7 @@ async def handle_commit(args: dict) -> dict:
         operation=operation,
         description=description,
         entry_id=entry_id,
-        trigger_mode=trigger_mode
+        trigger_mode=trigger_mode,
     )
     if errors:
         return {"success": False, "validation_errors": errors}
@@ -581,7 +769,9 @@ def handle_resolve_path(args: dict) -> dict:
     ensure_exists = args.get("ensure_exists", False)
 
     try:
-        resolved = get_path(name, substitutions=substitutions, ensure_exists=ensure_exists)
+        resolved = get_path(
+            name, substitutions=substitutions, ensure_exists=ensure_exists
+        )
         is_vault_relative = name not in {"db_path", "project_memories_path"}
         result = {
             "success": True,
@@ -602,6 +792,7 @@ def handle_resolve_path(args: dict) -> dict:
 def handle_list_paths() -> dict:
     """Handle jarvis_list_paths."""
     from tools.config import get_vault_path
+
     result = list_all_paths()
     warnings = validate_paths_config()
     return {
@@ -627,13 +818,12 @@ def handle_get_format_reference() -> dict:
 
     # Look for format reference in plugin defaults
     ref_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "defaults", "formats", ref_filename
+        os.path.dirname(os.path.abspath(__file__)), "defaults", "formats", ref_filename
     )
     ref_path = os.path.normpath(ref_path)
 
     if os.path.isfile(ref_path):
-        with open(ref_path, 'r', encoding='utf-8') as f:
+        with open(ref_path, "r", encoding="utf-8") as f:
             reference_content = f.read()
     else:
         reference_content = f"Format reference file not found: {ref_path}"
@@ -653,22 +843,30 @@ def get_background_tasks():
     ensuring no drift between transport modes.
     """
     from tools.patterns import pattern_detection_loop
+
     return [pattern_detection_loop()]
 
 
 async def main():
     logger.info("Starting Jarvis Core MCP Server")
     async with stdio_server() as (read_stream, write_stream):
-        server_task = server.run(read_stream, write_stream, server.create_initialization_options())
-        await asyncio.gather(server_task, *get_background_tasks(), return_exceptions=True)
+        server_task = server.run(
+            read_stream, write_stream, server.create_initialization_options()
+        )
+        await asyncio.gather(
+            server_task, *get_background_tasks(), return_exceptions=True
+        )
 
 
 def main_sync():
     """Synchronous entry point for uvx/pip scripts."""
     from tools.config import get_mcp_transport
+
     transport = get_mcp_transport()
     if transport != "local":
-        logger.info(f"MCP transport is '{transport}', skipping stdio server (use HTTP instead)")
+        logger.info(
+            f"MCP transport is '{transport}', skipping stdio server (use HTTP instead)"
+        )
         sys.exit(0)
     asyncio.run(main())
 

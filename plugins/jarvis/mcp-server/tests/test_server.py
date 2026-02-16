@@ -1,4 +1,5 @@
 """Integration tests for server.py MCP tool dispatch."""
+
 import pytest
 import json
 
@@ -24,10 +25,9 @@ class TestServerIntegration:
         import asyncio
 
         # Invalid operation
-        result = asyncio.run(handle_commit({
-            "operation": "invalid_op",
-            "description": "Test"
-        }))
+        result = asyncio.run(
+            handle_commit({"operation": "invalid_op", "description": "Test"})
+        )
 
         assert result["success"] is False
         assert "validation_errors" in result
@@ -37,10 +37,9 @@ class TestServerIntegration:
         from server import handle_commit
         import asyncio
 
-        result = asyncio.run(handle_commit({
-            "operation": "create",
-            "description": ""  # Empty
-        }))
+        result = asyncio.run(
+            handle_commit({"operation": "create", "description": ""})  # Empty
+        )
 
         assert result["success"] is False
         assert "validation_errors" in result
@@ -50,11 +49,15 @@ class TestServerIntegration:
         from server import handle_commit
         import asyncio
 
-        result = asyncio.run(handle_commit({
-            "operation": "create",
-            "description": "Test",
-            "entry_id": "123"  # Invalid format
-        }))
+        result = asyncio.run(
+            handle_commit(
+                {
+                    "operation": "create",
+                    "description": "Test",
+                    "entry_id": "123",  # Invalid format
+                }
+            )
+        )
 
         assert result["success"] is False
         assert "validation_errors" in result
@@ -86,10 +89,7 @@ class TestServerIntegration:
         from protocol import ProtocolValidator
 
         errors = ProtocolValidator.validate_all(
-            operation="invalid",
-            description="",
-            entry_id="bad",
-            trigger_mode="wrong"
+            operation="invalid", description="", entry_id="bad", trigger_mode="wrong"
         )
 
         assert len(errors) == 4

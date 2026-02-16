@@ -5,6 +5,7 @@ Uses the shared ChromaDB client from tools.memory.
 
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
+
 import os
 import re
 import time
@@ -25,9 +26,12 @@ def _detect_format_from_entry(entry: dict) -> str:
     return detect_format(parent_file) if parent_file else "markdown"
 
 
-def _compute_relevance(distance: float, importance: str = "medium",
-                       updated_at: Optional[str] = None,
-                       importance_score: Optional[float] = None) -> float:
+def _compute_relevance(
+    distance: float,
+    importance: str = "medium",
+    updated_at: Optional[str] = None,
+    importance_score: Optional[float] = None,
+) -> float:
     """Convert ChromaDB cosine distance to relevance score with boosts.
 
     ChromaDB cosine distance ranges from 0 (identical) to 2 (opposite).
@@ -43,7 +47,9 @@ def _compute_relevance(distance: float, importance: str = "medium",
         # Map 0.0-1.0 score to -0.12..+0.12 boost (centered at 0.5)
         boost = (importance_score - 0.5) * 0.24
     else:
-        boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(importance, 0.0)
+        boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(
+            importance, 0.0
+        )
 
     # Recency boost: recent updates get a small relevance bump
     recency_boost = 0.0
@@ -72,20 +78,26 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
     stripped = strip_frontmatter(content, fmt)
     # Strip leading headings (both # and * styles)
     if fmt == "org":
-        stripped = re.sub(r'^\*+\s+.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+        stripped = re.sub(
+            r"^\*+\s+.*$", "", stripped, count=1, flags=re.MULTILINE
+        ).strip()
         # Strip #+TITLE lines
-        stripped = re.sub(r'^#\+TITLE:.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+        stripped = re.sub(
+            r"^#\+TITLE:.*$", "", stripped, count=1, flags=re.MULTILINE
+        ).strip()
     else:
-        stripped = re.sub(r'^#+\s+.*$', '', stripped, count=1, flags=re.MULTILINE).strip()
+        stripped = re.sub(
+            r"^#+\s+.*$", "", stripped, count=1, flags=re.MULTILINE
+        ).strip()
     # Collapse whitespace
-    stripped = re.sub(r'\s+', ' ', stripped).strip()
+    stripped = re.sub(r"\s+", " ", stripped).strip()
 
     if len(stripped) <= max_len:
         return stripped
 
     # Truncate at word boundary
     truncated = stripped[:max_len]
-    last_space = truncated.rfind(' ')
+    last_space = truncated.rfind(" ")
     if last_space > max_len * 0.5:
         truncated = truncated[:last_space]
     return truncated + "..."
@@ -128,7 +140,9 @@ def _translate_filter(filter_dict: Optional[dict]) -> Optional[dict]:
     if "tags" in filter_dict and filter_dict["tags"]:
         # Tags stored as comma-separated string in metadata
         # ChromaDB $contains checks if value is substring of stored string
-        conditions.append({"tags": {"$contains": filter_dict["tags"].split(",")[0].strip()}})
+        conditions.append(
+            {"tags": {"$contains": filter_dict["tags"].split(",")[0].strip()}}
+        )
 
     if not conditions:
         return None
@@ -143,7 +157,9 @@ def _display_path(doc_id: str) -> str:
     return parsed.content_id
 
 
-def _increment_retrieval_counts(collection, doc_ids: list, increment: float = 1.0) -> None:
+def _increment_retrieval_counts(
+    collection, doc_ids: list, increment: float = 1.0
+) -> None:
     """Batch increment retrieval counts for Tier 2 documents.
 
     Best-effort operation: errors are logged but don't block query response.
@@ -189,17 +205,19 @@ def _increment_retrieval_counts(collection, doc_ids: list, increment: float = 1.
 
         # Batch upsert
         if updated_ids:
-            collection.upsert(ids=updated_ids, documents=updated_docs, metadatas=updated_metas)
+            collection.upsert(
+                ids=updated_ids, documents=updated_docs, metadatas=updated_metas
+            )
 
     except Exception as e:
         # Log but don't fail query
         import logging
+
         logger = logging.getLogger("jarvis-core")
         logger.warning(f"Failed to increment retrieval counts: {e}")
 
 
-def query_vault(query: str, n_results: int = 5,
-                filter: Optional[dict] = None) -> dict:
+def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -> dict:
     """Semantic search across vault memory.
 
     Args:
@@ -222,7 +240,7 @@ def query_vault(query: str, n_results: int = 5,
             "query": query,
             "results": [],
             "total_in_collection": 0,
-            "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool."
+            "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool.",
         }
 
     n_results = min(max(1, n_results), 20)
@@ -259,7 +277,9 @@ def query_vault(query: str, n_results: int = 5,
     documents = raw.get("documents", [[]])[0]
     metadatas = raw.get("metadatas", [[]])[0]
 
-    for doc_id, distance, document, metadata in zip(ids, distances, documents, metadatas):
+    for doc_id, distance, document, metadata in zip(
+        ids, distances, documents, metadatas
+    ):
         meta = metadata or {}
         importance = meta.get("importance", "medium")
         updated_at = meta.get("updated_at")
@@ -281,26 +301,34 @@ def query_vault(query: str, n_results: int = 5,
             parsed = parse_id(doc_id)
             parent_file = parsed.content_id
 
-        raw_entries.append({
-            "doc_id": doc_id,
-            "parent_file": parent_file,
-            "relevance": relevance,
-            "document": document,
-            "metadata": meta,
-        })
+        raw_entries.append(
+            {
+                "doc_id": doc_id,
+                "parent_file": parent_file,
+                "relevance": relevance,
+                "document": document,
+                "metadata": meta,
+            }
+        )
 
     # Chunk deduplication: keep best-relevance chunk per parent_file
     best_per_file = {}
     for entry in raw_entries:
         pf = entry["parent_file"]
-        if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
+        if (
+            pf not in best_per_file
+            or entry["relevance"] > best_per_file[pf]["relevance"]
+        ):
             best_per_file[pf] = entry
 
     # Cross-encoder reranking (applied only when enabled and >1 candidate)
     reranking_applied = False
     if reranking_config.get("enabled") and len(best_per_file) > 1:
         from .reranking import rerank
-        deduped_list = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
+
+        deduped_list = sorted(
+            best_per_file.values(), key=lambda e: e["relevance"], reverse=True
+        )
         docs = [e["document"] or "" for e in deduped_list]
         vscores = [e["relevance"] for e in deduped_list]
         blended = rerank(query, docs, vscores, reranking_config)
@@ -311,7 +339,9 @@ def query_vault(query: str, n_results: int = 5,
 
     # Sort by relevance descending and trim to final count
     final_count = reranking_config.get("top_k", 10) if reranking_applied else n_results
-    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)[:final_count]
+    deduped = sorted(
+        best_per_file.values(), key=lambda e: e["relevance"], reverse=True
+    )[:final_count]
 
     results = []
     all_ids = []
@@ -319,7 +349,11 @@ def query_vault(query: str, n_results: int = 5,
         meta = entry["metadata"]
         doc_id = entry["doc_id"]
         entry_fmt = _detect_format_from_entry(entry)
-        preview = _extract_preview(entry["document"], fmt=entry_fmt) if entry["document"] else ""
+        preview = (
+            _extract_preview(entry["document"], fmt=entry_fmt)
+            if entry["document"]
+            else ""
+        )
         title = meta.get("title", doc_id)
         doc_type = meta.get("vault_type") or meta.get("type", "unknown")
         doc_importance = meta.get("importance", "medium")
@@ -334,6 +368,7 @@ def query_vault(query: str, n_results: int = 5,
 
         result_entry = {
             "rank": rank,
+            "id": doc_id,
             "path": entry["parent_file"],
             "title": title,
             "type": doc_type,
@@ -378,8 +413,7 @@ def query_vault(query: str, n_results: int = 5,
     return response
 
 
-def semantic_context(query: str, threshold: float = 0.5,
-                     budget: int = 8000) -> dict:
+def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> dict:
     """Search vault memories for per-prompt context injection.
 
     Optimized for automatic, per-message use. Differs from query_vault():
@@ -441,7 +475,9 @@ def semantic_context(query: str, threshold: float = 0.5,
 
     skipped_sensitive = 0
 
-    for doc_id, distance, document, metadata in zip(ids, distances, documents, metadatas):
+    for doc_id, distance, document, metadata in zip(
+        ids, distances, documents, metadatas
+    ):
         meta = metadata or {}
 
         # Filter sensitive directories
@@ -476,19 +512,24 @@ def semantic_context(query: str, threshold: float = 0.5,
             parsed = parse_id(doc_id)
             parent_file = parsed.content_id
 
-        raw_entries.append({
-            "doc_id": doc_id,
-            "parent_file": parent_file,
-            "relevance": relevance,
-            "document": document,
-            "metadata": meta,
-        })
+        raw_entries.append(
+            {
+                "doc_id": doc_id,
+                "parent_file": parent_file,
+                "relevance": relevance,
+                "document": document,
+                "metadata": meta,
+            }
+        )
 
     # Chunk deduplication: keep best-relevance chunk per parent_file
     best_per_file = {}
     for entry in raw_entries:
         pf = entry["parent_file"]
-        if pf not in best_per_file or entry["relevance"] > best_per_file[pf]["relevance"]:
+        if (
+            pf not in best_per_file
+            or entry["relevance"] > best_per_file[pf]["relevance"]
+        ):
             best_per_file[pf] = entry
 
     # Sort by relevance descending
@@ -504,7 +545,7 @@ def semantic_context(query: str, threshold: float = 0.5,
 
     for entry in deduped:
         ns = entry["metadata"].get("namespace", "")
-        is_vault = (ns == "vault::")
+        is_vault = ns == "vault::"
 
         if is_vault:
             cost = VAULT_REF_COST
@@ -534,7 +575,9 @@ def semantic_context(query: str, threshold: float = 0.5,
         passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
             surfaced_ids = [entry["doc_id"] for entry in selected]
-            _increment_retrieval_counts(collection, surfaced_ids, increment=passive_increment)
+            _increment_retrieval_counts(
+                collection, surfaced_ids, increment=passive_increment
+            )
 
     matches = []
     for entry in selected:
@@ -551,7 +594,11 @@ def semantic_context(query: str, threshold: float = 0.5,
         else:
             # Tier 2: full content, no truncation
             entry_fmt = _detect_format_from_entry(entry)
-            content = _extract_preview(entry["document"], max_len=10000, fmt=entry_fmt) if entry["document"] else ""
+            content = (
+                _extract_preview(entry["document"], max_len=10000, fmt=entry_fmt)
+                if entry["document"]
+                else ""
+            )
 
         match = {
             "source": entry["parent_file"],
@@ -632,7 +679,8 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
 
     for i, doc_id in enumerate(raw.get("ids", [])):
         entry = {
-            "id": _display_path(doc_id),
+            "id": doc_id,
+            "path": _display_path(doc_id),
             "document": raw["documents"][i] if raw.get("documents") else None,
         }
         if include_metadata and raw.get("metadatas"):
@@ -681,12 +729,17 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     for i, doc_id in enumerate(peek.get("ids", [])):
         meta = peek["metadatas"][i] if peek.get("metadatas") else {}
         # Use vault_type for vault entries, fall back to type
-        entry_type = (meta or {}).get("vault_type") or (meta or {}).get("type", "unknown")
-        samples.append({
-            "path": _display_path(doc_id),
-            "title": (meta or {}).get("title", doc_id),
-            "type": entry_type,
-        })
+        entry_type = (meta or {}).get("vault_type") or (meta or {}).get(
+            "type", "unknown"
+        )
+        samples.append(
+            {
+                "id": doc_id,
+                "path": _display_path(doc_id),
+                "title": (meta or {}).get("title", doc_id),
+                "type": entry_type,
+            }
+        )
 
     result = {
         "success": True,

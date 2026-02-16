@@ -4,6 +4,7 @@ Routes deletes based on parameters:
 - id -> delete by document ID (routes by prefix)
 - name -> delete strategic memory by name
 """
+
 import os
 from typing import Optional
 
@@ -33,7 +34,7 @@ def _remove_vault_file(id: str, confirm: bool = False) -> dict:
             "confirmation_required": True,
             "file_path": file_path,
             "message": f"Delete vault file '{file_path}'? "
-                       f"Pass confirm=True to proceed.",
+            f"Pass confirm=True to proceed.",
         }
 
     # Delete the file
@@ -76,29 +77,38 @@ def remove(
         tier = get_tier(id)
         if tier == TIER_CHROMADB:
             from .tier2 import tier2_delete
+
             return tier2_delete(id)
         elif id.startswith("vault::"):
             return _remove_vault_file(id, confirm=confirm)
         elif id.startswith("memory::"):
-            mem_name = id[8:]
-            return {
-                "success": False,
-                "error": f"This is a strategic memory. "
-                         f"Use jarvis_remove(name=\"{mem_name}\", confirm=True) instead.",
-            }
+            from .namespaces import parse_id
+            from .memory_crud import memory_delete
+
+            parsed = parse_id(id)
+            scope = "global" if "global" in parsed.full_prefix else "project"
+            return memory_delete(
+                name=parsed.content_id,
+                scope=scope,
+                project=parsed.project if scope == "project" else None,
+                confirm=confirm,
+            )
         else:
             return {
                 "success": False,
                 "error": f"Unrecognized ID prefix in '{id}'. "
-                         f"Use id= for Tier 2 content (obs::, pattern::, etc.) "
-                         f"or vault content (vault::), or name= for strategic memories.",
+                f"Use id= for Tier 2 content (obs::, pattern::, etc.) "
+                f"or vault content (vault::), or name= for strategic memories.",
             }
 
     if name:
         from .memory_crud import memory_delete
+
         return memory_delete(
-            name=name, scope=scope,
-            project=project, confirm=confirm,
+            name=name,
+            scope=scope,
+            project=project,
+            confirm=confirm,
         )
 
     return {"success": False, "error": "No valid parameter provided"}

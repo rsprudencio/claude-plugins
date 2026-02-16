@@ -8,6 +8,7 @@ Computes a 0.0-1.0 importance score from content signals:
 
 Frontmatter 'importance' overrides the type weight component.
 """
+
 import math
 import re
 from datetime import datetime, timezone
@@ -71,7 +72,9 @@ def compute_importance(
         base = _compute_type_weight(vault_type, config.get("type_weights", {}))
 
     concept = _compute_concept_bonus(content, config.get("concept_patterns", {}))
-    recency = _compute_recency_bonus(created_at, config.get("recency_half_life_days", 7.0))
+    recency = _compute_recency_bonus(
+        created_at, config.get("recency_half_life_days", 7.0)
+    )
     retrieval = _compute_retrieval_bonus(retrieval_count)
 
     return max(0.0, min(1.0, base + concept + recency + retrieval))
@@ -93,7 +96,9 @@ def _compute_concept_bonus(content: str, concept_patterns: dict) -> float:
     return min(total, _CONCEPT_BONUS_CAP)
 
 
-def _compute_recency_bonus(created_at: Optional[str], half_life_days: float = 7.0) -> float:
+def _compute_recency_bonus(
+    created_at: Optional[str], half_life_days: float = 7.0
+) -> float:
     """Exponential decay bonus based on document age.
 
     Returns up to _RECENCY_BONUS_MAX for very recent documents,

@@ -1,4 +1,5 @@
 """Tests for secret detection module."""
+
 import pytest
 from tools.secret_scan import scan_for_secrets, redact
 
@@ -62,7 +63,9 @@ class TestScanForSecrets:
         assert "private_key" in types
 
     def test_jwt_token(self):
-        content = "Authorization: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+        content = (
+            "Authorization: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature"
+        )
         detections = scan_for_secrets(content)
         types = [d["type"] for d in detections]
         assert "jwt_token" in types

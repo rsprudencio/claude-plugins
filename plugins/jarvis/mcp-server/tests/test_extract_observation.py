@@ -1,4 +1,5 @@
 """Tests for extract_observation.py — transcript parsing, watermark tracking, and Haiku extraction."""
+
 import json
 import os
 import subprocess
@@ -11,9 +12,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 # Add hooks-handlers to path for importing
-HOOKS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "hooks-handlers"
-)
+HOOKS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "hooks-handlers")
 sys.path.insert(0, HOOKS_DIR)
 
 from extract_observation import (
@@ -68,7 +67,9 @@ class TestReadWatermark:
     def test_valid_watermark(self, tmp_path):
         """Reads a valid watermark file."""
         wm_file = tmp_path / "session-abc.json"
-        wm_file.write_text(json.dumps({"last_extracted_line": 42, "timestamp": "2026-01-01T00:00:00Z"}))
+        wm_file.write_text(
+            json.dumps({"last_extracted_line": 42, "timestamp": "2026-01-01T00:00:00Z"})
+        )
         with patch("extract_observation.WATERMARK_DIR", tmp_path):
             result = read_watermark("session-abc")
         assert result == 42
@@ -99,8 +100,12 @@ class TestReadWatermark:
 
     def test_per_session_isolation(self, tmp_path):
         """Different sessions have independent watermarks."""
-        (tmp_path / "session-A.json").write_text(json.dumps({"last_extracted_line": 10}))
-        (tmp_path / "session-B.json").write_text(json.dumps({"last_extracted_line": 99}))
+        (tmp_path / "session-A.json").write_text(
+            json.dumps({"last_extracted_line": 10})
+        )
+        (tmp_path / "session-B.json").write_text(
+            json.dumps({"last_extracted_line": 99})
+        )
         with patch("extract_observation.WATERMARK_DIR", tmp_path):
             assert read_watermark("session-A") == 10
             assert read_watermark("session-B") == 99
@@ -183,8 +188,21 @@ class TestReadTranscriptFrom:
     def test_full_read_from_start(self, tmp_path):
         """Reads all lines when starting from 0."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         indexed, total = read_transcript_from(path, 0)
@@ -197,8 +215,21 @@ class TestReadTranscriptFrom:
         """Reads only lines from start_line onward."""
         lines = [
             json.dumps({"type": "system", "message": {}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         indexed, total = read_transcript_from(path, 1)
@@ -241,7 +272,12 @@ class TestReadTranscriptFrom:
 
     def test_skips_blank_lines(self, tmp_path):
         """Blank/whitespace-only lines are skipped."""
-        raw = json.dumps({"type": "user"}) + "\n\n" + json.dumps({"type": "assistant"}) + "\n   \n"
+        raw = (
+            json.dumps({"type": "user"})
+            + "\n\n"
+            + json.dumps({"type": "assistant"})
+            + "\n   \n"
+        )
         path = tmp_path / "blanks.jsonl"
         path.write_text(raw)
         indexed, total = read_transcript_from(str(path), 0)
@@ -257,7 +293,15 @@ class TestParseAllTurns:
     """Tests for parse_all_turns() — forward multi-turn parsing."""
 
     def _make_user(self, text, idx=0):
-        return (idx, json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": text}]}}))
+        return (
+            idx,
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": text}]},
+                }
+            ),
+        )
 
     def _make_assistant(self, text, tools=None, idx=0, usage=None):
         content = [{"type": "text", "text": text}]
@@ -319,14 +363,22 @@ class TestParseAllTurns:
         """Tool names within a turn are deduplicated."""
         lines = [
             self._make_user("Edit", 0),
-            (1, json.dumps({"type": "assistant", "message": {
-                "content": [
-                    {"type": "tool_use", "name": "Read", "input": {}},
-                    {"type": "tool_use", "name": "Edit", "input": {}},
-                    {"type": "tool_use", "name": "Read", "input": {}},
-                ],
-                "usage": {}
-            }})),
+            (
+                1,
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {"type": "tool_use", "name": "Read", "input": {}},
+                                {"type": "tool_use", "name": "Edit", "input": {}},
+                                {"type": "tool_use", "name": "Read", "input": {}},
+                            ],
+                            "usage": {},
+                        },
+                    }
+                ),
+            ),
         ]
         turns = parse_all_turns(lines)
         assert turns[0]["tool_names"] == ["Read", "Edit"]
@@ -335,15 +387,43 @@ class TestParseAllTurns:
         """File paths accumulate across turns (not just last turn)."""
         lines = [
             self._make_user("Read A", 0),
-            (1, json.dumps({"type": "assistant", "message": {
-                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}}],
-                "usage": {}
-            }})),
+            (
+                1,
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Read",
+                                    "input": {"file_path": "/a.py"},
+                                }
+                            ],
+                            "usage": {},
+                        },
+                    }
+                ),
+            ),
             self._make_user("Read B", 2),
-            (3, json.dumps({"type": "assistant", "message": {
-                "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "/b.py"}}],
-                "usage": {}
-            }})),
+            (
+                3,
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "name": "Read",
+                                    "input": {"file_path": "/b.py"},
+                                }
+                            ],
+                            "usage": {},
+                        },
+                    }
+                ),
+            ),
         ]
         turns = parse_all_turns(lines)
         assert len(turns) == 2
@@ -380,7 +460,9 @@ class TestParseAllTurns:
         """Token usage is extracted from assistant message."""
         lines = [
             self._make_user("Test", 0),
-            self._make_assistant("OK", idx=1, usage={"input_tokens": 500, "output_tokens": 200}),
+            self._make_assistant(
+                "OK", idx=1, usage={"input_tokens": 500, "output_tokens": 200}
+            ),
         ]
         turns = parse_all_turns(lines)
         assert turns[0]["token_usage"] == "500 in, 200 out"
@@ -399,7 +481,12 @@ class TestParseAllTurns:
     def test_user_content_as_string(self):
         """User message content can be a plain string (not a list of blocks)."""
         lines = [
-            (0, json.dumps({"type": "user", "message": {"content": "Fix the login bug"}})),
+            (
+                0,
+                json.dumps(
+                    {"type": "user", "message": {"content": "Fix the login bug"}}
+                ),
+            ),
             self._make_assistant("I'll fix that.", idx=1),
         ]
         turns = parse_all_turns(lines)
@@ -432,8 +519,18 @@ class TestPickBestTurn:
     def test_longest_turn_wins(self):
         """Picks the turn with most text."""
         turns = [
-            {"user_text": "x" * 100, "assistant_text": "y" * 100, "tool_names": [], "relevant_files": []},
-            {"user_text": "x" * 300, "assistant_text": "y" * 300, "tool_names": [], "relevant_files": []},
+            {
+                "user_text": "x" * 100,
+                "assistant_text": "y" * 100,
+                "tool_names": [],
+                "relevant_files": [],
+            },
+            {
+                "user_text": "x" * 300,
+                "assistant_text": "y" * 300,
+                "tool_names": [],
+                "relevant_files": [],
+            },
         ]
         best = pick_best_turn(turns, min_chars=100)
         assert best is turns[1]
@@ -441,8 +538,18 @@ class TestPickBestTurn:
     def test_tool_diversity_boost(self):
         """Turn with tools can beat a longer turn without tools."""
         turns = [
-            {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []},
-            {"user_text": "x" * 150, "assistant_text": "y" * 150, "tool_names": ["Read", "Edit", "Write"], "relevant_files": []},
+            {
+                "user_text": "x" * 200,
+                "assistant_text": "y" * 200,
+                "tool_names": [],
+                "relevant_files": [],
+            },
+            {
+                "user_text": "x" * 150,
+                "assistant_text": "y" * 150,
+                "tool_names": ["Read", "Edit", "Write"],
+                "relevant_files": [],
+            },
         ]
         # Turn 1: 400 chars, Turn 2: 300 + 300 (3 tools * 100) = 600
         best = pick_best_turn(turns, min_chars=100)
@@ -451,8 +558,18 @@ class TestPickBestTurn:
     def test_file_boost(self):
         """Turn with files gets +200 score boost."""
         turns = [
-            {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []},
-            {"user_text": "x" * 150, "assistant_text": "y" * 150, "tool_names": [], "relevant_files": ["/a.py"]},
+            {
+                "user_text": "x" * 200,
+                "assistant_text": "y" * 200,
+                "tool_names": [],
+                "relevant_files": [],
+            },
+            {
+                "user_text": "x" * 150,
+                "assistant_text": "y" * 150,
+                "tool_names": [],
+                "relevant_files": ["/a.py"],
+            },
         ]
         # Turn 1: 400, Turn 2: 300 + 200 = 500
         best = pick_best_turn(turns, min_chars=100)
@@ -461,7 +578,12 @@ class TestPickBestTurn:
     def test_below_threshold_filtered(self):
         """Turns below min_chars are not considered."""
         turns = [
-            {"user_text": "Hi", "assistant_text": "Hello", "tool_names": ["Read"], "relevant_files": ["/a.py"]},
+            {
+                "user_text": "Hi",
+                "assistant_text": "Hello",
+                "tool_names": ["Read"],
+                "relevant_files": ["/a.py"],
+            },
         ]
         best = pick_best_turn(turns, min_chars=200)
         assert best is None
@@ -473,15 +595,30 @@ class TestPickBestTurn:
     def test_all_below_threshold(self):
         """Returns None when all turns are below threshold."""
         turns = [
-            {"user_text": "x" * 50, "assistant_text": "y" * 50, "tool_names": [], "relevant_files": []},
-            {"user_text": "x" * 80, "assistant_text": "y" * 80, "tool_names": [], "relevant_files": []},
+            {
+                "user_text": "x" * 50,
+                "assistant_text": "y" * 50,
+                "tool_names": [],
+                "relevant_files": [],
+            },
+            {
+                "user_text": "x" * 80,
+                "assistant_text": "y" * 80,
+                "tool_names": [],
+                "relevant_files": [],
+            },
         ]
         best = pick_best_turn(turns, min_chars=200)
         assert best is None
 
     def test_single_turn_above_threshold(self):
         """Returns the only qualifying turn."""
-        turn = {"user_text": "x" * 200, "assistant_text": "y" * 200, "tool_names": [], "relevant_files": []}
+        turn = {
+            "user_text": "x" * 200,
+            "assistant_text": "y" * 200,
+            "tool_names": [],
+            "relevant_files": [],
+        }
         best = pick_best_turn([turn], min_chars=200)
         assert best is turn
 
@@ -497,14 +634,21 @@ class TestParseTranscriptTurn:
     def test_valid_turn(self):
         """Parses valid user + assistant turn."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [{"type": "text", "text": "Hi there"}],
-                    "usage": {"input_tokens": 10, "output_tokens": 5}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi there"}],
+                        "usage": {"input_tokens": 10, "output_tokens": 5},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -517,18 +661,25 @@ class TestParseTranscriptTurn:
     def test_assistant_with_tools(self):
         """Extracts tool_use names from assistant content."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "commit"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Committing"},
-                        {"type": "tool_use", "name": "jarvis_commit"},
-                        {"type": "tool_use", "name": "jarvis_push"},
-                    ],
-                    "usage": {"input_tokens": 20, "output_tokens": 30}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "commit"}]},
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Committing"},
+                            {"type": "tool_use", "name": "jarvis_commit"},
+                            {"type": "tool_use", "name": "jarvis_push"},
+                        ],
+                        "usage": {"input_tokens": 20, "output_tokens": 30},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -537,19 +688,26 @@ class TestParseTranscriptTurn:
     def test_dedup_tool_names(self):
         """Deduplicates tool names while preserving order."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "test"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "tool_use", "name": "Read"},
-                        {"type": "tool_use", "name": "Write"},
-                        {"type": "tool_use", "name": "Read"},  # Duplicate
-                        {"type": "tool_use", "name": "Write"},  # Duplicate
-                    ],
-                    "usage": {}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "test"}]},
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "name": "Read"},
+                            {"type": "tool_use", "name": "Write"},
+                            {"type": "tool_use", "name": "Read"},  # Duplicate
+                            {"type": "tool_use", "name": "Write"},  # Duplicate
+                        ],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -561,8 +719,21 @@ class TestParseTranscriptTurn:
             json.dumps({"type": "system", "message": {}}),
             json.dumps({"type": "progress", "message": {}}),
             json.dumps({"type": "file-history-snapshot", "message": {}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hi"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hello"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -572,7 +743,12 @@ class TestParseTranscriptTurn:
     def test_no_assistant_message(self):
         """Returns None if no assistant message found."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -581,7 +757,15 @@ class TestParseTranscriptTurn:
     def test_no_user_message(self):
         """Returns None if no user message before assistant."""
         lines = [
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -591,8 +775,21 @@ class TestParseTranscriptTurn:
         """Skips invalid JSON lines gracefully."""
         lines = [
             "not valid json",
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -607,16 +804,26 @@ class TestParseTranscriptTurn:
     def test_multiline_user_text(self):
         """Joins multiple text blocks in user message."""
         lines = [
-            json.dumps({
-                "type": "user",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Line 1"},
-                        {"type": "text", "text": "Line 2"},
-                    ]
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Line 1"},
+                            {"type": "text", "text": "Line 2"},
+                        ]
+                    },
                 }
-            }),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "OK"}], "usage": {}}}),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "OK"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -626,18 +833,25 @@ class TestParseTranscriptTurn:
     def test_multiline_assistant_text(self):
         """Joins multiple text blocks in assistant message."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Test"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Part 1"},
-                        {"type": "tool_use", "name": "Read"},
-                        {"type": "text", "text": "Part 2"},
-                    ],
-                    "usage": {}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Test"}]},
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Part 1"},
+                            {"type": "tool_use", "name": "Read"},
+                            {"type": "text", "text": "Part 2"},
+                        ],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -647,10 +861,36 @@ class TestParseTranscriptTurn:
     def test_finds_last_assistant(self):
         """Finds the LAST assistant message (most recent turn)."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "First"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Old"}], "usage": {}}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Second"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "New"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "First"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Old"}],
+                        "usage": {},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Second"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "New"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
 
@@ -660,8 +900,18 @@ class TestParseTranscriptTurn:
     def test_missing_usage_field(self):
         """Handles missing usage field gracefully."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Test"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "OK"}]}}),  # No usage
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Test"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "OK"}]},
+                }
+            ),  # No usage
         ]
         result = parse_transcript_turn(lines)
 
@@ -885,7 +1135,9 @@ class TestCallHaikuAPI:
 
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(text='{"has_observation": true, "content": "Test", "importance_score": 0.6, "tags": ["test"]}')
+            MagicMock(
+                text='{"has_observation": true, "content": "Test", "importance_score": 0.6, "tags": ["test"]}'
+            )
         ]
         mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
         mock_client.messages.create.return_value = mock_response
@@ -926,7 +1178,7 @@ class TestCallHaikuAPI:
         mock_anthropic.Anthropic.return_value = mock_client
 
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text='not valid json')]
+        mock_response.content = [MagicMock(text="not valid json")]
         mock_client.messages.create.return_value = mock_response
 
         result = call_haiku_api("Test prompt")
@@ -1141,7 +1393,9 @@ class TestStoreObservation:
 
         call_args = mock_tier2_write.call_args[1]
         assert "project_dir" not in call_args["extra_metadata"]
-        assert call_args["extra_metadata"]["project_path"] == "/Users/test/jarvis-plugin"
+        assert (
+            call_args["extra_metadata"]["project_path"] == "/Users/test/jarvis-plugin"
+        )
         assert call_args["extra_metadata"]["git_branch"] == "master"
 
     @patch("tools.tier2.tier2_write")
@@ -1168,7 +1422,10 @@ class TestStoreObservation:
         )
 
         call_args = mock_tier2_write.call_args[1]
-        assert call_args["extra_metadata"]["relevant_files"] == "src/main.py,tests/test_main.py"
+        assert (
+            call_args["extra_metadata"]["relevant_files"]
+            == "src/main.py,tests/test_main.py"
+        )
 
     @patch("tools.tier2.tier2_write")
     def test_scope_passthrough(self, mock_tier2_write):
@@ -1218,7 +1475,11 @@ class TestExtractFilePathsFromTools:
     def test_extracts_file_path(self):
         """Extracts file_path from tool_use input."""
         content = [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+            {
+                "type": "tool_use",
+                "name": "Read",
+                "input": {"file_path": "/src/main.py"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == ["/src/main.py"]
@@ -1226,7 +1487,11 @@ class TestExtractFilePathsFromTools:
     def test_extracts_relative_path(self):
         """Extracts relative_path from tool_use input."""
         content = [
-            {"type": "tool_use", "name": "mcp__serena__read_file", "input": {"relative_path": "src/lib.rs"}},
+            {
+                "type": "tool_use",
+                "name": "mcp__serena__read_file",
+                "input": {"relative_path": "src/lib.rs"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == ["src/lib.rs"]
@@ -1234,7 +1499,11 @@ class TestExtractFilePathsFromTools:
     def test_extracts_path_key(self):
         """Extracts 'path' from tool_use input."""
         content = [
-            {"type": "tool_use", "name": "Glob", "input": {"path": "/Users/test/project"}},
+            {
+                "type": "tool_use",
+                "name": "Glob",
+                "input": {"path": "/Users/test/project"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == ["/Users/test/project"]
@@ -1242,7 +1511,11 @@ class TestExtractFilePathsFromTools:
     def test_skips_bash(self):
         """Skips Bash tool — file paths in commands aren't structured."""
         content = [
-            {"type": "tool_use", "name": "Bash", "input": {"command": "ls", "path": "/tmp"}},
+            {
+                "type": "tool_use",
+                "name": "Bash",
+                "input": {"command": "ls", "path": "/tmp"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == []
@@ -1250,7 +1523,11 @@ class TestExtractFilePathsFromTools:
     def test_skips_webfetch(self):
         """Skips WebFetch tool."""
         content = [
-            {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.com", "path": "/tmp"}},
+            {
+                "type": "tool_use",
+                "name": "WebFetch",
+                "input": {"url": "https://example.com", "path": "/tmp"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == []
@@ -1258,7 +1535,11 @@ class TestExtractFilePathsFromTools:
     def test_skips_websearch(self):
         """Skips WebSearch tool."""
         content = [
-            {"type": "tool_use", "name": "WebSearch", "input": {"query": "test", "path": "/tmp"}},
+            {
+                "type": "tool_use",
+                "name": "WebSearch",
+                "input": {"query": "test", "path": "/tmp"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == []
@@ -1266,8 +1547,16 @@ class TestExtractFilePathsFromTools:
     def test_deduplicates(self):
         """Deduplicates file paths across multiple tool_use blocks."""
         content = [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
-            {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/main.py"}},
+            {
+                "type": "tool_use",
+                "name": "Read",
+                "input": {"file_path": "/src/main.py"},
+            },
+            {
+                "type": "tool_use",
+                "name": "Edit",
+                "input": {"file_path": "/src/main.py"},
+            },
             {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/lib.py"}},
         ]
         result = extract_file_paths_from_tools(content)
@@ -1276,7 +1565,11 @@ class TestExtractFilePathsFromTools:
     def test_caps_at_10(self):
         """Caps file paths at 10."""
         content = [
-            {"type": "tool_use", "name": "Read", "input": {"file_path": f"/src/file{i}.py"}}
+            {
+                "type": "tool_use",
+                "name": "Read",
+                "input": {"file_path": f"/src/file{i}.py"},
+            }
             for i in range(15)
         ]
         result = extract_file_paths_from_tools(content)
@@ -1286,7 +1579,11 @@ class TestExtractFilePathsFromTools:
         """Ignores text blocks."""
         content = [
             {"type": "text", "text": "Hello"},
-            {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
+            {
+                "type": "tool_use",
+                "name": "Read",
+                "input": {"file_path": "/src/main.py"},
+            },
         ]
         result = extract_file_paths_from_tools(content)
         assert result == ["/src/main.py"]
@@ -1307,7 +1604,12 @@ class TestExtractFilePathsFromTools:
 
     def test_non_dict_blocks_skipped(self):
         """Skips non-dict items in content list."""
-        content = ["string_item", 42, None, {"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}}]
+        content = [
+            "string_item",
+            42,
+            None,
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/a.py"}},
+        ]
         result = extract_file_paths_from_tools(content)
         assert result == ["/a.py"]
 
@@ -1318,18 +1620,33 @@ class TestParseTranscriptTurnRelevantFiles:
     def test_includes_relevant_files(self):
         """parsed turn includes relevant_files from tool_use blocks."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read this"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Reading file"},
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
-                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/lib.py"}},
-                    ],
-                    "usage": {"input_tokens": 100, "output_tokens": 50}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Read this"}]},
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Reading file"},
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/main.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "Edit",
+                                "input": {"file_path": "/src/lib.py"},
+                            },
+                        ],
+                        "usage": {"input_tokens": 100, "output_tokens": 50},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1338,8 +1655,21 @@ class TestParseTranscriptTurnRelevantFiles:
     def test_empty_relevant_files_when_no_tools(self):
         """relevant_files is empty when no tool_use blocks."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1397,8 +1727,21 @@ class TestParseTranscriptTurnAssistantLine:
     def test_returns_assistant_line(self):
         """assistant_line is correct forward index of the last assistant message."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hi"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hello"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1408,9 +1751,22 @@ class TestParseTranscriptTurnAssistantLine:
         """assistant_line is correct when system/progress lines are interspersed."""
         lines = [
             json.dumps({"type": "system", "message": {}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hi"}]}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hi"}]},
+                }
+            ),
             json.dumps({"type": "progress", "message": {}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hello"}],
+                        "usage": {},
+                    },
+                }
+            ),
             json.dumps({"type": "file-history-snapshot", "message": {}}),
         ]
         result = parse_transcript_turn(lines)
@@ -1421,10 +1777,36 @@ class TestParseTranscriptTurnAssistantLine:
     def test_assistant_line_picks_last_assistant(self):
         """assistant_line refers to the LAST assistant message."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "First"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Old"}], "usage": {}}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Second"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "New"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "First"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Old"}],
+                        "usage": {},
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Second"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "New"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1515,28 +1897,50 @@ class TestRelevantFilesAllTurns:
     def test_files_from_all_turns(self):
         """File paths collected from multiple assistant messages, not just the last."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read file A"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Reading A"},
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/a.py"}},
-                    ],
-                    "usage": {}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Read file A"}]},
                 }
-            }),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Now edit B"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Done"},
-                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/b.py"}},
-                    ],
-                    "usage": {}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Reading A"},
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/a.py"},
+                            },
+                        ],
+                        "usage": {},
+                    },
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Now edit B"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Done"},
+                            {
+                                "type": "tool_use",
+                                "name": "Edit",
+                                "input": {"file_path": "/src/b.py"},
+                            },
+                        ],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1547,27 +1951,53 @@ class TestRelevantFilesAllTurns:
     def test_files_deduplicated_across_turns(self):
         """Same file in multiple assistant turns only appears once."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read it"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
-                    ],
-                    "usage": {}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Read it"}]},
                 }
-            }),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Edit it"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "/src/main.py"}},
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/other.py"}},
-                    ],
-                    "usage": {}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/main.py"},
+                            },
+                        ],
+                        "usage": {},
+                    },
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Edit it"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Edit",
+                                "input": {"file_path": "/src/main.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/other.py"},
+                            },
+                        ],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1576,27 +2006,54 @@ class TestRelevantFilesAllTurns:
     def test_files_from_early_turns_with_text_only_ending(self):
         """Files from earlier turns are captured even when last assistant is text-only."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Read files"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/config.py"}},
-                        {"type": "tool_use", "name": "Read", "input": {"file_path": "/src/main.py"}},
-                    ],
-                    "usage": {}
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Read files"}]},
                 }
-            }),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Thanks, summarize"}]}}),
-            json.dumps({
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Here is your summary of the codebase..."},
-                    ],
-                    "usage": {"input_tokens": 500, "output_tokens": 200}
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/config.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "name": "Read",
+                                "input": {"file_path": "/src/main.py"},
+                            },
+                        ],
+                        "usage": {},
+                    },
                 }
-            }),
+            ),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [{"type": "text", "text": "Thanks, summarize"}]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Here is your summary of the codebase...",
+                            },
+                        ],
+                        "usage": {"input_tokens": 500, "output_tokens": 200},
+                    },
+                }
+            ),
         ]
         result = parse_transcript_turn(lines)
         assert result is not None
@@ -1717,8 +2174,21 @@ class TestExtractFirstUserMessage:
         """Extracts the first user message text."""
         lines = [
             json.dumps({"type": "system", "message": {}}),
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello world"}]}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello world"}]},
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         result = extract_first_user_message(path)
@@ -1728,7 +2198,12 @@ class TestExtractFirstUserMessage:
         """Truncates message to _FIRST_USER_MAX_CHARS."""
         long_text = "x" * 500
         lines = [
-            json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": long_text}]}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": long_text}]},
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         result = extract_first_user_message(path)
@@ -1743,7 +2218,15 @@ class TestExtractFirstUserMessage:
         """Returns empty string when no user message found."""
         lines = [
             json.dumps({"type": "system", "message": {}}),
-            json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "Hi"}], "usage": {}}}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "Hi"}],
+                        "usage": {},
+                    },
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         result = extract_first_user_message(path)
@@ -1753,7 +2236,14 @@ class TestExtractFirstUserMessage:
         """Stops scanning after max_scan_lines."""
         # Put system lines before the user message, beyond the scan limit
         lines = [json.dumps({"type": "system", "message": {}}) for _ in range(10)]
-        lines.append(json.dumps({"type": "user", "message": {"content": [{"type": "text", "text": "Hello"}]}}))
+        lines.append(
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {"content": [{"type": "text", "text": "Hello"}]},
+                }
+            )
+        )
         path = self._write_transcript(tmp_path, lines)
         # Scan limit of 5 should not find the user message at line 10
         result = extract_first_user_message(path, max_scan_lines=5)
@@ -1762,10 +2252,17 @@ class TestExtractFirstUserMessage:
     def test_multiline_text_blocks(self, tmp_path):
         """Joins multiple text blocks in user content."""
         lines = [
-            json.dumps({"type": "user", "message": {"content": [
-                {"type": "text", "text": "Part 1"},
-                {"type": "text", "text": "Part 2"},
-            ]}}),
+            json.dumps(
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Part 1"},
+                            {"type": "text", "text": "Part 2"},
+                        ]
+                    },
+                }
+            ),
         ]
         path = self._write_transcript(tmp_path, lines)
         result = extract_first_user_message(path)
@@ -1848,8 +2345,14 @@ class TestComputeContentBudget:
 class TestBuildSessionPrompt:
     """Tests for build_session_prompt() — session-level prompt construction."""
 
-    def _make_turn(self, user_text="Test user", assistant_text="Test assistant",
-                   tools=None, token_usage="100 in, 50 out", relevant_files=None):
+    def _make_turn(
+        self,
+        user_text="Test user",
+        assistant_text="Test assistant",
+        tools=None,
+        token_usage="100 in, 50 out",
+        relevant_files=None,
+    ):
         return {
             "user_text": user_text,
             "assistant_text": assistant_text,
@@ -1899,7 +2402,9 @@ class TestBuildSessionPrompt:
 
     def test_single_turn(self):
         """Works correctly with a single turn."""
-        turns = [self._make_turn(user_text="Solo question", assistant_text="Solo answer")]
+        turns = [
+            self._make_turn(user_text="Solo question", assistant_text="Solo answer")
+        ]
         prompt = build_session_prompt(turns, "Context", 2000)
         assert "### Turn 1" in prompt
         assert "Solo question" in prompt
@@ -1914,7 +2419,9 @@ class TestBuildSessionPrompt:
         """All turns are always present regardless of budget — budget truncates, not excludes."""
         turns = [
             self._make_turn(user_text="x" * 100, assistant_text="y" * 100),  # 200 chars
-            self._make_turn(user_text="x" * 300, assistant_text="y" * 300, tools=["Read"]),  # 600 chars
+            self._make_turn(
+                user_text="x" * 300, assistant_text="y" * 300, tools=["Read"]
+            ),  # 600 chars
             self._make_turn(user_text="x" * 200, assistant_text="y" * 200),  # 400 chars
         ]
         prompt = build_session_prompt(turns, "", 300)
@@ -1924,7 +2431,9 @@ class TestBuildSessionPrompt:
     def test_project_context(self):
         """Includes project and branch info."""
         turns = [self._make_turn()]
-        prompt = build_session_prompt(turns, "", 2000, project_name="my-project", git_branch="feature/x")
+        prompt = build_session_prompt(
+            turns, "", 2000, project_name="my-project", git_branch="feature/x"
+        )
         assert "my-project" in prompt
         assert "feature/x" in prompt
 
@@ -1934,7 +2443,9 @@ class TestBuildSessionPrompt:
         short_assistant = "Deployed to production."
         turns = [
             self._make_turn(user_text="x" * 500, assistant_text="y" * 500),  # Long turn
-            self._make_turn(user_text=short_user, assistant_text=short_assistant),  # Short turn (26 chars)
+            self._make_turn(
+                user_text=short_user, assistant_text=short_assistant
+            ),  # Short turn (26 chars)
             self._make_turn(user_text="x" * 400, assistant_text="y" * 400),  # Long turn
         ]
         prompt = build_session_prompt(turns, "", 2000)
@@ -1977,8 +2488,18 @@ class TestNormalizeExtractionResponse:
         """Handles new multi-observation schema."""
         parsed = {
             "observations": [
-                {"content": "First insight", "importance_score": 0.7, "tags": ["test"], "scope": "global"},
-                {"content": "Second insight", "importance_score": 0.5, "tags": [], "scope": "project"},
+                {
+                    "content": "First insight",
+                    "importance_score": 0.7,
+                    "tags": ["test"],
+                    "scope": "global",
+                },
+                {
+                    "content": "Second insight",
+                    "importance_score": 0.5,
+                    "tags": [],
+                    "scope": "project",
+                },
             ]
         }
         result = normalize_extraction_response(parsed)

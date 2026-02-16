@@ -1,4 +1,5 @@
 """Tests for query expansion module."""
+
 import pytest
 from tools.expansion import (
     expand_query,
@@ -16,7 +17,10 @@ class TestExpandQuery:
         result = expand_query("auth flow setup")
         assert result["enabled"] is True
         assert len(result["terms_added"]) > 0
-        assert "authentication" in result["terms_added"] or "authorization" in result["terms_added"]
+        assert (
+            "authentication" in result["terms_added"]
+            or "authorization" in result["terms_added"]
+        )
         assert result["expanded"] != result["original"]
 
     def test_no_match_returns_original(self):
@@ -42,7 +46,10 @@ class TestExpandQuery:
     def test_intent_detection_decision(self):
         result = expand_query("should we use Redis for caching")
         assert result["intent"] == "decision"
-        assert any(t in result["terms_added"] for t in ["decision", "tradeoff", "recommendation"])
+        assert any(
+            t in result["terms_added"]
+            for t in ["decision", "tradeoff", "recommendation"]
+        )
 
     def test_max_terms_limit(self):
         # "auth" + "db" + "how to" should generate many terms, but cap at max
@@ -69,16 +76,22 @@ class TestExtractExpansionTerms:
     """Tests for term extraction logic."""
 
     def test_synonym_match(self):
-        terms, intent = _extract_expansion_terms("db query", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS)
+        terms, intent = _extract_expansion_terms(
+            "db query", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS
+        )
         assert "database" in terms
         assert intent is None
 
     def test_intent_match(self):
-        terms, intent = _extract_expansion_terms("how to test", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS)
+        terms, intent = _extract_expansion_terms(
+            "how to test", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS
+        )
         assert intent == "how-to"
 
     def test_no_match(self):
-        terms, intent = _extract_expansion_terms("hello world", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS)
+        terms, intent = _extract_expansion_terms(
+            "hello world", DEFAULT_SYNONYMS, DEFAULT_INTENT_PATTERNS
+        )
         assert terms == [] or all(t not in DEFAULT_SYNONYMS for t in terms)
         assert intent is None
 

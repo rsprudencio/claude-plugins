@@ -4,9 +4,11 @@ Todoist API client for Jarvis.
 Uses the official todoist-api-python SDK for API access.
 Reads API token from ~/.jarvis/config.json → todoist.api_token.
 """
+
 import json
 import logging
 import os
+import re
 from datetime import date, timedelta
 
 import requests
@@ -55,6 +57,7 @@ def _get_api():
     if _api is None:
         token = _get_token()
         from todoist_api_python.api import TodoistAPI
+
         _api = TodoistAPI(token)
     return _api
 
@@ -83,15 +86,31 @@ def _handle_error(e: Exception) -> dict:
 
     # The SDK raises Exception with HTTP status info
     if "401" in error_str:
-        return {"success": False, "error": "Unauthorized - check your API token", "status_code": 401}
+        return {
+            "success": False,
+            "error": "Unauthorized - check your API token",
+            "status_code": 401,
+        }
     elif "403" in error_str:
-        return {"success": False, "error": "Forbidden - insufficient permissions", "status_code": 403}
+        return {
+            "success": False,
+            "error": "Forbidden - insufficient permissions",
+            "status_code": 403,
+        }
     elif "404" in error_str:
         return {"success": False, "error": "Not found", "status_code": 404}
     elif "429" in error_str:
-        return {"success": False, "error": "Rate limited - too many requests, try again later", "status_code": 429}
+        return {
+            "success": False,
+            "error": "Rate limited - too many requests, try again later",
+            "status_code": 429,
+        }
     elif "410" in error_str:
-        return {"success": False, "error": "API endpoint deprecated - update todoist-api-python", "status_code": 410}
+        return {
+            "success": False,
+            "error": "API endpoint deprecated - update todoist-api-python",
+            "status_code": 410,
+        }
 
     return {"success": False, "error": f"Todoist API error: {error_str}"}
 
@@ -154,20 +173,30 @@ def _project_to_dict(project) -> dict:
 
 
 def _parse_duration(dur_str: str) -> tuple[int, str] | None:
-    """Parse duration string (e.g., '2h', '90m', '2h30m') to (amount, unit)."""
-    minutes = 0
-    if "h" in dur_str:
-        parts = dur_str.split("h")
-        hours_part = parts[0].strip()
-        if "." in hours_part:
-            minutes += int(float(hours_part) * 60)
-        else:
-            minutes += int(hours_part) * 60
-        if len(parts) > 1 and parts[1].strip().rstrip("m"):
-            minutes += int(parts[1].strip().rstrip("m"))
-    elif "m" in dur_str:
-        minutes += int(dur_str.rstrip("m"))
-    return (minutes, "minute") if minutes > 0 else None
+    """Parse duration string (e.g., '2h', '90m', '2h30m', '2 hours') to (amount, unit)."""
+    if not dur_str:
+        return None
+
+    total_minutes = 0
+    # Match hours: digits followed by 'h', 'hr', or 'hour'
+    hours_match = re.search(r"(\d+(?:\.\d+)?)\s*h", dur_str.lower())
+    if hours_match:
+        total_minutes += int(float(hours_match.group(1)) * 60)
+
+    # Match minutes: digits followed by 'm' or 'min'
+    # Use negative lookbehind to ensure we don't match 'm' in 'h' or 'hour'
+    # Actually, simpler: just match digits followed by 'm' that isn't preceded by 'h'
+    # But many strings have both. Let's look for 'm' or 'min' specifically.
+    minutes_match = re.search(r"(\d+)\s*m(?:in)?", dur_str.lower())
+    if minutes_match:
+        # Avoid double-counting if 'm' was part of 'h' (unlikely with this regex)
+        total_minutes += int(minutes_match.group(1))
+
+    # Fallback for just digits
+    if total_minutes == 0 and dur_str.isdigit():
+        total_minutes = int(dur_str)
+
+    return (total_minutes, "minute") if total_minutes > 0 else None
 
 
 PRIORITY_MAP = {"p1": 4, "p2": 3, "p3": 2, "p4": 1}
@@ -213,13 +242,18 @@ def find_tasks(
         if search_text:
             search_lower = search_text.lower()
             tasks = [
-                t for t in tasks
+                t
+                for t in tasks
                 if search_lower in t.content.lower()
                 or search_lower in (t.description or "").lower()
             ]
 
         tasks = tasks[:limit]
-        return {"success": True, "tasks": [_task_to_dict(t) for t in tasks], "count": len(tasks)}
+        return {
+            "success": True,
+            "tasks": [_task_to_dict(t) for t in tasks],
+            "count": len(tasks),
+        }
 
     except Exception as e:
         return _handle_error(e)
@@ -282,7 +316,8 @@ def find_tasks_by_date(
 
 def add_tasks(tasks: list[dict]) -> dict:
     """Create one or more tasks. Each dict may have: content, description,
-    dueString, priority, labels, projectId, sectionId, parentId, deadlineDate, duration."""
+    dueString, priority, labels, projectId, sectionId, parentId, deadlineDate, duration.
+    """
     try:
         api = _get_api()
         created = []
@@ -312,7 +347,9 @@ def add_tasks(tasks: list[dict]) -> dict:
                 # Convert priority: p1=4, p2=3, p3=2, p4=1
                 if task.get("priority"):
                     p = task["priority"]
-                    kwargs["priority"] = PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
+                    kwargs["priority"] = (
+                        PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
+                    )
 
                 # Handle deadlineDate
                 if task.get("deadlineDate"):
@@ -407,7 +444,9 @@ def update_tasks(tasks: list[dict]) -> dict:
                 # Convert priority string to int
                 if "priority" in task:
                     p = task["priority"]
-                    kwargs["priority"] = PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
+                    kwargs["priority"] = (
+                        PRIORITY_MAP.get(p, p) if isinstance(p, str) else p
+                    )
 
                 # Handle deadlineDate removal
                 if "deadlineDate" in task:
@@ -455,7 +494,10 @@ def delete_object(object_type: str, object_id: str) -> dict:
         api = _get_api()
         valid_types = {"task", "project", "section", "comment"}
         if object_type not in valid_types:
-            return {"success": False, "error": f"Invalid type '{object_type}'. Valid: {', '.join(sorted(valid_types))}"}
+            return {
+                "success": False,
+                "error": f"Invalid type '{object_type}'. Valid: {', '.join(sorted(valid_types))}",
+            }
 
         delete_map = {
             "task": api.delete_task,

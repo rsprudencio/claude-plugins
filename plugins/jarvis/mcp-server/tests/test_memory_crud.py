@@ -1,23 +1,33 @@
 """Tests for memory CRUD tool handlers."""
+
 import os
 import pytest
 from tools.memory_crud import (
-    memory_write, memory_read, memory_list, memory_delete,
+    memory_write,
+    memory_read,
+    memory_list,
+    memory_delete,
 )
 
 
 def _reset_chromadb(mock_config):
     """Reset ChromaDB singleton for test isolation."""
     import tools.memory as mem
+
     mem._chroma_client = None
-    mock_config.set(memory={
-        "db_path": str(mock_config.vault_path / ".test_crud_db"),
-        "project_memories_path": str(mock_config.vault_path / ".jarvis" / "memories"),
-    })
+    mock_config.set(
+        memory={
+            "db_path": str(mock_config.vault_path / ".test_crud_db"),
+            "project_memories_path": str(
+                mock_config.vault_path / ".jarvis" / "memories"
+            ),
+        }
+    )
 
 
 def _cleanup_chromadb():
     import tools.memory as mem
+
     mem._chroma_client = None
 
 
@@ -162,8 +172,11 @@ class TestMemoryRead:
 
         # Write file directly (bypass ChromaDB)
         from tools.memory_files import resolve_memory_path, write_memory_file
+
         path, _ = resolve_memory_path("file-only", scope="global")
-        write_memory_file(path, "file-only", "File content", "global", None, "medium", [], False)
+        write_memory_file(
+            path, "file-only", "File content", "global", None, "medium", [], False
+        )
 
         result = memory_read(name="file-only")
         assert result["success"] is True
@@ -186,7 +199,9 @@ class TestMemoryRead:
     def test_read_project_scope(self, mock_config):
         _reset_chromadb(mock_config)
 
-        memory_write(name="proj-read", content="Project data", scope="project", project="myapp")
+        memory_write(
+            name="proj-read", content="Project data", scope="project", project="myapp"
+        )
         result = memory_read(name="proj-read", scope="project", project="myapp")
         assert result["success"] is True
         assert result["found"] is True
@@ -329,6 +344,7 @@ class TestIntegrationCycle:
 
         # Query (semantic search should find it)
         from tools.query import query_vault
+
         query_result = query_vault("memory lifecycle test")
         assert query_result["success"] is True
         # It should appear in results (indexed during write)
@@ -347,23 +363,22 @@ class TestIntegrationCycle:
         _cleanup_chromadb()
 
 
-
 class TestMemoryTierMetadata:
     """Tests for tier field in memory metadata."""
-    
+
     def test_memory_write_includes_tier(self, mock_config):
         """Test that memory_write includes tier='file' in metadata."""
         _cleanup_chromadb()
 
         result = memory_write(
-            name="test-tier-memory",
-            content="Testing tier metadata in memories"
+            name="test-tier-memory", content="Testing tier metadata in memories"
         )
         assert result["success"] is True
 
         # Verify tier in metadata
         from tools.memory import _get_collection
         from tools.namespaces import global_memory_id
+
         collection = _get_collection()
         doc_id = global_memory_id("test-tier-memory")
         doc = collection.get(ids=[doc_id])

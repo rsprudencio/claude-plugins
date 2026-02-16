@@ -1,11 +1,15 @@
 """Tests for commit.py git commit operations."""
+
 import os
 
 import pytest
 
 from tools.commit import (
-    stage_files, execute_commit, get_commit_stats,
-    get_committed_files, reindex_committed_files,
+    stage_files,
+    execute_commit,
+    get_commit_stats,
+    get_committed_files,
+    reindex_committed_files,
     commit_user_prologue,
 )
 
@@ -179,7 +183,7 @@ class TestExecuteCommit:
             return False, {
                 "success": False,
                 "error": "Mock git error",
-                "stderr": "fatal: error"
+                "stderr": "fatal: error",
             }
 
         monkeypatch.setattr(commit_module, "run_git_command", mock_error)
@@ -189,11 +193,14 @@ class TestExecuteCommit:
         assert result["success"] is False
         assert "error" in result
 
-    def test_hash_retrieval_failure_returns_unknown(self, mock_config, git_repo, monkeypatch):
+    def test_hash_retrieval_failure_returns_unknown(
+        self, mock_config, git_repo, monkeypatch
+    ):
         """If hash retrieval fails, returns 'unknown'."""
         from tools import commit as commit_module
 
         call_count = [0]
+
         def mock_selective_failure(args, *other_args, **kwargs):
             call_count[0] += 1
             if "commit" in args:
@@ -244,7 +251,7 @@ class TestExecuteCommit:
         test_file.write_text("content")
         stage_files([str(test_file)])
 
-        message = 'Message with "quotes" and \'apostrophes\''
+        message = "Message with \"quotes\" and 'apostrophes'"
         result = execute_commit(message)
 
         assert result["success"] is True
@@ -340,7 +347,8 @@ class TestGetCommittedFiles:
         from tools import commit as commit_module
 
         monkeypatch.setattr(
-            commit_module, "run_git_command",
+            commit_module,
+            "run_git_command",
             lambda *a, **kw: (False, {"success": False}),
         )
         assert get_committed_files() == []
@@ -411,7 +419,8 @@ class TestReindexCommittedFiles:
 
         # Make index_file always fail
         monkeypatch.setattr(
-            memory_module, "index_file",
+            memory_module,
+            "index_file",
             lambda path: (_ for _ in ()).throw(RuntimeError("boom")),
         )
 
@@ -462,7 +471,7 @@ class TestReindexCommittedFiles:
 
         # Delete the file and commit
         os.remove(str(md_file))
-        os.system(f'cd {git_repo} && git add -A')
+        os.system(f"cd {git_repo} && git add -A")
         execute_commit("Delete doomed note")
 
         result = reindex_committed_files()
@@ -495,7 +504,7 @@ class TestReindexCommittedFiles:
         os.remove(str(old_file))
         new_file = git_repo / "notes" / "new.md"
         new_file.write_text("# New File\n\nFresh content.")
-        os.system(f'cd {git_repo} && git add -A')
+        os.system(f"cd {git_repo} && git add -A")
         execute_commit("Replace old with new")
 
         result = reindex_committed_files()
@@ -547,7 +556,9 @@ class TestCommitUserPrologue:
         # Verify the commit actually happened with protocol tag in body
         log = subprocess.run(
             ["git", "log", "--format=%B", "-1"],
-            cwd=str(git_repo), capture_output=True, text=True,
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
         )
         assert "[JARVIS:U]" in log.stdout
 
@@ -565,7 +576,9 @@ class TestCommitUserPrologue:
         # jarvis file should still be untracked / dirty
         status = subprocess.run(
             ["git", "status", "--porcelain"],
-            cwd=str(git_repo), capture_output=True, text=True,
+            cwd=str(git_repo),
+            capture_output=True,
+            text=True,
         )
         assert "entry.md" in status.stdout
 
@@ -590,14 +603,17 @@ class TestCommitUserPrologue:
         from tools import git_ops
 
         monkeypatch.setattr(
-            git_ops, "run_git_command",
+            git_ops,
+            "run_git_command",
             lambda *a, **kw: (False, {"success": False, "error": "git error"}),
         )
 
         # Need to re-import since commit.py imports get_status at module level
         from tools import commit as commit_module
+
         monkeypatch.setattr(
-            commit_module, "get_status",
+            commit_module,
+            "get_status",
             lambda: {"success": False, "error": "git error"},
         )
 

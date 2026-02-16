@@ -7,19 +7,23 @@ Tests cover:
 - Output formatting (_format_memories)
 - Per-prompt config (get_per_prompt_config)
 """
+
 import json
 import sys
 import os
 import pytest
 
 # Add hooks-handlers to path for importing prompt_search module
-HOOKS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "hooks-handlers")
+HOOKS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "hooks-handlers"
+)
 sys.path.insert(0, HOOKS_DIR)
 
 from prompt_search import _should_skip_prompt, _extract_prompt, _format_memories
 
 
 # --- Prompt Filtering Tests ---
+
 
 class TestPromptFiltering:
     """Tests for _should_skip_prompt() — returns (should_skip, reason) tuple."""
@@ -70,9 +74,12 @@ class TestPromptFiltering:
         assert skip is True
         assert reason == "auto_extract_prompt"
         # Also match without "working on code" suffix
-        assert _should_skip_prompt(
-            "You are analyzing a conversation turn between a user and an AI assistant.\n\n## User's Message"
-        )[0] is True
+        assert (
+            _should_skip_prompt(
+                "You are analyzing a conversation turn between a user and an AI assistant.\n\n## User's Message"
+            )[0]
+            is True
+        )
 
     def test_auto_extract_prompt_matches_real_template(self):
         """The skip filter catches the ACTUAL extraction prompt template.
@@ -110,18 +117,30 @@ class TestPromptFiltering:
 
     def test_long_confirmation_not_skipped(self):
         """Long messages that START with a confirmation word are NOT skipped."""
-        assert _should_skip_prompt("yes, and also can you check the deployment status")[0] is False
-        assert _should_skip_prompt("sure, but first tell me about the auth system")[0] is False
-        assert _should_skip_prompt("ok let me also ask about the database migration plan")[0] is False
+        assert (
+            _should_skip_prompt("yes, and also can you check the deployment status")[0]
+            is False
+        )
+        assert (
+            _should_skip_prompt("sure, but first tell me about the auth system")[0]
+            is False
+        )
+        assert (
+            _should_skip_prompt("ok let me also ask about the database migration plan")[
+                0
+            ]
+            is False
+        )
 
     def test_borderline_length(self):
         """Prompts near the 10-char threshold."""
-        assert _should_skip_prompt("12345678")[0] is True    # 8 chars
-        assert _should_skip_prompt("123456789")[0] is True    # 9 chars
+        assert _should_skip_prompt("12345678")[0] is True  # 8 chars
+        assert _should_skip_prompt("123456789")[0] is True  # 9 chars
         assert _should_skip_prompt("1234567890")[0] is False  # exactly 10 chars
 
 
 # --- Prompt Extraction Tests ---
+
 
 class TestPromptExtraction:
     """Tests for _extract_prompt()."""
@@ -167,6 +186,7 @@ class TestPromptExtraction:
 
 # --- Output Formatting Tests ---
 
+
 class TestOutputFormatting:
     """Tests for _format_memories()."""
 
@@ -176,12 +196,14 @@ class TestOutputFormatting:
 
     def test_single_match(self):
         """Formats a single memory correctly."""
-        matches = [{
-            "source": "notes/goals.md",
-            "relevance": 0.85,
-            "type": "note",
-            "content": "My career goals for 2026",
-        }]
+        matches = [
+            {
+                "source": "notes/goals.md",
+                "relevance": 0.85,
+                "type": "note",
+                "content": "My career goals for 2026",
+            }
+        ]
         output = _format_memories(matches, 42.5)
         assert '<relevant-vault-memories count="1" query_ms="42.5">' in output
         assert 'source="notes/goals.md"' in output
@@ -194,7 +216,12 @@ class TestOutputFormatting:
         """Formats multiple memories."""
         matches = [
             {"source": "notes/a.md", "relevance": 0.9, "type": "note", "content": "A"},
-            {"source": "notes/b.md", "relevance": 0.7, "type": "journal", "content": "B"},
+            {
+                "source": "notes/b.md",
+                "relevance": 0.7,
+                "type": "journal",
+                "content": "B",
+            },
         ]
         output = _format_memories(matches, 50.0)
         assert 'count="2"' in output
@@ -203,35 +230,41 @@ class TestOutputFormatting:
 
     def test_heading_attribute(self):
         """Includes heading attribute when present."""
-        matches = [{
-            "source": "notes/goals.md",
-            "relevance": 0.8,
-            "type": "note",
-            "content": "Content",
-            "heading": "Career Goals",
-        }]
+        matches = [
+            {
+                "source": "notes/goals.md",
+                "relevance": 0.8,
+                "type": "note",
+                "content": "Content",
+                "heading": "Career Goals",
+            }
+        ]
         output = _format_memories(matches, 10.0)
         assert 'heading="Career Goals"' in output
 
     def test_no_heading_attribute(self):
         """Omits heading attribute when not present."""
-        matches = [{
-            "source": "notes/goals.md",
-            "relevance": 0.8,
-            "type": "note",
-            "content": "Content",
-        }]
+        matches = [
+            {
+                "source": "notes/goals.md",
+                "relevance": 0.8,
+                "type": "note",
+                "content": "Content",
+            }
+        ]
         output = _format_memories(matches, 10.0)
         assert "heading" not in output
 
     def test_xml_escaping(self):
         """Properly escapes XML special characters."""
-        matches = [{
-            "source": "notes/test.md",
-            "relevance": 0.8,
-            "type": "note",
-            "content": "Use <b>bold</b> & 'quotes' in \"content\"",
-        }]
+        matches = [
+            {
+                "source": "notes/test.md",
+                "relevance": 0.8,
+                "type": "note",
+                "content": "Use <b>bold</b> & 'quotes' in \"content\"",
+            }
+        ]
         output = _format_memories(matches, 10.0)
         assert "&lt;b&gt;bold&lt;/b&gt;" in output
         assert "&amp;" in output
@@ -239,12 +272,14 @@ class TestOutputFormatting:
 
 # --- Semantic Context Tests ---
 
+
 class TestSemanticContext:
     """Tests for semantic_context() query function."""
 
     def test_empty_collection(self, mock_config):
         """Returns empty matches for empty ChromaDB collection."""
         from tools.query import semantic_context
+
         result = semantic_context("What are my goals?")
         assert result["matches"] == []
         assert result["total_searched"] == 0
@@ -252,6 +287,7 @@ class TestSemanticContext:
     def test_returns_query_ms(self, mock_config):
         """Response includes query duration."""
         from tools.query import semantic_context
+
         result = semantic_context("test query")
         assert "query_ms" in result
         assert isinstance(result["query_ms"], (int, float))
@@ -270,10 +306,20 @@ class TestSemanticContext:
                 "Recipe for chocolate cake with frosting",
             ],
             metadatas=[
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Goals", "importance": "high"},
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Recipes", "importance": "low"},
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "notes",
+                    "title": "Goals",
+                    "importance": "high",
+                },
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "notes",
+                    "title": "Recipes",
+                    "importance": "low",
+                },
             ],
         )
 
@@ -293,8 +339,14 @@ class TestSemanticContext:
         ids = [f"vault::notes/doc{i}.md" for i in range(10)]
         docs = [f"Document about career goals topic {i}" for i in range(10)]
         metas = [
-            {"type": "vault", "vault_type": "note", "namespace": "vault::",
-             "directory": "notes", "title": f"Doc {i}", "importance": "medium"}
+            {
+                "type": "vault",
+                "vault_type": "note",
+                "namespace": "vault::",
+                "directory": "notes",
+                "title": f"Doc {i}",
+                "importance": "medium",
+            }
             for i in range(10)
         ]
         collection.add(ids=ids, documents=docs, metadatas=metas)
@@ -312,19 +364,38 @@ class TestSemanticContext:
 
         collection = _get_collection()
         collection.add(
-            ids=["vault::notes/safe.md", "vault::documents/sensitive.md", "vault::people/contact.md"],
+            ids=[
+                "vault::notes/safe.md",
+                "vault::documents/sensitive.md",
+                "vault::people/contact.md",
+            ],
             documents=[
                 "Career goals and plans",
                 "Career goals from sensitive document",
                 "Career goals from people contact",
             ],
             metadatas=[
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Safe", "importance": "medium"},
-                {"type": "vault", "vault_type": "note", "directory": "documents",
-                 "title": "Sensitive", "importance": "high"},
-                {"type": "vault", "vault_type": "note", "directory": "people",
-                 "title": "Contact", "importance": "high"},
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "notes",
+                    "title": "Safe",
+                    "importance": "medium",
+                },
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "documents",
+                    "title": "Sensitive",
+                    "importance": "high",
+                },
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "people",
+                    "title": "Contact",
+                    "importance": "high",
+                },
             ],
         )
 
@@ -346,8 +417,14 @@ class TestSemanticContext:
             ids=["vault::notes/long.md"],
             documents=[long_content],
             metadatas=[
-                {"type": "vault", "vault_type": "note", "namespace": "vault::",
-                 "directory": "notes", "title": "Long", "importance": "high"},
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "namespace": "vault::",
+                    "directory": "notes",
+                    "title": "Long",
+                    "importance": "high",
+                },
             ],
         )
 
@@ -364,19 +441,22 @@ class TestSemanticContext:
         from tools.query import semantic_context
 
         collection = _get_collection()
-        obs_content = "User prefers kebab-case for all file naming conventions across the vault."
+        obs_content = (
+            "User prefers kebab-case for all file naming conventions across the vault."
+        )
         collection.add(
             ids=["obs::1234567890"],
             documents=[obs_content],
             metadatas=[
-                {"type": "observation", "namespace": "obs::",
-                 "importance": "high"},
+                {"type": "observation", "namespace": "obs::", "importance": "high"},
             ],
         )
 
         result = semantic_context("file naming conventions", threshold=0.0)
         if result["matches"]:
-            match = next((m for m in result["matches"] if m.get("display_mode") == "full"), None)
+            match = next(
+                (m for m in result["matches"] if m.get("display_mode") == "full"), None
+            )
             if match:
                 # Full content should be present, not truncated
                 assert "kebab-case" in match["content"]
@@ -394,12 +474,24 @@ class TestSemanticContext:
                 "Other section about hobbies and travel",
             ],
             metadatas=[
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Goals", "importance": "high",
-                 "parent_file": "notes/goals.md", "chunk_heading": "Career"},
-                {"type": "vault", "vault_type": "note", "directory": "notes",
-                 "title": "Goals", "importance": "medium",
-                 "parent_file": "notes/goals.md", "chunk_heading": "Hobbies"},
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "notes",
+                    "title": "Goals",
+                    "importance": "high",
+                    "parent_file": "notes/goals.md",
+                    "chunk_heading": "Career",
+                },
+                {
+                    "type": "vault",
+                    "vault_type": "note",
+                    "directory": "notes",
+                    "title": "Goals",
+                    "importance": "medium",
+                    "parent_file": "notes/goals.md",
+                    "chunk_heading": "Hobbies",
+                },
             ],
         )
 
@@ -417,11 +509,19 @@ class TestSemanticContext:
 
         # Add 5 vault files (~120 chars each as references = 600 chars)
         vault_ids = [f"vault::notes/goal{i}.md" for i in range(5)]
-        vault_docs = [f"Career goal document about leadership topic {i}" for i in range(5)]
+        vault_docs = [
+            f"Career goal document about leadership topic {i}" for i in range(5)
+        ]
         vault_metas = [
-            {"type": "vault", "vault_type": "note", "namespace": "vault::",
-             "directory": "notes", "title": f"Goal {i}", "importance": "high",
-             "parent_file": f"notes/goal{i}.md"}
+            {
+                "type": "vault",
+                "vault_type": "note",
+                "namespace": "vault::",
+                "directory": "notes",
+                "title": f"Goal {i}",
+                "importance": "high",
+                "parent_file": f"notes/goal{i}.md",
+            }
             for i in range(5)
         ]
 
@@ -433,8 +533,7 @@ class TestSemanticContext:
             for i in range(3)
         ]
         obs_metas = [
-            {"type": "observation", "namespace": "obs::",
-             "importance": "high"}
+            {"type": "observation", "namespace": "obs::", "importance": "high"}
             for _ in range(3)
         ]
 
@@ -472,11 +571,19 @@ class TestSemanticContext:
 
         # Add ONLY vault files (no tier2) — all budget should be available for vault
         vault_ids = [f"vault::notes/item{i}.md" for i in range(50)]
-        vault_docs = [f"Important career topic and leadership content {i}" for i in range(50)]
+        vault_docs = [
+            f"Important career topic and leadership content {i}" for i in range(50)
+        ]
         vault_metas = [
-            {"type": "vault", "vault_type": "note", "namespace": "vault::",
-             "directory": "notes", "title": f"Item {i}", "importance": "high",
-             "parent_file": f"notes/item{i}.md"}
+            {
+                "type": "vault",
+                "vault_type": "note",
+                "namespace": "vault::",
+                "directory": "notes",
+                "title": f"Item {i}",
+                "importance": "high",
+                "parent_file": f"notes/item{i}.md",
+            }
             for i in range(50)
         ]
         collection.add(ids=vault_ids, documents=vault_docs, metadatas=vault_metas)
@@ -485,15 +592,18 @@ class TestSemanticContext:
         # Without overflow: 600/120 = 5 vault refs
         # With overflow: (600+600)/120 = 10 vault refs
         result = semantic_context("career leadership", budget=1200, threshold=0.0)
-        vault_matches = [m for m in result["matches"] if m.get("display_mode") == "reference"]
+        vault_matches = [
+            m for m in result["matches"] if m.get("display_mode") == "reference"
+        ]
 
         # Should get more than 5 (the non-overflow limit) because tier2 half is unused
-        assert len(vault_matches) > 5, (
-            f"Expected >5 vault refs with overflow, got {len(vault_matches)}"
-        )
+        assert (
+            len(vault_matches) > 5
+        ), f"Expected >5 vault refs with overflow, got {len(vault_matches)}"
 
 
 # --- Per-Prompt Config Tests ---
+
 
 class TestPerPromptConfig:
     """Tests for get_per_prompt_config()."""
@@ -501,6 +611,7 @@ class TestPerPromptConfig:
     def test_defaults_when_no_config(self, mock_config):
         """Missing memory config uses defaults."""
         from tools.config import get_per_prompt_config
+
         config = get_per_prompt_config()
         assert config["enabled"] is True
         assert config["threshold"] == 0.5
@@ -510,6 +621,7 @@ class TestPerPromptConfig:
     def test_disabled(self, mock_config):
         """Config can disable per-prompt search."""
         import tools.config as config_module
+
         config_module._config_cache = None
 
         config_data = json.loads(mock_config.path.read_text())
@@ -518,12 +630,14 @@ class TestPerPromptConfig:
         config_module._config_cache = None
 
         from tools.config import get_per_prompt_config
+
         config = get_per_prompt_config()
         assert config["enabled"] is False
 
     def test_custom_threshold(self, mock_config):
         """Custom threshold overrides default."""
         import tools.config as config_module
+
         config_module._config_cache = None
 
         config_data = json.loads(mock_config.path.read_text())
@@ -532,6 +646,7 @@ class TestPerPromptConfig:
         config_module._config_cache = None
 
         from tools.config import get_per_prompt_config
+
         config = get_per_prompt_config()
         assert config["threshold"] == 0.7
         # Other defaults preserved
@@ -541,6 +656,7 @@ class TestPerPromptConfig:
     def test_custom_budget(self, mock_config):
         """Custom budget overrides default."""
         import tools.config as config_module
+
         config_module._config_cache = None
 
         config_data = json.loads(mock_config.path.read_text())
@@ -549,5 +665,6 @@ class TestPerPromptConfig:
         config_module._config_cache = None
 
         from tools.config import get_per_prompt_config
+
         config = get_per_prompt_config()
         assert config["budget"] == 12000

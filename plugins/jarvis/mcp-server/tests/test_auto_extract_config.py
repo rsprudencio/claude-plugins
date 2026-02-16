@@ -1,4 +1,5 @@
 """Tests for auto_extract_config.py — health checks for Stop hook extraction."""
+
 import os
 from unittest.mock import patch
 
@@ -157,7 +158,9 @@ class TestCheckPrerequisites:
 
         assert result["healthy"] is False
         assert result["mode"] == "background-api"
-        assert any("anthropic' package not installed" in issue for issue in result["issues"])
+        assert any(
+            "anthropic' package not installed" in issue for issue in result["issues"]
+        )
 
     @patch("tools.auto_extract_config.shutil.which")
     def test_background_cli_healthy(self, mock_which):
@@ -235,18 +238,25 @@ class TestCheckPrerequisites:
         result = check_prerequisites(config)
 
         assert result["healthy"] is False
-        assert any("No extraction backend available" in issue for issue in result["issues"])
+        assert any(
+            "No extraction backend available" in issue for issue in result["issues"]
+        )
 
     def test_unknown_mode(self):
         """Unknown mode is reported as invalid."""
-        config = {"mode": "inline"}  # inline was valid in v1.10-1.11, removed in v1.12.0
+        config = {
+            "mode": "inline"
+        }  # inline was valid in v1.10-1.11, removed in v1.12.0
         result = check_prerequisites(config)
 
         assert result["healthy"] is False
         assert result["mode"] == "inline"
         assert result["status"] == "Auto-Extract has invalid configuration"
         assert any("Unknown mode 'inline'" in issue for issue in result["issues"])
-        assert "disabled, background, background-api, background-cli" in result["issues"][0]
+        assert (
+            "disabled, background, background-api, background-cli"
+            in result["issues"][0]
+        )
 
     def test_details_include_backends(self):
         """Details dict includes backend availability."""

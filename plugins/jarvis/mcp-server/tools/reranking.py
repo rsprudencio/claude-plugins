@@ -135,8 +135,9 @@ def _sigmoid(x: float) -> float:
         return exp_x / (1.0 + exp_x)
 
 
-def rerank(query: str, documents: list, vector_scores: list,
-           config: Optional[dict] = None) -> list:
+def rerank(
+    query: str, documents: list, vector_scores: list, config: Optional[dict] = None
+) -> list:
     """Rerank documents using cross-encoder model.
 
     Tokenizes (query, document) pairs in batch, runs ONNX inference,
@@ -178,7 +179,7 @@ def rerank(query: str, documents: list, vector_scores: list,
 
         raw_scores = []
         for i in range(0, len(pairs), batch_size):
-            batch = pairs[i:i + batch_size]
+            batch = pairs[i : i + batch_size]
 
             # Check latency budget before each batch
             elapsed_ms = (time.time() - start) * 1000
@@ -190,9 +191,7 @@ def rerank(query: str, documents: list, vector_scores: list,
                 return vector_scores
 
             # Encode batch
-            encodings = _tokenizer.encode_batch(
-                [list(pair) for pair in batch]
-            )
+            encodings = _tokenizer.encode_batch([list(pair) for pair in batch])
 
             # Pad to uniform length and run as single batched inference
             max_len = max(len(e.ids) for e in encodings)
@@ -234,12 +233,13 @@ def rerank(query: str, documents: list, vector_scores: list,
 
         # Alpha-blend: blended = alpha * reranker + (1 - alpha) * vector
         blended = [
-            alpha * ns + (1 - alpha) * vs
-            for ns, vs in zip(norm_scores, vector_scores)
+            alpha * ns + (1 - alpha) * vs for ns, vs in zip(norm_scores, vector_scores)
         ]
 
         elapsed_ms = (time.time() - start) * 1000
-        logger.debug(f"Reranking completed: {len(documents)} docs in {elapsed_ms:.0f}ms")
+        logger.debug(
+            f"Reranking completed: {len(documents)} docs in {elapsed_ms:.0f}ms"
+        )
 
         return blended
 

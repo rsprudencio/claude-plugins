@@ -1,9 +1,14 @@
 """Tests for memory indexing module."""
+
 import os
 import pytest
 from tools.memory import (
-    _parse_frontmatter_for_file, _extract_title_for_file, _build_metadata,
-    _should_skip, index_vault, index_file,
+    _parse_frontmatter_for_file,
+    _extract_title_for_file,
+    _build_metadata,
+    _should_skip,
+    index_vault,
+    index_file,
 )
 
 
@@ -102,7 +107,10 @@ class TestBuildMetadata:
         """Unknown directories use directory name as vault_type."""
         assert _build_metadata({}, "roadmaps/plan.md")["vault_type"] == "roadmaps"
         assert _build_metadata({}, "docs/readme.md")["vault_type"] == "docs"
-        assert _build_metadata({}, ".jarvis/strategic/traj.md")["vault_type"] == "strategic"
+        assert (
+            _build_metadata({}, ".jarvis/strategic/traj.md")["vault_type"]
+            == "strategic"
+        )
 
     def test_vault_type_root_level_file(self):
         """Root-level files (no directory) get vault_type 'document'."""
@@ -145,14 +153,19 @@ class TestIndexVault:
     def test_index_vault_with_files(self, mock_config):
         """Should index .md files with namespaced IDs."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_memory_db")}
+        )
 
         # Create test files
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "test-note.md").write_text("# Test Note\n\nSome content here.")
-        (notes_dir / "another.md").write_text("---\ntype: idea\n---\n# Another\n\nIdea content.")
+        (notes_dir / "another.md").write_text(
+            "---\ntype: idea\n---\n# Another\n\nIdea content."
+        )
 
         result = index_vault()
         assert result["success"] is True
@@ -177,8 +190,11 @@ class TestIndexVault:
     def test_index_vault_skips_templates(self, mock_config):
         """Should skip templates directory."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db2")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_memory_db2")}
+        )
 
         templates_dir = mock_config.vault_path / "templates"
         templates_dir.mkdir(exist_ok=True)
@@ -197,12 +213,17 @@ class TestIndexFile:
     def test_index_single_file(self, mock_config):
         """Should index a single file with namespaced ID."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_memory_db3")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_memory_db3")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
-        (notes_dir / "single.md").write_text("# Single File\n\nTest content for indexing.")
+        (notes_dir / "single.md").write_text(
+            "# Single File\n\nTest content for indexing."
+        )
 
         result = index_file("notes/single.md")
         assert result["success"] is True
@@ -226,14 +247,16 @@ class TestCollectionCreation:
     def test_fresh_install_creates_jarvis(self, mock_config):
         """If no collection exists, _get_collection() creates 'jarvis'."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_fresh_install_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_fresh_install_db")}
+        )
 
         collection = mem._get_collection()
         assert collection.name == "jarvis"
 
         mem._chroma_client = None
-
 
 
 class TestChunkingIntegration:
@@ -242,8 +265,11 @@ class TestChunkingIntegration:
     def test_index_file_with_headings_creates_chunks(self, mock_config):
         """A file with H2 headings should produce multiple chunks."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_h2_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_chunk_h2_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -279,8 +305,11 @@ class TestChunkingIntegration:
     def test_index_file_without_headings_single_doc(self, mock_config):
         """Short file without headings should produce a single document."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_single_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_chunk_single_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -296,8 +325,11 @@ class TestChunkingIntegration:
     def test_index_file_chunk_ids_format(self, mock_config):
         """Multi-chunk IDs should use vault::path#chunk-N format."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_chunk_ids_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_chunk_ids_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -321,26 +353,27 @@ class TestChunkingIntegration:
     def test_reindex_updates_chunk_count(self, mock_config):
         """Re-indexing a file should clean up old chunks and create new ones."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_reindex_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_reindex_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
 
         # First index: 3 sections
-        content_v1 = "\n\n".join([
-            f"## Section {i}\n\n" + f"Content {i}. " * 60
-            for i in range(3)
-        ])
+        content_v1 = "\n\n".join(
+            [f"## Section {i}\n\n" + f"Content {i}. " * 60 for i in range(3)]
+        )
         (notes_dir / "evolving.md").write_text(content_v1)
         result1 = index_file("notes/evolving.md")
         chunks_v1 = result1["chunks"]
 
         # Re-index: 2 sections
-        content_v2 = "\n\n".join([
-            f"## Section {i}\n\n" + f"Updated content {i}. " * 60
-            for i in range(2)
-        ])
+        content_v2 = "\n\n".join(
+            [f"## Section {i}\n\n" + f"Updated content {i}. " * 60 for i in range(2)]
+        )
         (notes_dir / "evolving.md").write_text(content_v2)
         result2 = index_file("notes/evolving.md")
 
@@ -355,8 +388,11 @@ class TestChunkingIntegration:
     def test_index_vault_with_chunking(self, mock_config):
         """Bulk indexing should also produce chunks."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_vault_chunk_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_vault_chunk_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -376,8 +412,11 @@ class TestChunkingIntegration:
     def test_importance_score_in_metadata(self, mock_config):
         """Indexed files should have importance_score float in metadata."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_score_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_score_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -399,8 +438,11 @@ class TestChunkingIntegration:
     def test_per_chunk_importance_scoring(self, mock_config):
         """Chunks should get individual importance scores based on their content."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_perchunk_score_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_perchunk_score_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -408,9 +450,9 @@ class TestChunkingIntegration:
         # Chunk 1: generic filler content → lower score
         content = (
             "## Architecture Decision\n\n"
-            + "This is a critical architecture decision about the system. " * 30 + "\n\n"
-            "## Shopping List\n\n"
-            + "Buy milk and eggs from the store. " * 30
+            + "This is a critical architecture decision about the system. " * 30
+            + "\n\n"
+            "## Shopping List\n\n" + "Buy milk and eggs from the store. " * 30
         )
         (notes_dir / "mixed-importance.md").write_text(content)
 
@@ -439,8 +481,11 @@ class TestChunkingIntegration:
     def test_parent_file_metadata(self, mock_config):
         """All indexed chunks should have parent_file metadata."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_parent_db")})
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_parent_db")}
+        )
 
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -458,21 +503,24 @@ class TestChunkingIntegration:
 
 class TestTierMetadata:
     """Tests for tier field in metadata."""
-    
+
     def test_build_metadata_includes_tier(self, mock_config):
         """Test that _build_metadata includes tier field."""
         import tools.memory as mem
+
         mem._chroma_client = None
-        mock_config.set(memory={"db_path": str(mock_config.vault_path / ".test_tier_metadata_db")})
-        
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_tier_metadata_db")}
+        )
+
         # Index a file
         test_file = mock_config.vault_path / "notes" / "test-tier.md"
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text("# Test Tier\nTesting tier metadata")
-        
+
         result = index_file("notes/test-tier.md")
         assert result["success"]
         assert "tier" in result["metadata"]
         assert result["metadata"]["tier"] == "file"
-        
+
         mem._chroma_client = None

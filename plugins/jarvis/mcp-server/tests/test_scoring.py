@@ -1,4 +1,5 @@
 """Tests for importance scoring module."""
+
 import math
 import pytest
 from datetime import datetime, timezone, timedelta
@@ -84,7 +85,9 @@ class TestRecencyBonus:
         assert 0.09 <= bonus <= 0.1  # Close to max
 
     def test_one_halflife_gives_half_bonus(self):
-        one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        one_week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         bonus = _compute_recency_bonus(one_week_ago, 7.0)
         assert 0.04 <= bonus <= 0.06  # ~0.05 (half of 0.1)
 
@@ -194,7 +197,9 @@ class TestComputeImportance:
 
     def test_concept_bonus_adds_to_score(self):
         plain = compute_importance("Normal content", vault_type="note")
-        decision = compute_importance("Architecture decision for auth", vault_type="note")
+        decision = compute_importance(
+            "Architecture decision for auth", vault_type="note"
+        )
         assert decision > plain
 
     def test_score_clamped_to_one(self):

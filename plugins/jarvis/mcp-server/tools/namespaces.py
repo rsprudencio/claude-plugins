@@ -8,6 +8,7 @@ This module provides:
 - ID parser to decompose any ID
 - Namespace constants for filtering
 """
+
 import re
 import time
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ NAMESPACE_LEARNING = "learning::"
 NAMESPACE_DECISION = "decision::"
 NAMESPACE_WORKLOG = "worklog::"
 
+
 # Content type enum (for metadata 'type' field)
 # Using (str, Enum) so values work as plain strings in ChromaDB metadata,
 # JSON serialization, and == comparisons with raw strings.
@@ -38,30 +40,46 @@ class ContentType(str, Enum):
     VAULT = "vault"
     MEMORY = "memory"
     # Tier 2 (ephemeral)
-    OBSERVATION = "observation"    # Short captured insight (auto-extract default)
-    PATTERN = "pattern"            # Recurring behavior or preference
-    LEARNING = "learning"          # Problem/solution pair, technique, debugging case study
-    DECISION = "decision"          # Architectural/strategic choice with rationale
-    SUMMARY = "summary"            # Time-period or session aggregation
-    CODE = "code"                  # Code snippet or technique reference
+    OBSERVATION = "observation"  # Short captured insight (auto-extract default)
+    PATTERN = "pattern"  # Recurring behavior or preference
+    LEARNING = "learning"  # Problem/solution pair, technique, debugging case study
+    DECISION = "decision"  # Architectural/strategic choice with rationale
+    SUMMARY = "summary"  # Time-period or session aggregation
+    CODE = "code"  # Code snippet or technique reference
     RELATIONSHIP = "relationship"  # Entity relationship mapping
-    HINT = "hint"                  # Contextual suggestion
-    PLAN = "plan"                  # Strategy or task plan
-    WORKLOG = "worklog"            # Intent-focused activity record (what user worked on)
+    HINT = "hint"  # Contextual suggestion
+    PLAN = "plan"  # Strategy or task plan
+    WORKLOG = "worklog"  # Intent-focused activity record (what user worked on)
 
 
 ALL_TYPES = [t.value for t in ContentType]
-TIER2_TYPES = [t.value for t in ContentType if t not in (ContentType.VAULT, ContentType.MEMORY)]
+TIER2_TYPES = [
+    t.value for t in ContentType if t not in (ContentType.VAULT, ContentType.MEMORY)
+]
 
 # --- Tier Constants ---
 
 TIER_FILE = "file"
 TIER_CHROMADB = "chromadb"
 TIER_1_PREFIXES = frozenset({"vault::", "memory::"})
-TIER_2_PREFIXES = frozenset({"obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::", "worklog::"})
+TIER_2_PREFIXES = frozenset(
+    {
+        "obs::",
+        "pattern::",
+        "summary::",
+        "code::",
+        "rel::",
+        "hint::",
+        "plan::",
+        "learning::",
+        "decision::",
+        "worklog::",
+    }
+)
 
 
 # --- ID Generators ---
+
 
 def vault_id(relative_path: str, chunk: Optional[int] = None) -> str:
     """Generate a vault document ID."""
@@ -113,7 +131,7 @@ def code_id(file_path: str, symbol: str = "__module__") -> str:
 
 def relationship_id(entity_a: str, entity_b: str) -> str:
     """Generate a relationship ID between two entities.
-    
+
     Entities are sorted alphabetically to ensure consistency regardless of order.
     """
     a, b = sorted([_slugify(entity_a), _slugify(entity_b)])
@@ -151,9 +169,10 @@ def worklog_id(timestamp_ms: Optional[int] = None) -> str:
 
 # --- Tier Detection ---
 
+
 def get_tier(doc_id: str) -> str:
     """Determine document tier from ID prefix (O(1) operation).
-    
+
     Returns:
         TIER_FILE for Tier 1 (vault::, memory::)
         TIER_CHROMADB for Tier 2 (obs::, pattern::, summary::, code::, rel::, hint::, plan::)
@@ -163,26 +182,29 @@ def get_tier(doc_id: str) -> str:
     for prefix in TIER_2_PREFIXES:
         if doc_id.startswith(prefix):
             return TIER_CHROMADB
-    
+
     # Check Tier 1 prefixes
     for prefix in TIER_1_PREFIXES:
         if doc_id.startswith(prefix):
             return TIER_FILE
-    
+
     # Bare path defaults to Tier 1 (file-backed vault document)
     return TIER_FILE
 
 
 # --- ID Parser ---
 
+
 @dataclass
 class ParsedId:
     """Decomposed document ID."""
-    namespace: str       # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision", "worklog"
-    full_prefix: str     # "vault::", "memory::global::", "obs::", etc.
-    content_id: str      # The part after the prefix
+
+    namespace: str  # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision", "worklog"
+    full_prefix: str  # "vault::", "memory::global::", "obs::", etc.
+    content_id: str  # The part after the prefix
     tier: str = TIER_FILE  # "file" or "chromadb"
     chunk: Optional[int] = None  # For vault chunks only
+    project: Optional[str] = None  # For project-scoped memories
 
 
 def parse_id(doc_id: str) -> ParsedId:
@@ -192,7 +214,7 @@ def parse_id(doc_id: str) -> ParsedId:
     are treated as vault documents for backward compatibility.
     """
     tier = get_tier(doc_id)
-    
+
     if doc_id.startswith("vault::"):
         content = doc_id[7:]
         chunk = None
@@ -208,7 +230,7 @@ def parse_id(doc_id: str) -> ParsedId:
         parts = doc_id.split("::", 2)
         project = parts[1] if len(parts) > 1 else ""
         name = parts[2] if len(parts) > 2 else ""
-        return ParsedId("memory", f"memory::{project}::", name, tier)
+        return ParsedId("memory", f"memory::{project}::", name, tier, project=project)
 
     if doc_id.startswith("obs::"):
         return ParsedId("obs", "obs::", doc_id[5:], tier)
@@ -246,9 +268,10 @@ def parse_id(doc_id: str) -> ParsedId:
 
 # --- Helpers ---
 
+
 def _slugify(text: str) -> str:
     """Convert text to a URL-safe slug."""
     slug = text.lower().strip().replace(" ", "-")
-    slug = re.sub(r'[^a-z0-9-]', '', slug)
-    slug = re.sub(r'-+', '-', slug).strip('-')
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
     return slug

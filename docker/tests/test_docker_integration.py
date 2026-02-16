@@ -7,6 +7,7 @@ Run from repo root:
 
 The tests manage their own container lifecycle (start/stop per session).
 """
+
 import json
 import os
 import subprocess
@@ -28,7 +29,11 @@ def _docker_available():
     try:
         subprocess.run(["docker", "info"], capture_output=True, check=True, timeout=10)
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return False
 
 
@@ -37,7 +42,8 @@ def _image_exists():
     try:
         result = subprocess.run(
             ["docker", "image", "inspect", DOCKER_IMAGE],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -63,23 +69,35 @@ def docker_container(tmp_path_factory):
     # Stop any existing container with same name
     subprocess.run(
         ["docker", "rm", "-f", CONTAINER_NAME],
-        capture_output=True, timeout=10,
+        capture_output=True,
+        timeout=10,
     )
 
     # Start container
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", CONTAINER_NAME,
-            "-p", f"{CORE_PORT}:8741",
-            "-p", f"{TODOIST_PORT}:8742",
-            "-v", f"{vault_dir}:/vault",
-            "-v", f"{config_dir}:/config",
-            "-e", "JARVIS_HOME=/config",
-            "-e", "JARVIS_VAULT_PATH=/vault",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER_NAME,
+            "-p",
+            f"{CORE_PORT}:8741",
+            "-p",
+            f"{TODOIST_PORT}:8742",
+            "-v",
+            f"{vault_dir}:/vault",
+            "-v",
+            f"{config_dir}:/config",
+            "-e",
+            "JARVIS_HOME=/config",
+            "-e",
+            "JARVIS_VAULT_PATH=/vault",
             DOCKER_IMAGE,
         ],
-        check=True, capture_output=True, timeout=30,
+        check=True,
+        capture_output=True,
+        timeout=30,
     )
 
     # Wait for health
@@ -94,14 +112,20 @@ def docker_container(tmp_path_factory):
     else:
         logs = subprocess.run(
             ["docker", "logs", CONTAINER_NAME],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
-        pytest.fail(f"Container health check timed out.\nLogs:\n{logs.stdout}\n{logs.stderr}")
+        pytest.fail(
+            f"Container health check timed out.\nLogs:\n{logs.stdout}\n{logs.stderr}"
+        )
 
     yield {"core_url": CORE_URL, "mcp_url": MCP_URL}
 
     # Cleanup
-    subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True, timeout=10)
+    subprocess.run(
+        ["docker", "rm", "-f", CONTAINER_NAME], capture_output=True, timeout=10
+    )
 
 
 def _mcp_request(url, method, params=None, request_id=1):
@@ -206,7 +230,12 @@ class TestToolsList:
         assert len(tools) >= 20, f"Expected >= 20 tools, got {len(tools)}: {tool_names}"
 
         # Verify key tools are present
-        for expected in ["jarvis_store", "jarvis_retrieve", "jarvis_status", "jarvis_commit"]:
+        for expected in [
+            "jarvis_store",
+            "jarvis_retrieve",
+            "jarvis_status",
+            "jarvis_commit",
+        ]:
             assert expected in tool_names, f"Missing tool: {expected}"
 
 
@@ -240,9 +269,12 @@ class TestVaultOps:
         )
         assert r.status_code == 200
         write_data = r.json()
-        write_text = " ".join(c.get("text", "") for c in write_data["result"]["content"])
-        assert "error" not in write_text.lower() or "success" in write_text.lower(), \
-            f"Store failed: {write_text[:500]}"
+        write_text = " ".join(
+            c.get("text", "") for c in write_data["result"]["content"]
+        )
+        assert (
+            "error" not in write_text.lower() or "success" in write_text.lower()
+        ), f"Store failed: {write_text[:500]}"
 
         # Read it back
         r = _mcp_request(
@@ -259,4 +291,6 @@ class TestVaultOps:
         # Tool results are in content array; flatten all text fields
         content = data["result"]["content"]
         all_text = " ".join(c.get("text", "") for c in content)
-        assert "Docker Integration Test" in all_text, f"Expected content not found in: {all_text[:500]}"
+        assert (
+            "Docker Integration Test" in all_text
+        ), f"Expected content not found in: {all_text[:500]}"

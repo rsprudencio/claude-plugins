@@ -13,6 +13,7 @@ Algorithm:
 6. Merge undersized chunks into predecessor
 7. Assign sequential indices
 """
+
 import re
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -21,6 +22,7 @@ from typing import List, Optional, Tuple
 @dataclass
 class Chunk:
     """A single chunk of a markdown document."""
+
     index: int
     heading: str
     heading_level: int
@@ -31,6 +33,7 @@ class Chunk:
 @dataclass
 class ChunkResult:
     """Result of chunking a markdown document."""
+
     chunks: List[Chunk]
     total: int
     source_chars: int
@@ -43,8 +46,9 @@ _DEFAULT_MAX_CHARS = 1500
 _DEFAULT_HEADING_LEVELS = (2, 3)
 
 
-def chunk_document(content: str, config: Optional[dict] = None,
-                   fmt: str = "markdown") -> ChunkResult:
+def chunk_document(
+    content: str, config: Optional[dict] = None, fmt: str = "markdown"
+) -> ChunkResult:
     """Split a document into heading-based chunks (format-aware).
 
     Args:
@@ -69,8 +73,15 @@ def chunk_document(content: str, config: Optional[dict] = None,
     # If disabled or content too short, return as single chunk
     if not enabled or len(stripped.strip()) < min_chars:
         return ChunkResult(
-            chunks=[Chunk(index=0, heading="", heading_level=0,
-                          content=stripped.strip(), char_count=len(stripped.strip()))],
+            chunks=[
+                Chunk(
+                    index=0,
+                    heading="",
+                    heading_level=0,
+                    content=stripped.strip(),
+                    char_count=len(stripped.strip()),
+                )
+            ],
             total=1,
             source_chars=source_chars,
             was_chunked=False,
@@ -105,13 +116,15 @@ def chunk_document(content: str, config: Optional[dict] = None,
     for i, (heading, level, text) in enumerate(merged):
         text = text.strip()
         if text:  # skip empty
-            chunks.append(Chunk(
-                index=i,
-                heading=heading,
-                heading_level=level,
-                content=text,
-                char_count=len(text),
-            ))
+            chunks.append(
+                Chunk(
+                    index=i,
+                    heading=heading,
+                    heading_level=level,
+                    content=text,
+                    char_count=len(text),
+                )
+            )
 
     # Re-index sequentially
     for i, chunk in enumerate(chunks):
@@ -120,8 +133,15 @@ def chunk_document(content: str, config: Optional[dict] = None,
     if not chunks:
         # Fallback: return stripped content as single chunk
         return ChunkResult(
-            chunks=[Chunk(index=0, heading="", heading_level=0,
-                          content=stripped.strip(), char_count=len(stripped.strip()))],
+            chunks=[
+                Chunk(
+                    index=0,
+                    heading="",
+                    heading_level=0,
+                    content=stripped.strip(),
+                    char_count=len(stripped.strip()),
+                )
+            ],
             total=1,
             source_chars=source_chars,
             was_chunked=False,
@@ -138,17 +158,21 @@ def chunk_document(content: str, config: Optional[dict] = None,
 
 def _strip_frontmatter(content: str) -> str:
     """Remove YAML frontmatter from markdown content."""
-    return re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, count=1, flags=re.DOTALL)
+    return re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, count=1, flags=re.DOTALL)
 
 
-def _find_heading_positions(content: str, heading_levels: tuple) -> List[Tuple[int, int, str]]:
+def _find_heading_positions(
+    content: str, heading_levels: tuple
+) -> List[Tuple[int, int, str]]:
     """Find heading positions that are not inside fenced code blocks.
 
     Returns list of (offset, level, heading_text) tuples sorted by offset.
     """
     # Find all fenced code block ranges
     code_ranges = []
-    for m in re.finditer(r'^(`{3,}|~{3,}).*?\n.*?^\1\s*$', content, re.MULTILINE | re.DOTALL):
+    for m in re.finditer(
+        r"^(`{3,}|~{3,}).*?\n.*?^\1\s*$", content, re.MULTILINE | re.DOTALL
+    ):
         code_ranges.append((m.start(), m.end()))
 
     def in_code_block(pos: int) -> bool:
@@ -158,8 +182,8 @@ def _find_heading_positions(content: str, heading_levels: tuple) -> List[Tuple[i
         return False
 
     # Build heading pattern for requested levels
-    levels_pattern = '|'.join(f'{"#" * lvl}' for lvl in sorted(heading_levels))
-    pattern = rf'^({levels_pattern})\s+(.+)$'
+    levels_pattern = "|".join(f'{"#" * lvl}' for lvl in sorted(heading_levels))
+    pattern = rf"^({levels_pattern})\s+(.+)$"
 
     positions = []
     for m in re.finditer(pattern, content, re.MULTILINE):
@@ -171,7 +195,9 @@ def _find_heading_positions(content: str, heading_levels: tuple) -> List[Tuple[i
     return positions
 
 
-def _split_at_positions(content: str, positions: List[Tuple[int, int, str]]) -> List[Tuple[str, int, str]]:
+def _split_at_positions(
+    content: str, positions: List[Tuple[int, int, str]]
+) -> List[Tuple[str, int, str]]:
     """Split content at heading positions into (heading, level, text) tuples.
 
     The text before the first heading becomes a preamble chunk with empty heading.
@@ -180,7 +206,7 @@ def _split_at_positions(content: str, positions: List[Tuple[int, int, str]]) -> 
 
     # Preamble (content before first heading)
     if positions and positions[0][0] > 0:
-        preamble = content[:positions[0][0]]
+        preamble = content[: positions[0][0]]
         if preamble.strip():
             chunks.append(("", 0, preamble))
 
@@ -198,7 +224,7 @@ def _split_by_paragraphs(content: str, max_chars: int) -> List[str]:
 
     Merges paragraphs greedily up to max_chars per chunk.
     """
-    paragraphs = re.split(r'\n\n+', content)
+    paragraphs = re.split(r"\n\n+", content)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
 
     if not paragraphs:
