@@ -194,22 +194,29 @@ def rerank(query: str, documents: list, vector_scores: list,
                 [list(pair) for pair in batch]
             )
 
-            for encoding in encodings:
-                ids = encoding.ids
-                type_ids = encoding.type_ids
-                attention = [1] * len(ids)
+            # Pad to uniform length and run as single batched inference
+            max_len = max(len(e.ids) for e in encodings)
+            batch_ids = []
+            batch_type_ids = []
+            batch_attention = []
 
-                outputs = _session.run(
-                    None,
-                    {
-                        "input_ids": [ids],
-                        "token_type_ids": [type_ids],
-                        "attention_mask": [attention],
-                    },
-                )
-                # Model outputs logits; extract scalar score
-                logit = float(outputs[0][0][0])
-                raw_scores.append(_sigmoid(logit))
+            for encoding in encodings:
+                pad_len = max_len - len(encoding.ids)
+                batch_ids.append(encoding.ids + [0] * pad_len)
+                batch_type_ids.append(encoding.type_ids + [0] * pad_len)
+                batch_attention.append([1] * len(encoding.ids) + [0] * pad_len)
+
+            outputs = _session.run(
+                None,
+                {
+                    "input_ids": batch_ids,
+                    "token_type_ids": batch_type_ids,
+                    "attention_mask": batch_attention,
+                },
+            )
+            # outputs[0] shape: [batch_size, 1] — extract logits
+            for logit_row in outputs[0]:
+                raw_scores.append(_sigmoid(float(logit_row[0])))
 
         if len(raw_scores) != len(documents):
             logger.warning(

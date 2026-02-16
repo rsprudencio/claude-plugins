@@ -30,6 +30,32 @@ def _mock_encode_batch(pairs):
     return [_make_encoding() for _ in pairs]
 
 
+def _make_batched_run(logits_per_doc):
+    """Create a mock session.run that returns batched output matching input batch size.
+
+    Args:
+        logits_per_doc: list of logit values, one per document in order.
+                       Consumed across calls as batches arrive.
+    """
+    offset = [0]  # mutable counter
+
+    def run(output_names, inputs):
+        batch_size = len(inputs["input_ids"])
+        batch_logits = [[logits_per_doc[offset[0] + i]] for i in range(batch_size)]
+        offset[0] += batch_size
+        return [batch_logits]
+
+    return run
+
+
+def _make_constant_batched_run(logit=0.5):
+    """Create a mock session.run that returns a constant logit for every doc in the batch."""
+    def run(output_names, inputs):
+        batch_size = len(inputs["input_ids"])
+        return [[[logit]] * batch_size]
+    return run
+
+
 class TestSigmoid:
     """Tests for sigmoid helper."""
 
@@ -92,12 +118,8 @@ class TestRerank:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        # Model returns different logits for each doc
-        mock_session.run.side_effect = [
-            [[[2.5]]],  # High relevance
-            [[[-0.5]]],  # Low relevance
-            [[[-2.0]]],  # Very low relevance
-        ]
+        # Model returns different logits for each doc (batched)
+        mock_session.run.side_effect = _make_batched_run([2.5, -0.5, -2.0])
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
@@ -118,11 +140,7 @@ class TestRerank:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        mock_session.run.side_effect = [
-            [[[1.0]]],
-            [[[0.0]]],
-            [[[-1.0]]],
-        ]
+        mock_session.run.side_effect = _make_batched_run([1.0, 0.0, -1.0])
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
@@ -142,12 +160,8 @@ class TestRerank:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        # Reranker says: doc1 is best, doc3 middle, doc2 worst
-        mock_session.run.side_effect = [
-            [[[3.0]]],   # Highest
-            [[[-2.0]]],  # Lowest
-            [[[0.5]]],   # Middle
-        ]
+        # Reranker says: doc1 is best, doc3 middle, doc2 worst (batched)
+        mock_session.run.side_effect = _make_batched_run([3.0, -2.0, 0.5])
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
@@ -166,11 +180,12 @@ class TestRerank:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        # Make inference slow
+        # Make inference slow — return batched output matching input size
         import time as time_mod
-        def slow_run(*args, **kwargs):
+        def slow_run(output_names, inputs):
             time_mod.sleep(0.05)
-            return [[[1.0]]]
+            batch_size = len(inputs["input_ids"])
+            return [[[1.0]] * batch_size]
 
         mock_session.run.side_effect = slow_run
 
@@ -214,7 +229,7 @@ class TestRerank:
         # Return correct number of encodings per batch
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        mock_session.run.return_value = [[[0.5]]]
+        mock_session.run.side_effect = _make_constant_batched_run(0.5)
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
@@ -448,7 +463,7 @@ class TestQueryVaultReranking:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        mock_session.run.return_value = [[[1.0]]]
+        mock_session.run.side_effect = _make_constant_batched_run(1.0)
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
@@ -529,7 +544,7 @@ class TestQueryVaultReranking:
         mock_tokenizer = MagicMock()
         mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
 
-        mock_session.run.return_value = [[[1.0]]]
+        mock_session.run.side_effect = _make_constant_batched_run(1.0)
 
         with patch("tools.reranking._init_model", return_value=True), \
              patch("tools.reranking._session", mock_session), \
