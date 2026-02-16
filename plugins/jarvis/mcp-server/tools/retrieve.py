@@ -22,7 +22,7 @@ def retrieve(
     scope: str = "global",
     project: Optional[str] = None,
     tag: Optional[str] = None,
-    importance: Optional[str] = None,
+    importance: Optional[float] = None,
     limit: int = 20,
     filter: Optional[dict] = None,
     include_metadata: bool = True,

@@ -72,7 +72,7 @@ If the user specifies a scope, add `filter`:
 
 - "recall from journal" → `{"directory": "journal"}`
 - "recall work notes" → `{"directory": "work"}`
-- "recall high importance" → `{"importance": "high"}`
+- "recall high importance" → `{"importance": 0.8}`
 - "recall ideas" → `{"type": "idea"}`
 
 Pass as `filter` parameter to `jarvis_retrieve(query=...)`.

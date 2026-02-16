@@ -136,7 +136,7 @@ def get_memory_config() -> dict:
         "secret_detection": True,
         "importance_scoring": True,
         "recency_boost_days": 7,
-        "default_importance": "medium",
+        "default_importance": 0.5,
     }
     return {**defaults, **config.get("memory", {})}
 

@@ -55,7 +55,7 @@ class TestFrontmatter:
         fm_str = _format_frontmatter(
             name="test-mem",
             scope="global",
-            importance="high",
+            importance=0.8,
             tags=["strategic", "goals"],
             version=1,
             created="2026-02-07T20:00:00Z",
@@ -64,7 +64,7 @@ class TestFrontmatter:
         parsed = _parse_memory_frontmatter(fm_str + "\nBody content here.")
         assert parsed["name"] == "test-mem"
         assert parsed["scope"] == "global"
-        assert parsed["importance"] == "high"
+        assert parsed["importance"] == 0.8
         assert "strategic" in parsed["tags"]
         assert "goals" in parsed["tags"]
         assert parsed["version"] == 1
@@ -73,7 +73,7 @@ class TestFrontmatter:
         fm_str = _format_frontmatter(
             name="context",
             scope="project",
-            importance="medium",
+            importance=0.5,
             tags=[],
             version=1,
             created="2026-02-07T20:00:00Z",
@@ -83,6 +83,18 @@ class TestFrontmatter:
         parsed = _parse_memory_frontmatter(fm_str + "\nContent.")
         assert parsed["project"] == "my-app"
         assert parsed["scope"] == "project"
+
+    def test_parse_categorical_backward_compat(self):
+        """Old files with categorical importance are normalized to float."""
+        content = "---\nname: old-mem\nimportance: high\nversion: 1\n---\nBody"
+        parsed = _parse_memory_frontmatter(content)
+        assert parsed["importance"] == 0.8
+
+    def test_parse_numeric_importance(self):
+        """Numeric importance in frontmatter is preserved as float."""
+        content = "---\nname: new-mem\nimportance: 0.75\nversion: 1\n---\nBody"
+        parsed = _parse_memory_frontmatter(content)
+        assert parsed["importance"] == 0.75
 
     def test_strip_frontmatter(self):
         content = "---\nname: test\n---\n# Body\n\nText here."
@@ -134,7 +146,7 @@ class TestWriteAndReadMemoryFile:
             content="# Test\n\nHello world.",
             scope="global",
             project=None,
-            importance="high",
+            importance=0.8,
             tags=["test"],
             overwrite=False,
         )
@@ -145,7 +157,7 @@ class TestWriteAndReadMemoryFile:
         assert read_result["success"] is True
         assert "Hello world." in read_result["body"]
         assert read_result["metadata"]["name"] == "test-write"
-        assert read_result["metadata"]["importance"] == "high"
+        assert read_result["metadata"]["importance"] == 0.8
 
     def test_overwrite_bumps_version(self, mock_config):
         path, _ = resolve_memory_path("test-version", scope="global")
@@ -155,7 +167,7 @@ class TestWriteAndReadMemoryFile:
             content="V1",
             scope="global",
             project=None,
-            importance="medium",
+            importance=0.5,
             tags=[],
             overwrite=False,
         )
@@ -165,7 +177,7 @@ class TestWriteAndReadMemoryFile:
             content="V2",
             scope="global",
             project=None,
-            importance="medium",
+            importance=0.5,
             tags=[],
             overwrite=True,
         )
@@ -180,7 +192,7 @@ class TestWriteAndReadMemoryFile:
             content="V1",
             scope="global",
             project=None,
-            importance="medium",
+            importance=0.5,
             tags=[],
             overwrite=False,
         )
@@ -190,7 +202,7 @@ class TestWriteAndReadMemoryFile:
             content="V2",
             scope="global",
             project=None,
-            importance="medium",
+            importance=0.5,
             tags=[],
             overwrite=False,
         )
@@ -210,7 +222,7 @@ class TestWriteAndReadMemoryFile:
             content="Content",
             scope="global",
             project=None,
-            importance="medium",
+            importance=0.5,
             tags=[],
             overwrite=False,
         )
@@ -227,22 +239,22 @@ class TestListMemoryFiles:
 
     def test_list_after_writes(self, mock_config):
         path1, _ = resolve_memory_path("mem-a", scope="global")
-        write_memory_file(path1, "mem-a", "A", "global", None, "high", ["tag1"], False)
+        write_memory_file(path1, "mem-a", "A", "global", None, 0.8, ["tag1"], False)
         path2, _ = resolve_memory_path("mem-b", scope="global")
-        write_memory_file(path2, "mem-b", "B", "global", None, "low", ["tag2"], False)
+        write_memory_file(path2, "mem-b", "B", "global", None, 0.3, ["tag2"], False)
 
         results = list_memory_files(scope="global")
         names = [m["name"] for m in results]
         assert "mem-a" in names
         assert "mem-b" in names
 
-    def test_list_filter_by_importance(self, mock_config):
+    def test_list_filter_by_importance_threshold(self, mock_config):
         path1, _ = resolve_memory_path("high-mem", scope="global")
-        write_memory_file(path1, "high-mem", "A", "global", None, "high", [], False)
+        write_memory_file(path1, "high-mem", "A", "global", None, 0.8, [], False)
         path2, _ = resolve_memory_path("low-mem", scope="global")
-        write_memory_file(path2, "low-mem", "B", "global", None, "low", [], False)
+        write_memory_file(path2, "low-mem", "B", "global", None, 0.3, [], False)
 
-        results = list_memory_files(scope="global", importance="high")
+        results = list_memory_files(scope="global", importance=0.7)
         names = [m["name"] for m in results]
         assert "high-mem" in names
         assert "low-mem" not in names
@@ -250,7 +262,7 @@ class TestListMemoryFiles:
     def test_list_filter_by_tag(self, mock_config):
         path, _ = resolve_memory_path("tagged-mem", scope="global")
         write_memory_file(
-            path, "tagged-mem", "A", "global", None, "medium", ["work", "python"], False
+            path, "tagged-mem", "A", "global", None, 0.5, ["work", "python"], False
         )
 
         results = list_memory_files(scope="global", tag="work")
@@ -267,7 +279,7 @@ class TestDeleteMemoryFile:
 
     def test_delete_existing(self, mock_config):
         path, _ = resolve_memory_path("to-delete", scope="global")
-        write_memory_file(path, "to-delete", "Del", "global", None, "medium", [], False)
+        write_memory_file(path, "to-delete", "Del", "global", None, 0.5, [], False)
         assert os.path.isfile(path)
 
         result = delete_memory_file(path)

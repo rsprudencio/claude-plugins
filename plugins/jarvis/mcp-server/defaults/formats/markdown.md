@@ -17,7 +17,7 @@ tags:
   - context-tag
 type: note
 sentiment: neutral
-importance: medium
+importance: 0.5
 linked_to:
   - "[[Related Note]]"
 ai_suggested: true

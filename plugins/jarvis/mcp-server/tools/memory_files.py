@@ -107,7 +107,7 @@ def resolve_memory_path(
 def _format_frontmatter(
     name: str,
     scope: str,
-    importance: str,
+    importance: float,
     tags: list,
     version: int,
     created: str,
@@ -170,6 +170,23 @@ def _parse_memory_frontmatter(content: str) -> dict:
         except (ValueError, TypeError):
             fm["version"] = 1
 
+    # Normalize importance to float (backward compat for categorical strings)
+    if "importance" in fm:
+        _CATEGORICAL_MAP = {
+            "critical": 0.95,
+            "high": 0.8,
+            "medium": 0.5,
+            "low": 0.3,
+        }
+        raw = fm["importance"]
+        if isinstance(raw, str) and raw.lower() in _CATEGORICAL_MAP:
+            fm["importance"] = _CATEGORICAL_MAP[raw.lower()]
+        else:
+            try:
+                fm["importance"] = max(0.0, min(1.0, float(raw)))
+            except (ValueError, TypeError):
+                fm["importance"] = 0.5  # fallback
+
     return fm
 
 
@@ -184,7 +201,7 @@ def write_memory_file(
     content: str,
     scope: str,
     project: Optional[str],
-    importance: str,
+    importance: float,
     tags: list,
     overwrite: bool,
 ) -> dict:
@@ -196,7 +213,7 @@ def write_memory_file(
         content: Memory content (markdown body, no frontmatter)
         scope: "global" or "project"
         project: Project name (for project scope)
-        importance: "low", "medium", "high", "critical"
+        importance: Numeric 0.0–1.0
         tags: List of tag strings
         overwrite: Whether to overwrite existing file
 
@@ -287,7 +304,7 @@ def list_memory_files(
     scope: str = "global",
     project: Optional[str] = None,
     tag: Optional[str] = None,
-    importance: Optional[str] = None,
+    importance: Optional[float] = None,
     include_content: bool = False,
 ) -> list:
     """Scan filesystem for memory files, parse frontmatter, apply filters.
@@ -296,7 +313,7 @@ def list_memory_files(
         scope: "global", "project", or "all"
         project: Project name (for scope="project")
         tag: Filter by tag
-        importance: Filter by importance level
+        importance: Minimum importance threshold (0.0–1.0)
         include_content: Include body text (frontmatter stripped) in results
 
     Returns:
@@ -342,13 +359,15 @@ def list_memory_files(
                 content = ""
                 fm = {}
 
-            entry_importance = fm.get("importance", "medium")
+            entry_importance = fm.get("importance", 0.5)
+            if not isinstance(entry_importance, (int, float)):
+                entry_importance = 0.5
             entry_tags = fm.get("tags", [])
             if isinstance(entry_tags, str):
                 entry_tags = [t.strip() for t in entry_tags.split(",")]
 
-            # Apply filters
-            if importance and entry_importance != importance:
+            # Apply filters (importance is >= threshold)
+            if importance is not None and entry_importance < importance:
                 continue
             if tag and tag not in entry_tags:
                 continue

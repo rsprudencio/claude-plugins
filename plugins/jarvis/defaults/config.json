@@ -10,7 +10,7 @@
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,
-    "default_importance": "medium",
+    "default_importance": 0.5,
     "auto_extract": {
       "mode": "background",
       "min_turn_chars": 200,

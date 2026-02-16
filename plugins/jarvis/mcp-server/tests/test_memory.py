@@ -81,13 +81,15 @@ class TestBuildMetadata:
         assert meta["vault_type"] == "incident-log"
         assert meta["tags"] == "jarvis,work"
         assert meta["importance"] == "high"
+        assert meta["importance_score"] == "0.8"
         assert meta["directory"] == "journal"
         assert meta["has_frontmatter"] == "true"
 
     def test_vault_type_inferred_from_directory(self):
         meta = _build_metadata({}, "notes/my-note.md")
         assert meta["vault_type"] == "note"
-        assert meta["importance"] == "medium"
+        assert meta["importance"] == "0.5"
+        assert meta["importance_score"] == "0.5"
         assert meta["has_frontmatter"] == "false"
 
     def test_directory_inference(self):

@@ -504,14 +504,14 @@ Draft summary:
 {
   "mode": "edit",
   "file_path": "journal/jarvis/2026/01/20260123163045.md",
-  "feedback": "Add #resolved tag, change importance to high"
+  "feedback": "Add #resolved tag, change importance to 0.8"
 }
 ```
 
 **Actions:**
 1. Read existing file
 2. Add `#resolved` to tags
-3. Change `importance: medium` to `importance: high`
+3. Change `importance: 0.5` to `importance: 0.8`
 4. Update `modified` timestamp
 5. Overwrite file
 
@@ -528,7 +528,7 @@ ONLY after user approval should you delegate to jarvis-audit-agent.
 File: journal/jarvis/2026/01/20260123163045-payment-service-timeout.md
 Changes made:
 - Added tag: #resolved
-- Changed importance: medium → high
+- Changed importance: 0.5 → 0.8
 - Updated modified timestamp
 ```
 
