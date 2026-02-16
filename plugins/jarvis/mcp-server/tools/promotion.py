@@ -9,6 +9,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
+from .chroma_lock import chroma_write_lock
 from .config import get_promotion_config
 from .file_ops import write_vault_file
 from .format_support import get_write_extension, generate_frontmatter, get_write_format
@@ -235,13 +236,9 @@ def promote(doc_id: str) -> dict:
                 "error": f"Failed to write file: {write_result.get('error')}",
             }
 
-        # Delete old ChromaDB entry
-        collection.delete(ids=[doc_id])
-
-        # Create new vault:: ID
+        # Delete old ChromaDB entry + upsert new one in single lock scope
         new_vault_id = vault_id(relative_path)
 
-        # Upsert with new ID and tier="file"
         new_metadata = {**metadata}
         new_metadata["tier"] = "file"
         new_metadata["promoted"] = "true"
@@ -251,9 +248,11 @@ def promote(doc_id: str) -> dict:
         new_metadata["vault_type"] = content_type  # Vault-specific type
         new_metadata["namespace"] = "vault::"
 
-        collection.upsert(
-            ids=[new_vault_id], documents=[file_content], metadatas=[new_metadata]
-        )
+        with chroma_write_lock():
+            collection.delete(ids=[doc_id])
+            collection.upsert(
+                ids=[new_vault_id], documents=[file_content], metadatas=[new_metadata]
+            )
 
         return {
             "success": True,

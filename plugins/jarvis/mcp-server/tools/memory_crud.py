@@ -28,6 +28,7 @@ from .namespaces import (
     memory_namespace,
     parse_id,
 )
+from .chroma_lock import chroma_write_lock
 from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
@@ -157,7 +158,7 @@ def memory_write(
     if not write_result.get("success"):
         return write_result
 
-    # Index in ChromaDB
+    # Index in ChromaDB under write lock
     indexed = False
     doc_id = _build_chromadb_id(name, scope, project)
     try:
@@ -177,11 +178,12 @@ def memory_write(
             else content
         )
 
-        collection.upsert(
-            ids=[doc_id],
-            documents=[full_content],
-            metadatas=[metadata],
-        )
+        with chroma_write_lock():
+            collection.upsert(
+                ids=[doc_id],
+                documents=[full_content],
+                metadatas=[metadata],
+            )
         indexed = True
     except Exception as e:
         logger.warning(f"ChromaDB indexing failed for memory '{name}': {e}")
@@ -385,12 +387,13 @@ def memory_delete(
     file_result = delete_memory_file(path)
     file_deleted = file_result.get("success", False)
 
-    # Delete ChromaDB entry
+    # Delete ChromaDB entry under write lock
     index_deleted = False
     doc_id = _build_chromadb_id(name, scope, project)
     try:
         collection = _get_collection()
-        collection.delete(ids=[doc_id])
+        with chroma_write_lock():
+            collection.delete(ids=[doc_id])
         index_deleted = True
     except Exception as e:
         logger.warning(f"ChromaDB delete failed for '{name}': {e}")

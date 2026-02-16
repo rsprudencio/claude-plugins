@@ -1141,6 +1141,48 @@ def call_haiku(
     return (*result, "CLI") if result else None
 
 
+def _get_mcp_base_url() -> str | None:
+    """Get the MCP server base URL if HTTP transport is active.
+
+    Returns None for local/stdio mode (direct writes are fine with file lock).
+    """
+    try:
+        from tools.config import get_config
+
+        config = get_config()
+        transport = config.get("mcp_transport", "local")
+
+        if transport == "remote":
+            return config.get("mcp_remote_url", "http://localhost:8741")
+        elif transport == "container":
+            return "http://localhost:8741"
+        else:
+            return None  # local/stdio — use direct writes
+    except Exception:
+        return None
+
+
+def _post_tier2_write(payload: dict, base_url: str) -> dict | None:
+    """POST a tier2_write request to the MCP server.
+
+    Returns the parsed response dict, or None on failure.
+    """
+    try:
+        import urllib.request
+
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{base_url}/internal/store-tier2",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
 def store_observation(
     content: str,
     importance_score: float,
@@ -1153,7 +1195,11 @@ def store_observation(
     session_id: str = "",
     transcript_line: int = -1,
 ) -> dict:
-    """Store an observation via tier2_write.
+    """Store an observation via tier2_write, routed through MCP server when possible.
+
+    In container/remote mode, POSTs to /internal/store-tier2 on the MCP server
+    to serialize writes. Falls back to direct tier2_write() in local/stdio mode
+    or if the HTTP call fails.
 
     Args:
         content: Observation text
@@ -1170,8 +1216,6 @@ def store_observation(
     Returns:
         Result dict from tier2_write
     """
-    from tools.tier2 import tier2_write
-
     extra = {}
     if project_path:
         extra["project_path"] = project_path
@@ -1186,15 +1230,27 @@ def store_observation(
     if transcript_line >= 0:
         extra["transcript_line"] = str(transcript_line)
 
-    return tier2_write(
-        content=content,
-        content_type="observation",
-        importance_score=importance_score,
-        source=source_label,
-        tags=tags,
-        extra_metadata=extra or None,
-        skip_secret_scan=False,  # Always scan for secrets
-    )
+    payload = {
+        "content": content,
+        "content_type": "observation",
+        "importance_score": importance_score,
+        "source": source_label,
+        "tags": tags,
+        "extra_metadata": extra or None,
+        "skip_secret_scan": False,
+    }
+
+    # Try routing through MCP server (container/remote mode)
+    base_url = _get_mcp_base_url()
+    if base_url:
+        result = _post_tier2_write(payload, base_url)
+        if result is not None:
+            return result
+        # Fall through to direct write on HTTP failure
+
+    from tools.tier2 import tier2_write
+
+    return tier2_write(**payload)
 
 
 def normalize_extraction_response(parsed: dict | None) -> list[dict]:
@@ -1500,7 +1556,10 @@ def store_worklog(
     session_id: str = "",
     transcript_line: int = -1,
 ) -> dict:
-    """Store a worklog entry via tier2_write.
+    """Store a worklog entry via tier2_write, routed through MCP server when possible.
+
+    Same routing logic as store_observation(): POSTs to MCP server in
+    container/remote mode, falls back to direct write in local mode.
 
     Args:
         task_summary: What the user was working on (intent-focused)
@@ -1517,8 +1576,6 @@ def store_worklog(
     Returns:
         Result dict from tier2_write
     """
-    from tools.tier2 import tier2_write
-
     extra = {"workstream": workstream, "activity_type": activity_type}
     if project_path:
         project_dir = os.path.basename(project_path)
@@ -1533,15 +1590,26 @@ def store_worklog(
     if transcript_line >= 0:
         extra["transcript_line"] = str(transcript_line)
 
-    return tier2_write(
-        content=task_summary,
-        content_type="worklog",
-        importance_score=0.5,  # Worklogs are equally important; ordering is temporal
-        source=source_label,
-        tags=tags,
-        extra_metadata=extra,
-        skip_secret_scan=False,
-    )
+    payload = {
+        "content": task_summary,
+        "content_type": "worklog",
+        "importance_score": 0.5,
+        "source": source_label,
+        "tags": tags,
+        "extra_metadata": extra,
+        "skip_secret_scan": False,
+    }
+
+    # Try routing through MCP server (container/remote mode)
+    base_url = _get_mcp_base_url()
+    if base_url:
+        result = _post_tier2_write(payload, base_url)
+        if result is not None:
+            return result
+
+    from tools.tier2 import tier2_write
+
+    return tier2_write(**payload)
 
 
 def main():

@@ -35,6 +35,7 @@ from .namespaces import (
     NAMESPACE_DECISION,
     NAMESPACE_WORKLOG,
 )
+from .chroma_lock import chroma_write_lock
 from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
@@ -193,10 +194,11 @@ def tier2_write(
     if extra_metadata:
         metadata.update(extra_metadata)
 
-    # Write to ChromaDB
+    # Write to ChromaDB under write lock
     try:
         collection = _get_collection()
-        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        with chroma_write_lock():
+            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         result = {
             "success": True,
             "id": doc_id,
@@ -252,12 +254,13 @@ def tier2_read(doc_id: str) -> dict:
         updated_metadata["retrieval_count"] = str(retrieval_count)
         updated_metadata["updated_at"] = now_iso
 
-        # Write back
-        collection.upsert(
-            ids=[doc_id],
-            documents=[result["documents"][0]],
-            metadatas=[updated_metadata],
-        )
+        # Write back under write lock
+        with chroma_write_lock():
+            collection.upsert(
+                ids=[doc_id],
+                documents=[result["documents"][0]],
+                metadatas=[updated_metadata],
+            )
 
         return {
             "success": True,
@@ -412,8 +415,9 @@ def tier2_delete(doc_id: str) -> dict:
                 "reason": "not found",
             }
 
-        # Delete
-        collection.delete(ids=[doc_id])
+        # Delete under write lock
+        with chroma_write_lock():
+            collection.delete(ids=[doc_id])
 
         return {
             "success": True,
@@ -443,7 +447,8 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         metadata["updated_at"] = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        with chroma_write_lock():
+            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         return {"success": True, "doc_id": doc_id, "updated": True}
     except Exception as e:
         logger.error(f"tier2_upsert failed: {e}")

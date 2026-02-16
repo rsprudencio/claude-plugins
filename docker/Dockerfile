@@ -10,11 +10,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /build
 
 # Install all dependencies via uv (single layer for caching)
-# Core: mcp>=1.0.0, chromadb~=1.4.1, uvicorn, starlette (transitive)
+# Core: mcp>=1.0.0, chromadb>=1.5.0, uvicorn, starlette (transitive)
 # Todoist: todoist-api-python>=3.0.0
 RUN uv pip install --system --no-cache \
     "mcp>=1.0.0" \
-    "chromadb~=1.4.1" \
+    "chromadb>=1.5.0" \
     "tokenizers>=0.13.0" \
     "todoist-api-python>=3.0.0" \
     uvicorn

@@ -18,6 +18,7 @@ from typing import Optional
 
 import chromadb
 
+from .chroma_lock import chroma_write_lock
 from .config import get_verified_vault_path, get_chunking_config, get_scoring_config
 from .chunking import chunk_document
 from .scoring import compute_importance
@@ -310,9 +311,10 @@ def index_vault(
                 skipped += 1
                 continue
 
-            # On force re-index, clean up old chunks first
+            # On force re-index, clean up old chunks first (under lock)
             if force:
-                _delete_existing_chunks(collection, relative)
+                with chroma_write_lock():
+                    _delete_existing_chunks(collection, relative)
 
             frontmatter = _parse_frontmatter_for_file(content, filepath)
             title = _extract_title_for_file(content, os.path.basename(filepath))
@@ -333,19 +335,21 @@ def index_vault(
             files_indexed += 1
             chunks_total += n_chunks
 
-            # Flush batch
+            # Flush batch under write lock
             if len(batch_ids) >= _BATCH_SIZE:
-                collection.upsert(
-                    ids=batch_ids, documents=batch_docs, metadatas=batch_meta
-                )
+                with chroma_write_lock():
+                    collection.upsert(
+                        ids=batch_ids, documents=batch_docs, metadatas=batch_meta
+                    )
                 batch_ids, batch_docs, batch_meta = [], [], []
 
         except Exception as e:
             errors.append({"file": relative, "error": str(e)})
 
-    # Flush remaining
+    # Flush remaining under write lock
     if batch_ids:
-        collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
+        with chroma_write_lock():
+            collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
 
     duration = round(time.time() - start, 2)
     return {
@@ -384,9 +388,6 @@ def index_file(relative_path: str) -> dict:
         chunking_config = get_chunking_config()
         scoring_config = get_scoring_config()
 
-        # Clean up old chunks/legacy doc before re-indexing
-        _delete_existing_chunks(collection, relative_path)
-
         frontmatter = _parse_frontmatter_for_file(content, relative_path)
         title = _extract_title_for_file(content, relative_path)
 
@@ -400,7 +401,10 @@ def index_file(relative_path: str) -> dict:
             scoring_config,
         )
 
-        collection.upsert(ids=ids, documents=docs, metadatas=metas)
+        # Delete old chunks + upsert new in a single lock scope
+        with chroma_write_lock():
+            _delete_existing_chunks(collection, relative_path)
+            collection.upsert(ids=ids, documents=docs, metadatas=metas)
 
         return {
             "success": True,
@@ -426,7 +430,8 @@ def unindex_file(relative_path: str) -> dict:
     """
     try:
         collection = _get_collection()
-        deleted = _delete_existing_chunks(collection, relative_path)
+        with chroma_write_lock():
+            deleted = _delete_existing_chunks(collection, relative_path)
         return {"success": True, "deleted_chunks": deleted}
     except Exception as e:
         return {"success": False, "error": str(e)}

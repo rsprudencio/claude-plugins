@@ -165,6 +165,8 @@ def _increment_retrieval_counts(
     Best-effort operation: errors are logged but don't block query response.
     Only updates Tier 2 documents (Tier 1 doesn't track retrieval counts).
 
+    Acquires the ChromaDB write lock for the upsert operation.
+
     Args:
         collection: ChromaDB collection
         doc_ids: List of document IDs to increment
@@ -175,6 +177,8 @@ def _increment_retrieval_counts(
         return
 
     try:
+        from .chroma_lock import chroma_write_lock
+
         # Filter to only Tier 2 IDs
         tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
         if not tier2_ids:
@@ -203,11 +207,12 @@ def _increment_retrieval_counts(
             updated_docs.append(result["documents"][i])
             updated_metas.append(updated_metadata)
 
-        # Batch upsert
+        # Batch upsert under write lock
         if updated_ids:
-            collection.upsert(
-                ids=updated_ids, documents=updated_docs, metadatas=updated_metas
-            )
+            with chroma_write_lock():
+                collection.upsert(
+                    ids=updated_ids, documents=updated_docs, metadatas=updated_metas
+                )
 
     except Exception as e:
         # Log but don't fail query
@@ -413,7 +418,12 @@ def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -
     return response
 
 
-def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> dict:
+def semantic_context(
+    query: str,
+    threshold: float = 0.5,
+    budget: int = 8000,
+    skip_retrieval_increment: bool = False,
+) -> dict:
     """Search vault memories for per-prompt context injection.
 
     Optimized for automatic, per-message use. Differs from query_vault():
@@ -435,9 +445,13 @@ def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> 
         query: User's raw prompt text
         threshold: Minimum relevance score 0.0-1.0 (default 0.5)
         budget: Total character budget for injection (default 8000, split 50/50)
+        skip_retrieval_increment: If True, skip the retrieval count write-back.
+            Surfaced IDs are returned in the result dict so the caller can
+            bump them externally (e.g., via HTTP POST to the MCP server).
 
     Returns:
-        Dict with matches list and metadata
+        Dict with matches list and metadata. When skip_retrieval_increment=True,
+        includes 'surfaced_ids' list for deferred bumping.
     """
     start = time.time()
 
@@ -570,11 +584,11 @@ def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> 
                 selected.append(entry)
 
     # Fractional retrieval bump for passively surfaced results
-    if selected:
+    surfaced_ids = [entry["doc_id"] for entry in selected] if selected else []
+    if selected and not skip_retrieval_increment:
         per_prompt_config = get_per_prompt_config()
         passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
-            surfaced_ids = [entry["doc_id"] for entry in selected]
             _increment_retrieval_counts(
                 collection, surfaced_ids, increment=passive_increment
             )
@@ -614,7 +628,7 @@ def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> 
 
     query_ms = round((time.time() - start) * 1000, 1)
 
-    return {
+    result = {
         "matches": matches,
         "query_ms": query_ms,
         "total_searched": total,
@@ -625,6 +639,12 @@ def semantic_context(query: str, threshold: float = 0.5, budget: int = 8000) -> 
             "total": budget,
         },
     }
+
+    # Include surfaced IDs when caller needs to bump externally
+    if skip_retrieval_increment and surfaced_ids:
+        result["surfaced_ids"] = surfaced_ids
+
+    return result
 
 
 def doc_read(ids: list, include_metadata: bool = True) -> dict:

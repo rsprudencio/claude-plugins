@@ -123,7 +123,10 @@ def no_config(mock_config):
 
 @pytest.fixture(autouse=True)
 def cleanup_chroma_client():
-    """Clean up ChromaDB client after each test to prevent file handle leaks."""
+    """Clean up ChromaDB client and shutdown flag after each test."""
+    import tools.chroma_lock as lock_module
+
+    lock_module._shutting_down = False
     yield
     # After test completes, clear the Python reference AND ChromaDB's internal cache
     import tools.memory as memory_module
@@ -131,6 +134,7 @@ def cleanup_chroma_client():
 
     memory_module._chroma_client = None
     SharedSystemClient.clear_system_cache()
+    lock_module._shutting_down = False
 
 
 @pytest.fixture

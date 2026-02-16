@@ -210,8 +210,67 @@ def _format_memories(matches: list, query_ms: float) -> str:
 # --- Main Entry Point ---
 
 
+def _post_bump_retrieval(surfaced_ids: list, config: dict):
+    """Fire-and-forget POST to MCP server to bump retrieval counts.
+
+    Only applicable when MCP transport is 'container' or 'remote' (HTTP server running).
+    In 'local' (stdio) mode, the bump was already handled by semantic_context() when
+    skip_retrieval_increment=False, so this is only called when we skipped inline bumps.
+
+    Args:
+        surfaced_ids: List of document IDs to bump
+        config: Per-prompt config dict (for passive_retrieval_increment)
+    """
+    if not surfaced_ids:
+        return
+
+    try:
+        from tools.config import get_config
+
+        full_config = get_config()
+        transport = full_config.get("mcp_transport", "local")
+
+        if transport == "local":
+            # No HTTP server to POST to — do inline bump as fallback
+            try:
+                from tools.query import _increment_retrieval_counts
+                from tools.memory import _get_collection
+
+                collection = _get_collection()
+                increment = config.get("passive_retrieval_increment", 0.01)
+                _increment_retrieval_counts(collection, surfaced_ids, increment=increment)
+            except Exception:
+                pass
+            return
+
+        # Determine MCP server URL
+        if transport == "remote":
+            base_url = full_config.get("mcp_remote_url", "http://localhost:8741")
+        else:
+            base_url = "http://localhost:8741"
+
+        import urllib.request
+
+        increment = config.get("passive_retrieval_increment", 0.01)
+        payload = json.dumps({"ids": surfaced_ids, "increment": increment}).encode()
+
+        req = urllib.request.Request(
+            f"{base_url}/internal/bump-retrieval",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2)
+    except Exception:
+        pass  # Fire-and-forget — never fail the hook
+
+
 def main():
-    """Run per-prompt semantic search and output results to stdout."""
+    """Run per-prompt semantic search and output results to stdout.
+
+    Read-only: uses skip_retrieval_increment=True to avoid direct ChromaDB writes.
+    Retrieval bumps are deferred to the MCP server via HTTP POST.
+    """
     if len(sys.argv) < 2:
         sys.exit(0)
 
@@ -268,13 +327,14 @@ def main():
     except ImportError:
         sys.exit(0)
 
-    # Run search
+    # Run search (read-only — no direct ChromaDB writes)
     try:
         search_start = time.time()
         result = semantic_context(
             query=prompt_text,
             threshold=config.get("threshold", 0.5),
             budget=config.get("budget", 8000),
+            skip_retrieval_increment=True,
         )
         query_ms = round((time.time() - search_start) * 1000)
     except Exception as e:
@@ -290,6 +350,11 @@ def main():
 
     # Format output (Claude sees this via stdout)
     output = _format_memories(matches, result.get("query_ms", 0))
+
+    # Deferred retrieval bump: POST surfaced IDs to MCP server (fire-and-forget)
+    surfaced_ids = result.get("surfaced_ids", [])
+    if surfaced_ids:
+        _post_bump_retrieval(surfaced_ids, config)
 
     # JSONL telemetry (always on, lightweight)
     _write_telemetry(prompt_text, query_ms, matches, result)

@@ -21,10 +21,15 @@ fi
 
 # --- Graceful shutdown ---
 cleanup() {
-    echo "[jarvis] Shutting down..."
+    echo "[jarvis] Shutting down (draining writes)..."
     [ -n "$CORE_PID" ] && kill "$CORE_PID" 2>/dev/null
     [ -n "$TODOIST_PID" ] && kill "$TODOIST_PID" 2>/dev/null
-    wait
+    # Wait up to 10s for graceful shutdown (in-flight writes drain via ASGI lifespan)
+    local timeout=10
+    while [ $timeout -gt 0 ] && kill -0 "$CORE_PID" 2>/dev/null; do
+        sleep 1
+        timeout=$((timeout - 1))
+    done
     echo "[jarvis] Shutdown complete."
     exit 0
 }
