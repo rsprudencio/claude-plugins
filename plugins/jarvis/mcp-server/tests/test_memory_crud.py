@@ -105,6 +105,32 @@ class TestMemoryWrite:
 
         _cleanup_chromadb()
 
+    def test_write_numeric_importance(self, mock_config):
+        _reset_chromadb(mock_config)
+
+        result = memory_write(name="test-numeric", content="test", importance=0.85)
+        assert result["success"] is True
+
+        _cleanup_chromadb()
+
+    def test_write_importance_out_of_range(self, mock_config):
+        _reset_chromadb(mock_config)
+
+        # Values are clamped, not rejected
+        result = memory_write(name="test-clamp", content="test", importance=1.5)
+        assert result["success"] is True
+
+        _cleanup_chromadb()
+
+    def test_write_categorical_backward_compat(self, mock_config):
+        """Categorical strings are accepted and mapped to numeric."""
+        _reset_chromadb(mock_config)
+
+        result = memory_write(name="test-cat", content="test", importance="high")
+        assert result["success"] is True
+
+        _cleanup_chromadb()
+
     def test_write_secret_detected(self, mock_config):
         _reset_chromadb(mock_config)
 
@@ -175,7 +201,7 @@ class TestMemoryRead:
 
         path, _ = resolve_memory_path("file-only", scope="global")
         write_memory_file(
-            path, "file-only", "File content", "global", None, "medium", [], False
+            path, "file-only", "File content", "global", None, 0.5, [], False
         )
 
         result = memory_read(name="file-only")
@@ -215,8 +241,8 @@ class TestMemoryList:
     def test_list_all(self, mock_config):
         _reset_chromadb(mock_config)
 
-        memory_write(name="list-a", content="A", importance="high", tags=["tag1"])
-        memory_write(name="list-b", content="B", importance="low")
+        memory_write(name="list-a", content="A", importance=0.8, tags=["tag1"])
+        memory_write(name="list-b", content="B", importance=0.3)
 
         result = memory_list()
         assert result["success"] is True
@@ -227,13 +253,13 @@ class TestMemoryList:
 
         _cleanup_chromadb()
 
-    def test_list_with_filter(self, mock_config):
+    def test_list_with_threshold_filter(self, mock_config):
         _reset_chromadb(mock_config)
 
-        memory_write(name="filter-high", content="H", importance="high")
-        memory_write(name="filter-low", content="L", importance="low")
+        memory_write(name="filter-high", content="H", importance=0.8)
+        memory_write(name="filter-low", content="L", importance=0.3)
 
-        result = memory_list(importance="high")
+        result = memory_list(importance=0.7)
         names = [m["name"] for m in result["memories"]]
         assert "filter-high" in names
         assert "filter-low" not in names
@@ -327,7 +353,7 @@ class TestIntegrationCycle:
         write_result = memory_write(
             name="lifecycle-test",
             content="# Lifecycle\n\nThis tests the full memory lifecycle.",
-            importance="high",
+            importance=0.8,
             tags=["test", "lifecycle"],
         )
         assert write_result["success"] is True
@@ -448,7 +474,7 @@ class TestMemoryListIncludeContent:
         memory_write(
             name="fm-stripped",
             content="Pure body only.",
-            importance="high",
+            importance=0.8,
             tags=["test"],
         )
         result = memory_list(include_content=True)

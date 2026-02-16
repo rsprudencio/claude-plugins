@@ -232,20 +232,8 @@ def _store_vault_file(
 def _store_memory(
     name, content, scope, project, tags, importance, overwrite, skip_secret_scan
 ):
-    """Route to memory_crud.memory_write with importance conversion."""
+    """Route to memory_crud.memory_write (numeric importance passthrough)."""
     from .memory_crud import memory_write
-
-    # Convert float importance to categorical if provided
-    importance_str = "medium"
-    if importance is not None:
-        if importance >= 0.9:
-            importance_str = "critical"
-        elif importance >= 0.7:
-            importance_str = "high"
-        elif importance >= 0.4:
-            importance_str = "medium"
-        else:
-            importance_str = "low"
 
     return memory_write(
         name=name or "",
@@ -253,7 +241,7 @@ def _store_memory(
         scope=scope,
         project=project,
         tags=tags,
-        importance=importance_str,
+        importance=importance if importance is not None else 0.5,
         overwrite=overwrite,
         skip_secret_scan=skip_secret_scan,
     )

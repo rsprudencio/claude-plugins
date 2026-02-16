@@ -33,7 +33,13 @@ from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
 
-VALID_IMPORTANCE = ("low", "medium", "high", "critical")
+CATEGORICAL_TO_NUMERIC = {
+    "critical": 0.95,
+    "high": 0.8,
+    "medium": 0.5,
+    "low": 0.3,
+}
+
 VALID_SCOPES = ("global", "project")
 
 
@@ -44,10 +50,37 @@ def _build_chromadb_id(name: str, scope: str, project: Optional[str] = None) -> 
     return global_memory_id(name)
 
 
+def _normalize_importance(value) -> float:
+    """Normalize importance to a float 0.0–1.0.
+
+    Accepts:
+      - float/int: passed through (clamped to 0.0–1.0)
+      - str numeric: "0.8" -> 0.8
+      - str categorical: "high" -> 0.8  (backward compat)
+
+    Returns float or raises ValueError.
+    """
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    if isinstance(value, str):
+        # Try categorical mapping first
+        if value.lower() in CATEGORICAL_TO_NUMERIC:
+            return CATEGORICAL_TO_NUMERIC[value.lower()]
+        # Try numeric string
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except ValueError:
+            pass
+    raise ValueError(
+        f"Invalid importance: '{value}'. "
+        f"Use 0.0–1.0 or: {', '.join(CATEGORICAL_TO_NUMERIC.keys())}"
+    )
+
+
 def _build_memory_metadata(
     name: str,
     scope: str,
-    importance: str,
+    importance: float,
     tags: list,
     project: Optional[str] = None,
     created: Optional[str] = None,
@@ -63,7 +96,8 @@ def _build_memory_metadata(
         "tier": "file",
         "scope": scope,
         "name": name,
-        "importance": importance,
+        "importance": str(importance),
+        "importance_score": str(importance),
         "source": "memory-write",
         "created_at": created or now_iso,
         "updated_at": modified or now_iso,
@@ -82,7 +116,7 @@ def memory_write(
     scope: str = "global",
     project: Optional[str] = None,
     tags: Optional[list] = None,
-    importance: str = "medium",
+    importance: float = 0.5,
     overwrite: bool = False,
     skip_secret_scan: bool = False,
 ) -> dict:
@@ -94,7 +128,7 @@ def memory_write(
         scope: "global" or "project"
         project: Required when scope="project"
         tags: Optional list of tags
-        importance: "low", "medium", "high", "critical"
+        importance: Numeric 0.0–1.0 (also accepts categorical strings for backward compat)
         overwrite: Allow overwriting existing memory
         skip_secret_scan: Bypass secret detection (use with caution)
 
@@ -115,12 +149,11 @@ def memory_write(
             "error": f"Invalid scope: '{scope}'. Use: {VALID_SCOPES}",
         }
 
-    # Validate importance
-    if importance not in VALID_IMPORTANCE:
-        return {
-            "success": False,
-            "error": f"Invalid importance: '{importance}'. Use: {VALID_IMPORTANCE}",
-        }
+    # Normalize importance (accepts float, int, categorical string)
+    try:
+        importance = _normalize_importance(importance)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
 
     # Validate project requirement
     if scope == "project" and not project:
@@ -281,7 +314,7 @@ def memory_list(
     scope: str = "all",
     project: Optional[str] = None,
     tag: Optional[str] = None,
-    importance: Optional[str] = None,
+    importance: Optional[float] = None,
     include_content: bool = False,
 ) -> dict:
     """List memory files with optional filters.
@@ -290,12 +323,19 @@ def memory_list(
         scope: "global", "project", or "all"
         project: Filter by project (for scope="project")
         tag: Filter by tag
-        importance: Filter by importance level
+        importance: Minimum importance threshold (0.0–1.0). Also accepts
+                    categorical strings for backward compat.
         include_content: Include body text in each memory entry
 
     Returns:
         Result dict with memories list and total count
     """
+    # Normalize importance filter (accepts float or categorical string)
+    if importance is not None:
+        try:
+            importance = _normalize_importance(importance)
+        except ValueError:
+            importance = None
     memories = list_memory_files(
         scope=scope,
         project=project,

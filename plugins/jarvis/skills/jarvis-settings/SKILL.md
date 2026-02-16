@@ -274,7 +274,7 @@ Let user change specific paths. All paths are relative to vault root.
 | `secret_detection` | true | Scan content for secrets before storing |
 | `importance_scoring` | true | Score content importance on write |
 | `recency_boost_days` | 7 | Boost recent content in search results |
-| `default_importance` | "medium" | Default importance for new content |
+| `default_importance` | 0.5 | Default importance score (0.0–1.0) for new content |
 | `db_path` | `~/.jarvis/memory_db` | ChromaDB database location |
 
 #### Cross-encoder reranking
@@ -329,7 +329,7 @@ db_path:              ~/.jarvis/memory_db
 secret_detection:     true
 importance_scoring:   true
 recency_boost_days:   7
-default_importance:   medium
+default_importance:   0.5
 
 === Per-Prompt Search ===
 enabled:              true

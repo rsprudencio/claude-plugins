@@ -402,8 +402,9 @@ TOOLS = [
                     "description": "Filter by tag for memory listing",
                 },
                 "importance": {
-                    "type": "string",
-                    "enum": ["low", "medium", "high", "critical"],
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 1.0,
                     "description": "Filter by importance for memory listing",
                 },
                 "limit": {

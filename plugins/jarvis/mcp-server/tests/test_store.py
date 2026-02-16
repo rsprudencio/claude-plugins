@@ -182,9 +182,8 @@ class TestStoreMemory:
         )
         assert result["success"]
 
-    def test_importance_float_to_categorical(self, mock_config):
-        """Float importance is converted to categorical for memories."""
-        # High importance
+    def test_importance_float_passthrough(self, mock_config):
+        """Float importance is passed directly to memory_write."""
         result = store(
             content="Critical memory",
             type="memory",

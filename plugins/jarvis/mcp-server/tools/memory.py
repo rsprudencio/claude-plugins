@@ -114,8 +114,24 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
             meta[key] = str(frontmatter[key])
     if "importance" in frontmatter:
         meta["importance"] = str(frontmatter["importance"])
+        # Also populate importance_score (normalize categorical for old files)
+        _CATEGORICAL_MAP = {
+            "critical": 0.95,
+            "high": 0.8,
+            "medium": 0.5,
+            "low": 0.3,
+        }
+        raw = frontmatter["importance"]
+        if isinstance(raw, str) and raw.lower() in _CATEGORICAL_MAP:
+            meta["importance_score"] = str(_CATEGORICAL_MAP[raw.lower()])
+        else:
+            try:
+                meta["importance_score"] = str(max(0.0, min(1.0, float(raw))))
+            except (ValueError, TypeError):
+                meta["importance_score"] = "0.5"
     else:
-        meta["importance"] = "medium"
+        meta["importance"] = "0.5"
+        meta["importance_score"] = "0.5"
 
     return meta
 

@@ -196,7 +196,7 @@ Return structured JSON with findings:
         "jarvis_id": "20260128093045-romain-ai-agent",
         "type": "note",
         "tags": ["jarvis", "note", "work", "achievement"],
-        "importance": "high",
+        "importance": 0.8,
         "created": "2026-01-28T09:30:45Z",
         "linked_to": ["[[PGC Romain Mahe]]"]
       }

@@ -513,7 +513,7 @@
       "secret_detection": { "type": "boolean", "default": true, "description": "Enable secret scanning before memory writes" },
       "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
       "recency_boost_days": { "type": "integer", "default": 7, "description": "Days within which recency boost is applied" },
-      "default_importance": { "type": "string", "default": "medium", "description": "Default importance level for new memories" },
+      "default_importance": { "type": "number", "default": 0.5, "description": "Default importance score (0.0-1.0) for new memories" },
       "db_path": { "type": "string", "default": "~/.jarvis/memory_db", "description": "ChromaDB database directory" }
     },
 
