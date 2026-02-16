@@ -449,9 +449,10 @@ class TestDetectConflicts:
         # The important thing is the pipeline doesn't crash
         assert isinstance(result, list)
 
+    @patch("tools.conflict.mark_superseded", return_value=True)
     @patch("tools.conflict.verify_conflicts_with_llm")
     @patch("tools.conflict.find_conflict_candidates")
-    def test_with_llm(self, mock_find, mock_verify, mock_config):
+    def test_with_llm(self, mock_find, mock_verify, mock_mark, mock_config):
         mock_config.set(
             memory={
                 "conflict_detection": {"enabled": True, "use_llm": True},
@@ -473,19 +474,6 @@ class TestDetectConflicts:
         # LLM says only old1 is contradicted
         mock_verify.return_value = ["obs::old1"]
 
-        # Pre-populate so mark_superseded can find the entry
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["use X"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
-        )
-        collection.upsert(
-            ids=["obs::old2"],
-            documents=["use Y"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
-        )
-
         result = detect_conflicts(
             "obs::new1", "actually stop using X, it causes issues"
         )
@@ -493,6 +481,8 @@ class TestDetectConflicts:
         assert "obs::old1" in result
         assert "obs::old2" not in result
         mock_verify.assert_called_once()
+        # mark_superseded called only for the confirmed conflict
+        mock_mark.assert_called_once_with("obs::old1", "obs::new1")
 
 
 # ── Filter integration tests ───────────────────────────────────────────────
