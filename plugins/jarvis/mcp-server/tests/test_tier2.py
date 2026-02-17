@@ -441,6 +441,32 @@ class TestTier2ExtraMetadata:
         )
         assert result["success"]
 
+    def test_ingest_event_id_is_idempotent(self, mock_config):
+        """Same ingest_event_id should return existing ID, not duplicate documents."""
+        event_id = "evt-123abc"
+
+        first = tier2_write(
+            content="Observation with idempotency key",
+            content_type="observation",
+            extra_metadata={"ingest_event_id": event_id},
+        )
+        assert first["success"]
+
+        second = tier2_write(
+            content="Observation with idempotency key",
+            content_type="observation",
+            extra_metadata={"ingest_event_id": event_id},
+        )
+        assert second["success"]
+        assert second["id"] == first["id"]
+        assert second.get("deduplicated") is True
+
+        from tools.memory import _get_collection
+
+        collection = _get_collection()
+        rows = collection.get(where={"ingest_event_id": event_id})
+        assert len(rows["ids"]) == 1
+
 
 class TestTier2Upsert:
     """Test tier2_upsert function."""

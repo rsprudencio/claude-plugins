@@ -48,15 +48,22 @@ def _get_client() -> chromadb.ClientAPI:
     if _chroma_client is None:
         db_dir = get_path("db_path", ensure_exists=True)
         _chroma_client = chromadb.PersistentClient(path=db_dir)
+        # One-time integrity check on first init
+        from .chroma_telemetry import check_integrity
+
+        check_integrity(db_dir)
     return _chroma_client
 
 
-def _get_collection() -> chromadb.Collection:
-    """Get or create the unified jarvis collection."""
+def _get_collection():
+    """Get or create the unified jarvis collection, wrapped with telemetry."""
+    from .chroma_telemetry import InstrumentedCollection
+
     client = _get_client()
-    return client.get_or_create_collection(
+    collection = client.get_or_create_collection(
         name=_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
     )
+    return InstrumentedCollection(collection)
 
 
 def _parse_frontmatter_for_file(content: str, filename: str) -> dict:

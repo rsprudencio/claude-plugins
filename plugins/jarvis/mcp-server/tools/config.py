@@ -378,6 +378,37 @@ def get_pattern_detection_config() -> dict:
     return {**defaults, **memory_config.get("pattern_detection", {})}
 
 
+def get_telemetry_config() -> dict:
+    """Get ChromaDB telemetry configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for telemetry logging (default True)
+    - log_reads: Log read operations (get, query, count, peek) (default False)
+    - log_writes: Log write operations (upsert, add, delete) (default True)
+    - probe_interval_seconds: Seconds between health probe cycles (default 300)
+
+    Env var kill-switch: JARVIS_TELEMETRY=0 disables all telemetry regardless
+    of config. Useful in Docker to quickly disable without config changes.
+
+    Config lives at memory.telemetry in ~/.jarvis/config.json.
+    """
+    if os.environ.get("JARVIS_TELEMETRY", "").strip() == "0":
+        return {
+            "enabled": False,
+            "log_reads": False,
+            "log_writes": False,
+            "probe_interval_seconds": 300,
+        }
+    defaults = {
+        "enabled": True,
+        "log_reads": False,
+        "log_writes": True,
+        "probe_interval_seconds": 300,
+    }
+    memory_config = get_config().get("memory", {})
+    return {**defaults, **memory_config.get("telemetry", {})}
+
+
 def get_worklog_config() -> dict:
     """Get worklog configuration with defaults.
 

@@ -127,6 +127,12 @@ def tier2_write(
                 "detections": detections,
             }
 
+    ingest_event_id = None
+    if extra_metadata and isinstance(extra_metadata, dict):
+        raw_event_id = str(extra_metadata.get("ingest_event_id", "")).strip()
+        if raw_event_id:
+            ingest_event_id = raw_event_id
+
     # Generate ID
     type_const, namespace, id_gen = _TYPE_MAP[content_type]
 
@@ -198,6 +204,24 @@ def tier2_write(
     try:
         collection = _get_collection()
         with chroma_write_lock():
+            # Idempotency for retry/replay pipelines. If the same ingest_event_id
+            # was already written, return existing ID without creating duplicates.
+            if ingest_event_id:
+                existing = collection.get(
+                    where={"ingest_event_id": ingest_event_id},
+                    include=[],
+                )
+                existing_ids = existing.get("ids", [])
+                if existing_ids:
+                    existing_id = sorted(existing_ids)[0]
+                    return {
+                        "success": True,
+                        "id": existing_id,
+                        "content_type": content_type,
+                        "importance_score": importance_score,
+                        "deduplicated": True,
+                    }
+
             collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         result = {
             "success": True,

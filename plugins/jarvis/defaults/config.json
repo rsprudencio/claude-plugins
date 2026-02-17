@@ -63,6 +63,12 @@
       "divergence_threshold": 0.4,
       "max_candidates": 10
     },
+    "telemetry": {
+      "enabled": true,
+      "log_reads": false,
+      "log_writes": true,
+      "probe_interval_seconds": 300
+    },
     "pattern_detection": {
       "enabled": true,
       "scan_interval_seconds": 300,

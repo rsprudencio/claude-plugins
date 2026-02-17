@@ -72,10 +72,19 @@ async def _json_response(send, data: dict, status: int = 200):
 
 
 async def health_response(scope, receive, send):
-    """Minimal ASGI response for /health endpoint."""
-    await _json_response(
-        send, {"status": "ok", "server": "jarvis-core", "version": _VERSION}
-    )
+    """ASGI response for /health endpoint with ChromaDB status."""
+    from tools.chroma_telemetry import chromadb_health
+
+    data = {
+        "status": "ok",
+        "server": "jarvis-core",
+        "version": _VERSION,
+        "chromadb": {k: v for k, v in chromadb_health.items() if v is not None},
+    }
+    # Degrade top-level status if ChromaDB is unhealthy
+    if chromadb_health.get("status") in ("degraded", "corrupt"):
+        data["status"] = "degraded"
+    await _json_response(send, data)
 
 
 async def not_found(scope, receive, send):

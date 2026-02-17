@@ -15,6 +15,7 @@ def _remove_vault_file(id: str, confirm: bool = False) -> dict:
     """Delete a vault file from disk and clean its ChromaDB index entries."""
     from .file_ops import validate_vault_path
     from .memory import _get_collection, _delete_existing_chunks
+    from .chroma_lock import chroma_write_lock
 
     file_path = id[7:].split("#chunk-")[0]  # strip vault:: and #chunk-N
 
@@ -43,7 +44,8 @@ def _remove_vault_file(id: str, confirm: bool = False) -> dict:
     # Clean up ChromaDB index
     try:
         collection = _get_collection()
-        deleted_chunks = _delete_existing_chunks(collection, file_path)
+        with chroma_write_lock():
+            deleted_chunks = _delete_existing_chunks(collection, file_path)
     except Exception:
         deleted_chunks = 0
 

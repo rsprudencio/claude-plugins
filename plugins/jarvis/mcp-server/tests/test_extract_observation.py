@@ -39,6 +39,7 @@ from extract_observation import (
     parse_all_turns,
     parse_transcript_turn,
     pick_best_turn,
+    _post_tier2_write,
     read_transcript_from,
     read_watermark,
     store_observation,
@@ -1343,6 +1344,12 @@ class TestCallHaiku:
 class TestStoreObservation:
     """Tests for store_observation() — tier2_write integration."""
 
+    @pytest.fixture(autouse=True)
+    def _force_local_transport(self):
+        """Keep tests deterministic regardless host ~/.jarvis transport config."""
+        with patch("extract_observation._get_mcp_base_url", return_value=None):
+            yield
+
     @patch("tools.tier2.tier2_write")
     def test_stores_with_correct_params(self, mock_tier2_write):
         """Stores observation with correct parameters."""
@@ -1462,6 +1469,92 @@ class TestStoreObservation:
 
         call_args = mock_tier2_write.call_args[1]
         assert call_args["extra_metadata"] is None
+
+    def test_http_mode_failure_queues_payload(self):
+        """In container/remote mode, failed HTTP write is queued (no local DB fallback)."""
+        with patch(
+            "extract_observation._get_mcp_base_url",
+            return_value="http://localhost:8741",
+        ), patch(
+            "extract_observation._drain_pending_once",
+            return_value=None,
+        ), patch(
+            "extract_observation._post_tier2_write",
+            return_value=None,
+        ), patch(
+            "extract_observation._enqueue_pending_tier2_write",
+            return_value="/tmp/pending-observation.json",
+        ) as mock_enqueue, patch("tools.tier2.tier2_write") as mock_tier2_write:
+            result = store_observation(
+                content="Test observation",
+                importance_score=0.7,
+                tags=["test"],
+                source_label="auto-extract:stop-hook",
+            )
+
+            assert result["success"] is True
+            assert result["queued"] is True
+            assert "queued for replay" in result["error"]
+            mock_enqueue.assert_called_once()
+            mock_tier2_write.assert_not_called()
+
+    def test_http_mode_success_uses_http_result(self):
+        """In container/remote mode, HTTP success returns response and skips local write."""
+        with patch(
+            "extract_observation._get_mcp_base_url",
+            return_value="http://localhost:8741",
+        ), patch(
+            "extract_observation._post_tier2_write",
+            return_value={"success": True, "id": "obs::via-http"},
+        ), patch("tools.tier2.tier2_write") as mock_tier2_write:
+            result = store_observation(
+                content="Test observation",
+                importance_score=0.7,
+                tags=["test"],
+                source_label="auto-extract:stop-hook",
+            )
+
+            assert result["success"] is True
+            assert result["id"] == "obs::via-http"
+            mock_tier2_write.assert_not_called()
+
+
+class TestTier2HttpRetries:
+    """Tests for MCP HTTP retry behavior for tier2 writes."""
+
+    def test_post_retries_then_succeeds(self):
+        """Transient failures are retried and eventually succeed."""
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"success": true, "id": "obs::abc"}'
+
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[OSError("conn refused"), OSError("timeout"), mock_response],
+        ) as mock_urlopen, patch("extract_observation.time.sleep") as mock_sleep:
+            result = _post_tier2_write(
+                payload={"content": "x", "content_type": "observation"},
+                base_url="http://localhost:8741",
+            )
+
+        assert result is not None
+        assert result["success"] is True
+        assert mock_urlopen.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_post_retries_then_returns_none(self):
+        """After retry budget is exhausted, returns None."""
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=OSError("still down"),
+        ) as mock_urlopen, patch("extract_observation.time.sleep") as mock_sleep:
+            result = _post_tier2_write(
+                payload={"content": "x", "content_type": "observation"},
+                base_url="http://localhost:8741",
+            )
+
+        assert result is None
+        assert mock_urlopen.call_count == 3
+        assert mock_sleep.call_count == 2
 
 
 # ──────────────────────────────────────────────
@@ -1820,6 +1913,12 @@ class TestParseTranscriptTurnAssistantLine:
 
 class TestStoreObservationSessionTracing:
     """Tests for session_id and transcript_line in store_observation()."""
+
+    @pytest.fixture(autouse=True)
+    def _force_local_transport(self):
+        """Keep tests deterministic regardless host ~/.jarvis transport config."""
+        with patch("extract_observation._get_mcp_base_url", return_value=None):
+            yield
 
     @patch("tools.tier2.tier2_write")
     def test_session_id_passthrough(self, mock_tier2_write):

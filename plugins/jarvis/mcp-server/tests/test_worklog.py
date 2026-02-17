@@ -466,6 +466,12 @@ class TestDiscoverWorkstreams:
 class TestStoreWorklog:
     """Tests for store_worklog()."""
 
+    @pytest.fixture(autouse=True)
+    def _force_local_transport(self):
+        """Keep tests deterministic regardless host ~/.jarvis transport config."""
+        with patch("extract_observation._get_mcp_base_url", return_value=None):
+            yield
+
     def test_calls_tier2_write(self):
         """Verifies tier2_write is called with correct params."""
         mock_write = MagicMock(return_value={"success": True, "id": "worklog::123"})
@@ -507,6 +513,56 @@ class TestStoreWorklog:
                 source_label="test",
             )
             assert result["success"]
+
+    def test_http_mode_failure_queues_payload(self):
+        """In container/remote mode, failed HTTP write is queued (no local DB fallback)."""
+        with patch(
+            "extract_observation._get_mcp_base_url",
+            return_value="http://localhost:8741",
+        ), patch(
+            "extract_observation._drain_pending_once",
+            return_value=None,
+        ), patch(
+            "extract_observation._post_tier2_write",
+            return_value=None,
+        ), patch(
+            "extract_observation._enqueue_pending_tier2_write",
+            return_value="/tmp/pending-worklog.json",
+        ) as mock_enqueue, patch("tools.tier2.tier2_write") as mock_tier2_write:
+            result = store_worklog(
+                task_summary="Quick task",
+                workstream="misc",
+                activity_type="other",
+                tags=[],
+                source_label="test",
+            )
+
+            assert result["success"] is True
+            assert result["queued"] is True
+            assert "queued for replay" in result["error"]
+            mock_enqueue.assert_called_once()
+            mock_tier2_write.assert_not_called()
+
+    def test_http_mode_success_uses_http_result(self):
+        """In container/remote mode, HTTP success returns response and skips local write."""
+        with patch(
+            "extract_observation._get_mcp_base_url",
+            return_value="http://localhost:8741",
+        ), patch(
+            "extract_observation._post_tier2_write",
+            return_value={"success": True, "id": "worklog::via-http"},
+        ), patch("tools.tier2.tier2_write") as mock_tier2_write:
+            result = store_worklog(
+                task_summary="Quick task",
+                workstream="misc",
+                activity_type="other",
+                tags=[],
+                source_label="test",
+            )
+
+            assert result["success"] is True
+            assert result["id"] == "worklog::via-http"
+            mock_tier2_write.assert_not_called()
 
 
 # ──────────────────────────────────────────────

@@ -18,6 +18,7 @@ Pipeline:
 7. Store observations via tier2_write
 8. Advance watermark to last line read
 """
+import hashlib
 import json
 import os
 import shutil
@@ -42,6 +43,13 @@ WATERMARK_MAX_AGE = 2592000  # 30 days in seconds
 
 # Token usage log for cost tracking (debug mode)
 TOKEN_LOG_FILE = Path.home() / ".jarvis" / "debug.auto-extraction.log"
+
+# Durable queue for non-local transport when MCP HTTP is temporarily unavailable
+PENDING_TIER2_DIRNAME = "pending-tier2"
+HTTP_RETRY_ATTEMPTS = 3
+HTTP_RETRY_BASE_DELAY_SECONDS = 0.4
+PENDING_DRAIN_MAX_ITEMS = 25
+_PENDING_DRAIN_ATTEMPTED = False
 
 EXTRACTION_PROMPT = """\
 You are analyzing a conversation turn between a user and an AI assistant working on code.
@@ -1162,25 +1170,193 @@ def _get_mcp_base_url() -> str | None:
         return None
 
 
-def _post_tier2_write(payload: dict, base_url: str) -> dict | None:
+def _pending_tier2_dir() -> Path:
+    """Directory used to queue tier2 writes during MCP outages."""
+    from tools.config import _resolve_jarvis_home
+
+    return _resolve_jarvis_home() / "state" / PENDING_TIER2_DIRNAME
+
+
+def _build_ingest_event_id(payload: dict) -> str:
+    """Build stable idempotency key for a tier2 write payload."""
+    extra = payload.get("extra_metadata") or {}
+    if not isinstance(extra, dict):
+        extra = {}
+
+    # Exclude the idempotency key itself from hashing.
+    extra_clean = {k: v for k, v in extra.items() if k != "ingest_event_id"}
+    basis = {
+        "content_type": payload.get("content_type", ""),
+        "content": payload.get("content", ""),
+        "importance_score": payload.get("importance_score", 0.5),
+        "source": payload.get("source", ""),
+        "tags": payload.get("tags", []),
+        "extra_metadata": extra_clean,
+    }
+    serialized = json.dumps(
+        basis, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]
+
+
+def _ensure_ingest_event_id(payload: dict) -> str:
+    """Ensure payload has extra_metadata.ingest_event_id and return it."""
+    extra = payload.get("extra_metadata") or {}
+    if not isinstance(extra, dict):
+        extra = {}
+    event_id = str(extra.get("ingest_event_id", "")).strip()
+    if not event_id:
+        event_id = _build_ingest_event_id(payload)
+        extra["ingest_event_id"] = event_id
+    payload["extra_metadata"] = extra
+    return event_id
+
+
+def _post_tier2_write(
+    payload: dict,
+    base_url: str,
+    retries: int = HTTP_RETRY_ATTEMPTS,
+    timeout: int = 10,
+) -> dict | None:
     """POST a tier2_write request to the MCP server.
 
-    Returns the parsed response dict, or None on failure.
+    Retries transient failures with exponential backoff.
+    Returns parsed response dict on success, or None after retries.
     """
+    import urllib.error
+
     try:
         import urllib.request
-
-        data = json.dumps(payload).encode()
-        req = urllib.request.Request(
-            f"{base_url}/internal/store-tier2",
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read().decode())
     except Exception:
         return None
+
+    attempts = max(1, int(retries))
+    for attempt in range(1, attempts + 1):
+        try:
+            data = json.dumps(payload).encode()
+            req = urllib.request.Request(
+                f"{base_url}/internal/store-tier2",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            resp = urllib.request.urlopen(req, timeout=timeout)
+            return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # Retry 429 and 5xx. Treat other HTTP codes as permanent failures.
+            retryable = e.code == 429 or 500 <= e.code < 600
+            if not retryable or attempt >= attempts:
+                return None
+        except Exception:
+            if attempt >= attempts:
+                return None
+
+        # Exponential backoff between retries.
+        delay = min(HTTP_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)), 2.0)
+        time.sleep(delay)
+
+    return None
+
+
+def _enqueue_pending_tier2_write(payload: dict) -> str | None:
+    """Persist a tier2 payload to local queue for later replay."""
+    queue_dir = _pending_tier2_dir()
+    queue_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    record = {
+        "payload": payload,
+        "queued_at": ts,
+        "attempts": 0,
+    }
+
+    file_id = f"{time.time_ns()}-{os.getpid()}-{os.urandom(4).hex()}"
+    pending_path = queue_dir / f"{file_id}.json"
+    tmp_path = queue_dir / f".{file_id}.tmp"
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(record, f, ensure_ascii=True)
+        os.replace(tmp_path, pending_path)
+        return str(pending_path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return None
+
+
+def _drain_pending_tier2_writes(base_url: str, max_items: int = PENDING_DRAIN_MAX_ITEMS) -> dict:
+    """Replay queued tier2 writes via MCP HTTP.
+
+    Processes oldest files first. Stops on first transient failure to avoid
+    hot-looping while MCP is unavailable.
+    """
+    queue_dir = _pending_tier2_dir()
+    if not queue_dir.exists():
+        return {"processed": 0, "sent": 0, "remaining": 0}
+
+    files = sorted(queue_dir.glob("*.json"))[:max_items]
+    processed = 0
+    sent = 0
+
+    for pending_file in files:
+        processing_file = queue_dir / f".{pending_file.stem}.{os.getpid()}.processing"
+        try:
+            # Atomic claim: skip if another process already claimed it.
+            os.replace(pending_file, processing_file)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+
+        processed += 1
+        try:
+            with open(processing_file, encoding="utf-8") as f:
+                record = json.load(f)
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                os.unlink(processing_file)
+                continue
+
+            result = _post_tier2_write(payload, base_url)
+            if result is not None and result.get("success"):
+                sent += 1
+                os.unlink(processing_file)
+                continue
+
+            # Preserve for next run with updated attempt metadata.
+            record["attempts"] = int(record.get("attempts", 0)) + 1
+            record["last_attempt_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+            )
+            with open(processing_file, "w", encoding="utf-8") as f:
+                json.dump(record, f, ensure_ascii=True)
+            os.replace(processing_file, pending_file)
+
+            # If one failed, likely MCP is still down. Stop and retry next run.
+            break
+        except Exception:
+            # Best effort: move back for retry if possible.
+            try:
+                if processing_file.exists():
+                    os.replace(processing_file, pending_file)
+            except OSError:
+                pass
+            break
+
+    remaining = len(list(queue_dir.glob("*.json")))
+    return {"processed": processed, "sent": sent, "remaining": remaining}
+
+
+def _drain_pending_once(base_url: str) -> None:
+    """Drain pending queue once per process invocation."""
+    global _PENDING_DRAIN_ATTEMPTED
+    if _PENDING_DRAIN_ATTEMPTED:
+        return
+    _PENDING_DRAIN_ATTEMPTED = True
+    _drain_pending_tier2_writes(base_url)
 
 
 def store_observation(
@@ -1198,8 +1374,9 @@ def store_observation(
     """Store an observation via tier2_write, routed through MCP server when possible.
 
     In container/remote mode, POSTs to /internal/store-tier2 on the MCP server
-    to serialize writes. Falls back to direct tier2_write() in local/stdio mode
-    or if the HTTP call fails.
+    to serialize writes. In local/stdio mode, writes directly via tier2_write().
+    If HTTP fails in non-local mode, payload is queued on disk and replayed
+    on subsequent runs (no unsafe local DB fallback).
 
     Args:
         content: Observation text
@@ -1243,10 +1420,22 @@ def store_observation(
     # Try routing through MCP server (container/remote mode)
     base_url = _get_mcp_base_url()
     if base_url:
-        result = _post_tier2_write(payload, base_url)
+        event_id = _ensure_ingest_event_id(payload)
+        _drain_pending_once(base_url)
+        result = _post_tier2_write(payload, base_url, retries=HTTP_RETRY_ATTEMPTS)
         if result is not None:
             return result
-        # Fall through to direct write on HTTP failure
+        queue_file = _enqueue_pending_tier2_write(payload)
+        return {
+            "success": True,
+            "queued": True,
+            "event_id": event_id,
+            "queue_file": queue_file,
+            "error": (
+                "Tier2 HTTP write failed after retries in non-local transport; "
+                "payload queued for replay"
+            ),
+        }
 
     from tools.tier2 import tier2_write
 
@@ -1559,7 +1748,8 @@ def store_worklog(
     """Store a worklog entry via tier2_write, routed through MCP server when possible.
 
     Same routing logic as store_observation(): POSTs to MCP server in
-    container/remote mode, falls back to direct write in local mode.
+    container/remote mode, writes directly in local mode. On HTTP failure in
+    non-local mode, payload is queued for replay.
 
     Args:
         task_summary: What the user was working on (intent-focused)
@@ -1603,9 +1793,22 @@ def store_worklog(
     # Try routing through MCP server (container/remote mode)
     base_url = _get_mcp_base_url()
     if base_url:
-        result = _post_tier2_write(payload, base_url)
+        event_id = _ensure_ingest_event_id(payload)
+        _drain_pending_once(base_url)
+        result = _post_tier2_write(payload, base_url, retries=HTTP_RETRY_ATTEMPTS)
         if result is not None:
             return result
+        queue_file = _enqueue_pending_tier2_write(payload)
+        return {
+            "success": True,
+            "queued": True,
+            "event_id": event_id,
+            "queue_file": queue_file,
+            "error": (
+                "Tier2 HTTP write failed after retries in non-local transport; "
+                "payload queued for replay"
+            ),
+        }
 
     from tools.tier2 import tier2_write
 
@@ -1775,6 +1978,7 @@ def main():
     absolute_line = turns[-1].get("end_line_idx", -1) if turns else -1
 
     stored_count = 0
+    queued_count = 0
     for i, obs in enumerate(observations[:max_observations]):
         content = obs.get("content", "").strip()
         if not content:
@@ -1811,24 +2015,46 @@ def main():
         )
 
         if result.get("success"):
-            obs_id = result.get("id", "unknown")
-            stored_count += 1
-            print(f"Stored observation {stored_count}: {obs_id}", file=sys.stderr)
-            # Log prompt + hook_input only for first observation to avoid debug log bloat
-            _log_extraction(
-                backend,
-                input_tokens,
-                output_tokens,
-                observation_stored=True,
-                obs_id=obs_id,
-                importance=importance,
-                tags=tags,
-                prompt=prompt if i == 0 else "",
-                observation_content=content,
-                scope=scope,
-                hook_input=hook_input if i == 0 else "",
-                debug=debug,
-            )
+            if result.get("queued"):
+                queued_count += 1
+                event_id = result.get("event_id", "unknown")
+                print(
+                    f"Queued observation {queued_count}: {event_id}",
+                    file=sys.stderr,
+                )
+                _log_extraction(
+                    backend,
+                    input_tokens,
+                    output_tokens,
+                    observation_stored=False,
+                    obs_id=f"queued:{event_id}",
+                    importance=importance,
+                    tags=tags,
+                    prompt=prompt if i == 0 else "",
+                    observation_content=content,
+                    scope=scope,
+                    hook_input=hook_input if i == 0 else "",
+                    debug=debug,
+                )
+            else:
+                obs_id = result.get("id", "unknown")
+                stored_count += 1
+                print(f"Stored observation {stored_count}: {obs_id}", file=sys.stderr)
+                # Log prompt + hook_input only for first observation to avoid debug log bloat
+                _log_extraction(
+                    backend,
+                    input_tokens,
+                    output_tokens,
+                    observation_stored=True,
+                    obs_id=obs_id,
+                    importance=importance,
+                    tags=tags,
+                    prompt=prompt if i == 0 else "",
+                    observation_content=content,
+                    scope=scope,
+                    hook_input=hook_input if i == 0 else "",
+                    debug=debug,
+                )
         else:
             print(
                 f"Failed to store observation: {result.get('error')}", file=sys.stderr
@@ -1844,7 +2070,10 @@ def main():
                 debug=debug,
             )
 
-    if stored_count == 0 and observations:
+    if queued_count > 0:
+        print(f"Queued {queued_count} observation(s) for retry", file=sys.stderr)
+
+    if stored_count == 0 and queued_count == 0 and observations:
         print("No observations stored (all empty or failed)", file=sys.stderr)
 
     # Step 10b: Store worklog entry (if not a duplicate)
@@ -1869,10 +2098,16 @@ def main():
                 transcript_line=absolute_line,
             )
             if wl_result.get("success"):
-                print(
-                    f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]",
-                    file=sys.stderr,
-                )
+                if wl_result.get("queued"):
+                    print(
+                        f"Queued worklog for retry [{wl['workstream']}]",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]",
+                        file=sys.stderr,
+                    )
             else:
                 print(
                     f"Failed to store worklog: {wl_result.get('error')}",
