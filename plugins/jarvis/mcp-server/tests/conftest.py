@@ -43,6 +43,7 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
     # to prevent tests from using production database or stale connections
     config_module._config_cache = None
     memory_module._chroma_client = None
+    memory_module._chroma_cache_key = None
     SharedSystemClient.clear_system_cache()
 
     # Create a temporary ChromaDB directory for this test run
@@ -141,6 +142,7 @@ def cleanup_chroma_client():
     from chromadb.api.shared_system_client import SharedSystemClient
 
     memory_module._chroma_client = None
+    memory_module._chroma_cache_key = None
     SharedSystemClient.clear_system_cache()
 
 

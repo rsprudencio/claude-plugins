@@ -7,6 +7,7 @@ from tools.memory import (
     _extract_title_for_file,
     _build_metadata,
     _should_skip,
+    _client_cache_key,
     index_vault,
     index_file,
 )
@@ -142,6 +143,39 @@ class TestShouldSkip:
     def test_allow_normal_dirs(self):
         assert _should_skip("notes/my-note.md", False) is False
         assert _should_skip("journal/jarvis/2026/01/entry.md", False) is False
+
+
+class TestClientCacheKey:
+    """Tests for _client_cache_key singleton invalidation."""
+
+    def test_same_config_same_key(self):
+        cfg = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
+        assert _client_cache_key(cfg) == _client_cache_key(cfg)
+
+    def test_different_host_different_key(self):
+        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
+        cfg2 = {"host": "remote", "port": 8743, "ssl": False, "headers": {}}
+        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
+
+    def test_different_port_different_key(self):
+        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
+        cfg2 = {"host": "localhost", "port": 9999, "ssl": False, "headers": {}}
+        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
+
+    def test_ssl_change_different_key(self):
+        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
+        cfg2 = {"host": "localhost", "port": 8743, "ssl": True, "headers": {}}
+        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
+
+    def test_headers_change_different_key(self):
+        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
+        cfg2 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {"X-Token": "abc"}}
+        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
+
+    def test_header_order_irrelevant(self):
+        cfg1 = {"host": "h", "port": 1, "ssl": False, "headers": {"A": "1", "B": "2"}}
+        cfg2 = {"host": "h", "port": 1, "ssl": False, "headers": {"B": "2", "A": "1"}}
+        assert _client_cache_key(cfg1) == _client_cache_key(cfg2)
 
 
 class TestIndexVault:

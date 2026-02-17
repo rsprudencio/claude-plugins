@@ -354,3 +354,185 @@ class TestEnvVarOverrides:
 
         result = _resolve_jarvis_home()
         assert str(result) == str(tmp_path / "custom")
+
+
+class TestGetChromaConfig:
+    """Tests for get_chroma_config with URL parsing, env overrides, and api_key."""
+
+    def test_defaults(self, mock_config):
+        """Should return sensible defaults when nothing configured."""
+        from tools.config import get_chroma_config
+
+        cfg = get_chroma_config()
+        assert cfg["host"] == "localhost"
+        assert cfg["port"] == 8743
+        assert cfg["ssl"] is False
+        assert cfg["headers"] == {}
+
+    def test_config_override(self, mock_config):
+        """Should use values from config file."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_host": "db.example.com", "chroma_port": 9999})
+        cfg = get_chroma_config()
+        assert cfg["host"] == "db.example.com"
+        assert cfg["port"] == 9999
+
+    def test_env_var_override(self, mock_config, monkeypatch):
+        """Env vars should take precedence over config file."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_host": "config-host"})
+        monkeypatch.setenv("CHROMA_HOST", "env-host")
+        monkeypatch.setenv("CHROMA_PORT", "7777")
+        cfg = get_chroma_config()
+        assert cfg["host"] == "env-host"
+        assert cfg["port"] == 7777
+
+    def test_url_parsing_http(self, mock_config):
+        """chroma_url should be decomposed into host/port/ssl."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_url": "http://chroma.local:9000"})
+        cfg = get_chroma_config()
+        assert cfg["host"] == "chroma.local"
+        assert cfg["port"] == 9000
+        assert cfg["ssl"] is False
+
+    def test_url_parsing_https(self, mock_config):
+        """HTTPS URL should set ssl=True and default port 443."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_url": "https://chroma.prod.com"})
+        cfg = get_chroma_config()
+        assert cfg["host"] == "chroma.prod.com"
+        assert cfg["port"] == 443
+        assert cfg["ssl"] is True
+
+    def test_url_parsing_bare_host_port(self, mock_config):
+        """Bare host:port without scheme should work."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_url": "10.0.0.5:8743"})
+        cfg = get_chroma_config()
+        assert cfg["host"] == "10.0.0.5"
+        assert cfg["port"] == 8743
+        assert cfg["ssl"] is False
+
+    def test_url_env_var_override(self, mock_config, monkeypatch):
+        """CHROMA_URL env var should override config host/port."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_host": "old-host"})
+        monkeypatch.setenv("CHROMA_URL", "https://new-host:9999")
+        cfg = get_chroma_config()
+        assert cfg["host"] == "new-host"
+        assert cfg["port"] == 9999
+        assert cfg["ssl"] is True
+
+    def test_api_key_convenience(self, mock_config):
+        """api_key + auth_header should be merged into headers."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(memory={"chroma_api_key": "secret123"})
+        cfg = get_chroma_config()
+        assert cfg["headers"]["X-Chroma-Token"] == "secret123"
+
+    def test_api_key_custom_header(self, mock_config):
+        """Custom auth_header should be used when specified."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(
+            memory={
+                "chroma_api_key": "bearer-token",
+                "chroma_auth_header": "Authorization",
+            }
+        )
+        cfg = get_chroma_config()
+        assert cfg["headers"]["Authorization"] == "bearer-token"
+        assert "X-Chroma-Token" not in cfg["headers"]
+
+    def test_api_key_env_var(self, mock_config, monkeypatch):
+        """CHROMA_API_KEY env var should override config."""
+        from tools.config import get_chroma_config
+
+        monkeypatch.setenv("CHROMA_API_KEY", "env-secret")
+        cfg = get_chroma_config()
+        assert cfg["headers"]["X-Chroma-Token"] == "env-secret"
+
+    def test_api_key_merges_with_existing_headers(self, mock_config):
+        """api_key should merge with manually-specified headers."""
+        from tools.config import get_chroma_config
+
+        mock_config.set(
+            memory={
+                "chroma_headers": {"X-Custom": "value"},
+                "chroma_api_key": "token",
+            }
+        )
+        cfg = get_chroma_config()
+        assert cfg["headers"]["X-Custom"] == "value"
+        assert cfg["headers"]["X-Chroma-Token"] == "token"
+
+    def test_no_api_key_no_extra_header(self, mock_config):
+        """When api_key is empty, no auth header should be added."""
+        from tools.config import get_chroma_config
+
+        cfg = get_chroma_config()
+        assert "X-Chroma-Token" not in cfg["headers"]
+
+    def test_invalid_url_raises(self, mock_config):
+        """Invalid URL should raise ValueError."""
+        from tools.config import _parse_chroma_url
+
+        with pytest.raises(ValueError, match="cannot parse hostname"):
+            _parse_chroma_url("://no-host")
+
+
+class TestParseChromaUrl:
+    """Tests for _parse_chroma_url helper."""
+
+    def test_full_http_url(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("http://localhost:8743")
+        assert host == "localhost"
+        assert port == 8743
+        assert ssl is False
+
+    def test_full_https_url(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("https://chroma.example.com:9443")
+        assert host == "chroma.example.com"
+        assert port == 9443
+        assert ssl is True
+
+    def test_https_default_port(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("https://chroma.example.com")
+        assert port == 443
+        assert ssl is True
+
+    def test_http_default_port(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("http://localhost")
+        assert port == 8743  # Our default, not 80
+
+    def test_bare_host_port(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("192.168.1.50:8743")
+        assert host == "192.168.1.50"
+        assert port == 8743
+        assert ssl is False
+
+    def test_bare_host_only(self):
+        from tools.config import _parse_chroma_url
+
+        host, port, ssl = _parse_chroma_url("chroma.local")
+        assert host == "chroma.local"
+        assert port == 8743
+        assert ssl is False

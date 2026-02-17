@@ -6,9 +6,12 @@
   "mcp_transport": "local",
   "mcp_remote_url": "",
   "memory": {
+    "chroma_url": "",
     "chroma_host": "localhost",
     "chroma_port": 8743,
     "chroma_ssl": false,
+    "chroma_api_key": "",
+    "chroma_auth_header": "X-Chroma-Token",
     "chroma_headers": {},
     "chroma_data_path": "~/.jarvis/memory_db",
     "secret_detection": true,

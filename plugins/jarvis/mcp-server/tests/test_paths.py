@@ -241,9 +241,12 @@ class TestValidatePathsConfig:
             memory={
                 "secret_detection": True,
                 "chroma_data_path": "~/.jarvis/db",
+                "chroma_url": "",
                 "chroma_host": "localhost",
                 "chroma_port": 8743,
                 "chroma_ssl": False,
+                "chroma_api_key": "",
+                "chroma_auth_header": "X-Chroma-Token",
                 "chroma_headers": {},
             }
         )

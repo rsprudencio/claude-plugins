@@ -33,40 +33,54 @@ from .format_support import (
 
 logger = logging.getLogger("jarvis-core")
 
-# Singleton client
+# Singleton client with cache key for config change detection
 _chroma_client = None
+_chroma_cache_key = None
 _COLLECTION_NAME = "jarvis"
 _BATCH_SIZE = 50
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
 
 
+def _client_cache_key(cfg: dict) -> tuple:
+    """Build a hashable key from connection config for singleton invalidation."""
+    return (
+        cfg["host"],
+        cfg["port"],
+        cfg["ssl"],
+        tuple(sorted(cfg.get("headers", {}).items())),
+    )
+
+
 def _get_client() -> chromadb.ClientAPI:
     """Get or create singleton ChromaDB HttpClient.
 
-    Connects to a ChromaDB server over HTTP. The server handles all
+    Recreates the client if connection config has changed (e.g. after
+    /jarvis-settings updates chroma_host). The server handles all
     write serialization — no application-level locking needed.
-
-    Configuration is read from get_chroma_config() which respects
-    env var overrides (CHROMA_HOST, CHROMA_PORT) for Docker.
 
     Raises:
         Exception: If the ChromaDB server is unreachable.
     """
-    global _chroma_client
-    if _chroma_client is None:
-        from .config import get_chroma_config
+    global _chroma_client, _chroma_cache_key
+    from .config import get_chroma_config
 
-        cfg = get_chroma_config()
-        kwargs = {
-            "host": cfg["host"],
-            "port": cfg["port"],
-            "ssl": cfg["ssl"],
-        }
-        if cfg["headers"]:
-            kwargs["headers"] = cfg["headers"]
-        _chroma_client = chromadb.HttpClient(**kwargs)
-        logger.info(f"ChromaDB HttpClient connected to {cfg['host']}:{cfg['port']}")
+    cfg = get_chroma_config()
+    key = _client_cache_key(cfg)
+
+    if _chroma_client is not None and _chroma_cache_key == key:
+        return _chroma_client
+
+    kwargs = {
+        "host": cfg["host"],
+        "port": cfg["port"],
+        "ssl": cfg["ssl"],
+    }
+    if cfg["headers"]:
+        kwargs["headers"] = cfg["headers"]
+    _chroma_client = chromadb.HttpClient(**kwargs)
+    _chroma_cache_key = key
+    logger.info(f"ChromaDB HttpClient connected to {cfg['host']}:{cfg['port']}")
     return _chroma_client
 
 

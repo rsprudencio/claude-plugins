@@ -431,27 +431,69 @@ def get_worklog_config() -> dict:
 def get_chroma_config() -> dict:
     """Get ChromaDB HTTP client configuration.
 
-    Env vars take precedence (Docker), then config file, then defaults.
+    Resolution order: env vars (Docker) > config file > defaults.
 
-    Returns config dict with:
-    - host: ChromaDB server hostname (default "localhost")
-    - port: ChromaDB server port (default 8743)
-    - ssl: Use HTTPS (default False)
-    - headers: Auth headers dict (default {})
-    - data_path: Where Chroma server stores data (default "~/.jarvis/memory_db")
+    Connection can be specified as either:
+    - A single URL: ``chroma_url: "https://chroma.example.com:8743"``
+    - Separate fields: ``chroma_host``, ``chroma_port``, ``chroma_ssl``
+
+    Auth can be specified as either:
+    - Convenience: ``chroma_api_key`` + ``chroma_auth_header`` (default X-Chroma-Token)
+    - Manual: ``chroma_headers: {"Authorization": "Bearer xxx"}``
     """
     config = get_config()
     memory = config.get("memory", {})
+
+    # --- Resolve connection endpoint ---
+    raw_url = (
+        os.environ.get("CHROMA_URL")
+        or memory.get("chroma_url", "")
+    )
+    if raw_url:
+        host, port, ssl = _parse_chroma_url(raw_url)
+    else:
+        host = os.environ.get("CHROMA_HOST") or memory.get("chroma_host", "localhost")
+        try:
+            port = int(os.environ.get("CHROMA_PORT") or memory.get("chroma_port", 8743))
+        except (TypeError, ValueError):
+            port = 8743
+        ssl = memory.get("chroma_ssl", False)
+
+    # --- Resolve auth headers ---
+    headers = dict(memory.get("chroma_headers", {}))
+    api_key = os.environ.get("CHROMA_API_KEY") or memory.get("chroma_api_key", "")
+    if api_key:
+        auth_header = memory.get("chroma_auth_header", "X-Chroma-Token")
+        headers[auth_header] = api_key
+
     return {
-        "host": os.environ.get("CHROMA_HOST") or memory.get("chroma_host", "localhost"),
-        "port": int(os.environ.get("CHROMA_PORT") or memory.get("chroma_port", 8743)),
-        "ssl": memory.get("chroma_ssl", False),
-        "headers": memory.get("chroma_headers", {}),
+        "host": host,
+        "port": port,
+        "ssl": ssl,
+        "headers": headers,
         "data_path": (
             os.environ.get("CHROMA_DATA_PATH")
             or memory.get("chroma_data_path", "~/.jarvis/memory_db")
         ),
     }
+
+
+def _parse_chroma_url(raw_url: str) -> tuple:
+    """Parse a ChromaDB URL into (host, port, ssl).
+
+    Accepts: "host:port", "http://host:port", "https://host:port"
+    """
+    from urllib.parse import urlparse
+
+    raw_url = raw_url.strip()
+    if "://" not in raw_url:
+        raw_url = f"http://{raw_url}"
+    parsed = urlparse(raw_url)
+    if not parsed.hostname:
+        raise ValueError(f"Invalid chroma_url: cannot parse hostname from '{raw_url}'")
+    ssl = parsed.scheme == "https"
+    port = parsed.port or (443 if ssl else 8743)
+    return parsed.hostname, int(port), ssl
 
 
 def get_mcp_transport() -> str:
