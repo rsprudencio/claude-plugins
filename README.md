@@ -18,20 +18,15 @@ This validates prerequisites, installs the plugin, configures your vault, and se
 
 ### Option 2: Manual Install
 
-If you prefer to install step by step:
-
 **Prerequisites:**
 - [Claude Code CLI](https://claude.ai/code) (latest version)
-- [Python 3.10+](https://python.org)
-- [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- [Docker](https://docs.docker.com/get-docker/) with Compose
 
 **Install:**
 
 ```bash
-# Add the marketplace
+# Add the marketplace and install plugins
 claude plugin marketplace add rsprudencio/jarvis
-
-# Install core plugin (required)
 claude plugin install jarvis@jarvis-plugins
 
 # Optional: Todoist integration
@@ -39,6 +34,10 @@ claude plugin install jarvis-todoist@jarvis-plugins
 
 # Optional: Strategic analysis (orient, catch-up, patterns, summaries)
 claude plugin install jarvis-strategic@jarvis-plugins
+
+# Start the MCP server container
+docker pull ghcr.io/rsprudencio/jarvis:latest
+docker compose -f ~/.jarvis/docker-compose.yml up -d
 ```
 
 **First-time config:**
@@ -49,37 +48,7 @@ claude plugin install jarvis-strategic@jarvis-plugins
 
 This walks you through vault path selection, auto-extract mode, and shell integration.
 
-### Option 3: Docker
-
-Run the MCP server in a container — no Python or ChromaDB compilation needed on your machine.
-
-```bash
-# Install the plugin (still needed for skills, agents, system prompt)
-claude plugin marketplace add rsprudencio/jarvis
-claude plugin install jarvis@jarvis-plugins
-
-# Start the MCP server container
-docker pull ghcr.io/rsprudencio/jarvis:latest
-docker compose -f ~/.jarvis/docker-compose.yml up -d
-
-# Tell Claude Code to use HTTP transport
-claude mcp add --transport http jarvis-core http://localhost:8741/mcp
-```
-
-Or use the installer with Docker option: `curl -fsSL ... | bash` and choose **[2] Docker** when prompted.
-
-Switch between local/container/remote modes anytime with `~/.jarvis/jarvis-transport.sh` or `/jarvis-settings` inside Claude Code.
-
 See [docker/README.md](docker/README.md) for full Docker setup guide.
-
-### Option 4: Clone and Install Locally
-
-```bash
-git clone https://github.com/rsprudencio/jarvis.git
-cd jarvis
-claude plugin marketplace add rsprudencio/jarvis
-claude plugin install jarvis@jarvis-plugins
-```
 
 ### Verify Installation
 

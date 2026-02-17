@@ -36,128 +36,23 @@ if [ "$found_core" = false ]; then
     exit 1
 fi
 
-# Reconcile .mcp.json in plugin cache to match config's mcp_transport.
-# This self-heals after reinstalls/auto-updates that reset .mcp.json to defaults.
+# Auto-start Docker container if compose file exists and health check fails
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
-JARVIS_CONFIG="$JARVIS_HOME/config.json"
-if [ -f "$JARVIS_CONFIG" ]; then
-    python3 -c "
-import json, sys, os
-
-config_path = sys.argv[1]
-plugin_paths_raw = sys.argv[2]
-
-with open(config_path) as f:
-    cfg = json.load(f)
-transport = cfg.get('mcp_transport', 'local')
-remote_url = cfg.get('mcp_remote_url', '').rstrip('/')
-
-# Plugin name -> (mcp_key, entry_point, port)
-PLUGIN_MAP = {
-    'jarvis': ('core', 'jarvis-core', '8741'),
-    'jarvis-todoist': ('api', 'jarvis-todoist-api', '8742'),
-}
-
-for line in plugin_paths_raw.strip().splitlines():
-    if '|' not in line:
-        continue
-    name, path = line.split('|', 1)
-    if name not in PLUGIN_MAP:
-        continue
-    mcp_key, entry, port = PLUGIN_MAP[name]
-    mcp_file = os.path.join(path, '.mcp.json')
-    if not os.path.exists(mcp_file):
-        continue
-
-    # Build expected config
-    if transport == 'local':
-        expected = {mcp_key: {'command': 'uvx', 'args': ['--from', '\${CLAUDE_PLUGIN_ROOT}/mcp-server', entry]}}
-    elif transport == 'container':
-        expected = {mcp_key: {'type': 'http', 'url': f'http://localhost:{port}/mcp'}}
-    elif transport == 'remote' and remote_url:
-        expected = {mcp_key: {'type': 'http', 'url': f'{remote_url}:{port}/mcp'}}
-    else:
-        continue
-
-    # Check and fix if mismatched
-    with open(mcp_file) as f:
-        current = json.load(f)
-    if current != expected:
-        with open(mcp_file, 'w') as f:
-            json.dump(expected, f, indent=2)
-            f.write('\n')
-        print(f'Synced {name} plugin to {transport} transport')
-" "$JARVIS_CONFIG" "$plugin_paths" 2>/dev/null || true
-
-    # Read transport mode for auto-start
-    transport=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_transport','local'))" 2>/dev/null || echo "local")
-
-    # Auto-start ChromaDB for local mode (required for HttpClient)
-    if [ "$transport" = "local" ]; then
-        # Find transport helper (installed alongside jarvis)
-        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        TRANSPORT_HELPER=""
-        # Check common locations
-        for candidate in "$JARVIS_HOME/jarvis-transport.sh" "$SCRIPT_DIR/../scripts/jarvis-transport.sh"; do
-            if [ -f "$candidate" ]; then
-                TRANSPORT_HELPER="$candidate"
-                break
-            fi
-        done
-        # Also check the installed plugin for the script
-        if [ -z "$TRANSPORT_HELPER" ]; then
-            while IFS='|' read -r pname ppath; do
-                if [ "$pname" = "jarvis" ] && [ -f "$ppath/scripts/jarvis-transport.sh" ]; then
-                    TRANSPORT_HELPER="$ppath/scripts/jarvis-transport.sh"
-                    break
-                fi
-            done <<< "$plugin_paths"
+compose_file="$JARVIS_HOME/docker-compose.yml"
+if [ -f "$compose_file" ] && ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+    echo "Starting Jarvis container..."
+    docker compose -f "$compose_file" up -d 2>&1
+    # Wait for health (up to 15s)
+    for i in $(seq 1 15); do
+        if curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+            echo "Container is healthy."
+            break
         fi
-        if [ -n "$TRANSPORT_HELPER" ]; then
-            bash "$TRANSPORT_HELPER" chroma-start 2>/dev/null || true
-        fi
-    fi
-
-    if [ "$transport" = "container" ]; then
-        if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
-            compose_file="$JARVIS_HOME/docker-compose.yml"
-            if [ -f "$compose_file" ]; then
-                # Pull version-matched image before starting
-                plugin_version=""
-                while IFS='|' read -r pname ppath; do
-                    if [ "$pname" = "jarvis" ] && [ -f "$ppath/.claude-plugin/plugin.json" ]; then
-                        plugin_version=$(python3 -c "import json; print(json.load(open('$ppath/.claude-plugin/plugin.json'))['version'])" 2>/dev/null || true)
-                        break
-                    fi
-                done <<< "$plugin_paths"
-                if [ -n "$plugin_version" ]; then
-                    echo "Pulling jarvis:$plugin_version..."
-                    docker pull "ghcr.io/rsprudencio/jarvis:$plugin_version" 2>/dev/null && \
-                        docker tag "ghcr.io/rsprudencio/jarvis:$plugin_version" "ghcr.io/rsprudencio/jarvis:latest" 2>/dev/null || true
-                fi
-                echo "Starting Jarvis container..."
-                docker compose -f "$compose_file" up -d 2>&1
-                # Wait for health (up to 15s)
-                for i in $(seq 1 15); do
-                    if curl -sf http://localhost:8741/health > /dev/null 2>&1; then
-                        echo "Container is healthy."
-                        break
-                    fi
-                    sleep 1
-                done
-                if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
-                    echo "Warning: Container started but health check failed."
-                    echo "Check: docker compose -f $compose_file logs"
-                fi
-            else
-                echo "Warning: Container mode but no docker-compose.yml found at $compose_file"
-            fi
-        fi
-    elif [ "$transport" = "remote" ]; then
-        remote_url=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_remote_url',''))" 2>/dev/null || echo "")
-        if [ -n "$remote_url" ] && ! curl -sf "${remote_url}:8741/health" > /dev/null 2>&1; then
-            echo "Warning: Remote server not reachable at ${remote_url}:8741"
-        fi
+        sleep 1
+    done
+    if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
+        echo "Warning: Container started but health check failed."
+        echo "Check: docker compose -f $compose_file logs"
     fi
 fi
 

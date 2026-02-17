@@ -211,11 +211,7 @@ def _format_memories(matches: list, query_ms: float) -> str:
 
 
 def _post_bump_retrieval(surfaced_ids: list, config: dict):
-    """Fire-and-forget POST to MCP server to bump retrieval counts.
-
-    Only applicable when MCP transport is 'container' or 'remote' (HTTP server running).
-    In 'local' (stdio) mode, the bump was already handled by semantic_context() when
-    skip_retrieval_increment=False, so this is only called when we skipped inline bumps.
+    """Bump retrieval counts for surfaced documents inline.
 
     Args:
         surfaced_ids: List of document IDs to bump
@@ -225,42 +221,12 @@ def _post_bump_retrieval(surfaced_ids: list, config: dict):
         return
 
     try:
-        from tools.config import get_config
+        from tools.query import _increment_retrieval_counts
+        from tools.memory import _get_collection
 
-        full_config = get_config()
-        transport = full_config.get("mcp_transport", "local")
-
-        if transport == "local":
-            # No HTTP server to POST to — do inline bump as fallback
-            try:
-                from tools.query import _increment_retrieval_counts
-                from tools.memory import _get_collection
-
-                collection = _get_collection()
-                increment = config.get("passive_retrieval_increment", 0.01)
-                _increment_retrieval_counts(collection, surfaced_ids, increment=increment)
-            except Exception:
-                pass
-            return
-
-        # Determine MCP server URL
-        if transport == "remote":
-            base_url = full_config.get("mcp_remote_url", "http://localhost:8741")
-        else:
-            base_url = "http://localhost:8741"
-
-        import urllib.request
-
+        collection = _get_collection()
         increment = config.get("passive_retrieval_increment", 0.01)
-        payload = json.dumps({"ids": surfaced_ids, "increment": increment}).encode()
-
-        req = urllib.request.Request(
-            f"{base_url}/internal/bump-retrieval",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=2)
+        _increment_retrieval_counts(collection, surfaced_ids, increment=increment)
     except Exception:
         pass  # Fire-and-forget — never fail the hook
 

@@ -1,6 +1,1 @@
-{
-  "core": {
-    "command": "uvx",
-    "args": ["--from", "${CLAUDE_PLUGIN_ROOT}/mcp-server", "jarvis-core"]
-  }
-}
+{"core": {"type": "http", "url": "http://localhost:8741/mcp"}}

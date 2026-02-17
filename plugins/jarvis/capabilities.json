@@ -504,11 +504,6 @@
       "vault_confirmed": "Boolean — must be true for vault operations (required)"
     },
 
-    "mcp_transport": {
-      "mcp_transport": { "type": "string", "default": "local", "options": ["local", "container", "remote"], "description": "MCP server transport mode: local (stdio via uvx), container (Docker on localhost), remote (Docker on another machine)" },
-      "mcp_remote_url": { "type": "string", "default": "", "description": "Base URL for remote mode (e.g., http://192.168.1.50). Only used when mcp_transport is 'remote'." }
-    },
-
     "memory": {
       "secret_detection": { "type": "boolean", "default": true, "description": "Enable secret scanning before memory writes" },
       "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
@@ -698,12 +693,6 @@
   },
 
   "deployment": {
-    "native": {
-      "transport": "stdio",
-      "description": "Default — MCP server runs locally via uvx",
-      "requirements": ["Python 3.10+", "uv/uvx", "git"],
-      "mcp_config": "Automatic via plugin .mcp.json"
-    },
     "docker": {
       "transport": "streamable-http",
       "description": "MCP server runs in Docker container, connects via HTTP",
@@ -720,7 +709,7 @@
       },
       "env_vars": ["JARVIS_HOME", "JARVIS_VAULT_PATH", "TODOIST_API_TOKEN", "JARVIS_AUTOCRLF"],
       "management": "~/.jarvis/jarvis-docker.sh {start|stop|restart|logs|status|update}",
-      "note": "Plugin install still required for skills, agents, and system prompt. Only MCP transport changes."
+      "note": "Plugin install still required for skills, agents, and system prompt. Docker is the standard deployment method."
     }
   },
 

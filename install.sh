@@ -57,42 +57,10 @@ echo -e "  ${BOLD}AI Assistant Plugin Installer${NC}"
 echo ""
 
 # ═══════════════════════════════════════════════
-# 🐳 Detect Docker
-# ═══════════════════════════════════════════════
-
-INSTALL_METHOD="native"
-DOCKER_IMAGE="ghcr.io/rsprudencio/jarvis:latest"
-
-# Check Docker availability
-HAS_DOCKER=false
-if command -v docker >/dev/null 2>&1; then
-    if docker compose version >/dev/null 2>&1; then
-        HAS_DOCKER=true
-    fi
-fi
-
-if [ "$HAS_DOCKER" = true ]; then
-    echo -e "${BOLD}🐳 Installation Method${NC}"
-    echo ""
-    echo "  Docker detected! Choose how to run the MCP server:"
-    echo ""
-    echo -e "    ${CYAN}[1]${NC} Native (uvx) — Run Python locally (recommended)"
-    echo -e "    ${CYAN}[2]${NC} Docker — Run in container (recommended for Windows)"
-    echo ""
-    ask "  Choice [1]: " METHOD_CHOICE "1"
-
-    if [ "$METHOD_CHOICE" = "2" ]; then
-        INSTALL_METHOD="docker"
-        ok "Using Docker installation"
-    else
-        ok "Using native installation"
-    fi
-    echo ""
-fi
-
-# ═══════════════════════════════════════════════
 # 📦 Install Core Plugin
 # ═══════════════════════════════════════════════
+
+DOCKER_IMAGE="ghcr.io/rsprudencio/jarvis:latest"
 
 # Verify Claude CLI exists (silent check)
 if ! command -v claude >/dev/null 2>&1; then
@@ -145,77 +113,31 @@ echo ""
 # ✅ Check Prerequisites
 # ═══════════════════════════════════════════════
 
-if [ "$INSTALL_METHOD" = "native" ]; then
+# ═══════════════════════════════════════════════
+# ✅ Check Prerequisites
+# ═══════════════════════════════════════════════
 
 echo -e "${BOLD}✅ Check Prerequisites${NC}"
 echo ""
 
-# Resolve plugin directory
-PLUGIN_DIR=$($PYTHON_CMD -c "
-import sys, json
-try:
-    result = sys.stdin.read()
-    for p in json.loads(result):
-        if p.get('id', '').startswith('jarvis@'):
-            print(p['installPath'])
-            break
-except:
-    pass
-" < <(claude plugin list --json 2>/dev/null))
-
-if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR/mcp-server/tools" ]; then
-    warn "Could not find installed plugin directory - using basic checks"
-
-    # Fallback: Basic bash checks
-    if command -v uvx >/dev/null 2>&1 || command -v uv >/dev/null 2>&1; then
-        ok "uv/uvx found"
-    else
-        fail "uv/uvx not found"
-        echo ""
-        echo -e "  Install: ${BLUE}curl -LsSf https://astral.sh/uv/install.sh | sh${NC}"
-        echo ""
-        exit 1
-    fi
-
-    if command -v git >/dev/null 2>&1; then
-        ok "git found"
-    else
-        fail "git not found"
-        echo ""
-        echo -e "  ${BOLD}macOS:${NC} ${BLUE}xcode-select --install${NC} or ${BLUE}brew install git${NC}"
-        echo -e "  ${BOLD}Linux:${NC} ${BLUE}sudo apt install git${NC} (Debian/Ubuntu)"
-        echo ""
-        exit 1
-    fi
-else
-    # Run comprehensive checks using installed plugin's Python modules
-    $PYTHON_CMD - "$PLUGIN_DIR/mcp-server" <<'PYEOF'
-import sys
-import os
-
-# Get plugin directory from command line argument
-mcp_server_dir = sys.argv[1] if len(sys.argv) > 1 else None
-
-if mcp_server_dir and os.path.exists(mcp_server_dir):
-    sys.path.insert(0, mcp_server_dir)
-
-from tools.system_check import run_system_check, format_check_result
-
-result = run_system_check()
-print(format_check_result(result, verbose=False))
-sys.exit(0 if result["healthy"] else 1)
-PYEOF
-
-    if [ $? -ne 0 ]; then
-        echo ""
-        echo -e "${RED}Prerequisites not met. Fix the issues above and re-run.${NC}"
-        exit 1
+# Docker is required
+HAS_DOCKER=false
+if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+        HAS_DOCKER=true
     fi
 fi
 
+if [ "$HAS_DOCKER" = false ]; then
+    fail "Docker with Compose not found"
+    echo ""
+    echo -e "  Jarvis requires Docker to run the MCP server."
+    echo -e "  Install: ${BLUE}https://docs.docker.com/get-docker/${NC}"
+    echo ""
+    exit 1
+fi
+ok "Docker with Compose found"
 echo ""
-
-fi  # end INSTALL_METHOD=native prerequisites
 
 # ═══════════════════════════════════════════════
 # 🧩 Install Optional Extensions
@@ -265,47 +187,6 @@ if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR" ]; then
     exit 1
 fi
 
-# ═══════════════════════════════════════════════
-# 🔌 Validate MCP Server
-# ═══════════════════════════════════════════════
-
-if [ "$INSTALL_METHOD" = "native" ]; then
-
-echo -e "${BOLD}🔌 Validate MCP Server${NC}"
-echo ""
-
-if [ ! -d "$PLUGIN_DIR/mcp-server" ]; then
-    fail "MCP server not found in plugin directory"
-    exit 1
-fi
-
-info "Testing MCP server startup..."
-
-# Send a minimal JSON-RPC initialize request and check for a response
-MCP_OUTPUT=$(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' | \
-    timeout 30 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-core 2>/dev/null || true)
-
-if echo "$MCP_OUTPUT" | grep -q '"result"' 2>/dev/null; then
-    ok "MCP server responds"
-elif echo "$MCP_OUTPUT" | grep -q '"jsonrpc"' 2>/dev/null; then
-    ok "MCP server responds"
-else
-    fail "MCP server failed to start"
-    echo ""
-    echo "  Common causes:"
-    echo "    - ChromaDB dependencies failed to compile"
-    echo "    - uvx cache corrupted (fix: uvx cache clean)"
-    echo ""
-    echo "  Debug:"
-    echo -e "    ${BLUE}uvx --from \"$PLUGIN_DIR/mcp-server\" jarvis-core${NC}"
-    echo ""
-    echo "  Continuing anyway — the plugin is installed, but semantic memory may not work."
-    echo ""
-fi
-
-echo ""
-
-fi  # end INSTALL_METHOD=native MCP validation
 
 # ═══════════════════════════════════════════════
 # ⚙️  Configure Jarvis
@@ -503,8 +384,6 @@ echo ""
 # 🐳 Docker Setup (if Docker method selected)
 # ═══════════════════════════════════════════════
 
-if [ "$INSTALL_METHOD" = "docker" ]; then
-
 echo -e "${BOLD}🐳 Docker Setup${NC}"
 echo ""
 
@@ -622,110 +501,16 @@ chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
 echo ""
 
-# Copy transport helper script and configure MCP entries
+# Copy service helper script
 TRANSPORT_SRC="$PLUGIN_DIR/scripts/jarvis-transport.sh"
 TRANSPORT_DEST="$JARVIS_HOME/jarvis-transport.sh"
 if [ -f "$TRANSPORT_SRC" ]; then
     cp "$TRANSPORT_SRC" "$TRANSPORT_DEST"
     chmod +x "$TRANSPORT_DEST"
-    ok "Transport helper: $TRANSPORT_DEST"
-
-    # Use transport helper to configure MCP entries for container mode
-    bash "$TRANSPORT_DEST" container
-else
-    # Fallback: manual MCP configuration
-    warn "Transport helper not found — configuring MCP entries manually"
-    # Update config to container mode
-    python3 -c "
-import json, sys
-with open(sys.argv[1]) as f:
-    c = json.load(f)
-c['mcp_transport'] = 'container'
-with open(sys.argv[1], 'w') as f:
-    json.dump(c, f, indent=2)
-    f.write('\n')
-" "$JARVIS_HOME/config.json"
-    echo ""
-    echo -e "  ${BOLD}Add MCP servers to Claude Code:${NC}"
-    echo ""
-    echo -e "  ${CYAN}claude mcp add --transport http --scope user jarvis-core http://localhost:8741/mcp${NC}"
-    echo -e "  ${CYAN}claude mcp add --transport http --scope user jarvis-todoist-api http://localhost:8742/mcp${NC}"
-fi
-echo ""
-warn "Docker mode: Claude Code hooks (prompt-search, stop-extract) require"
-warn "native Python on the host. See docker/README.md for details."
-echo ""
-
-fi  # end INSTALL_METHOD=docker
-
-# ═══════════════════════════════════════════════
-# 📚 Index Vault (native only — Docker indexes via MCP tools)
-# ═══════════════════════════════════════════════
-
-if [ "$INSTALL_METHOD" = "native" ]; then
-
-# Start ChromaDB server (required for vault indexing via HttpClient)
-echo -e "${BOLD}🔗 Start ChromaDB Server${NC}"
-echo ""
-
-TRANSPORT_SRC="$PLUGIN_DIR/scripts/jarvis-transport.sh"
-if [ -f "$TRANSPORT_SRC" ]; then
-    if bash "$TRANSPORT_SRC" chroma-start 2>/dev/null; then
-        ok "ChromaDB server running"
-    else
-        warn "ChromaDB failed to start — vault indexing may fail"
-        info "You can start it later: jarvis-transport.sh chroma-start"
-    fi
-else
-    warn "Transport helper not found — skipping ChromaDB start"
+    ok "Service helper: $TRANSPORT_DEST"
 fi
 echo ""
 
-echo -e "${BOLD}📚 Index Vault${NC}"
-echo ""
-
-if [ -d "$VAULT_PATH" ]; then
-    MD_COUNT=$(find "$VAULT_PATH" \( -name "*.md" -o -name "*.org" \) -not -path "*/.obsidian/*" -not -path "*/templates/*" -not -path "*/.jarvis/*" 2>/dev/null | wc -l | tr -d ' ')
-    if [ "$MD_COUNT" -gt 5 ]; then
-        info "Found $MD_COUNT indexable files in vault"
-
-        # Offer to index now (only if meaningful content exists)
-        ask "  Index now for semantic search? [Y/n]: " INDEX_NOW "Y"
-
-        if [ "$INDEX_NOW" = "Y" ] || [ "$INDEX_NOW" = "y" ]; then
-            info "Indexing vault (may take a moment)..."
-
-            # Call jarvis_index_vault via MCP server (requires full handshake)
-            INDEX_OUTPUT=$(printf '%s\n%s\n%s\n' \
-                '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"installer","version":"0.1"}}}' \
-                '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-                '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"jarvis_index_vault","arguments":{"force":true}}}' | \
-                timeout 120 uvx --from "$PLUGIN_DIR/mcp-server" jarvis-core 2>/dev/null || true)
-
-            if echo "$INDEX_OUTPUT" | grep -q '"result"' 2>/dev/null; then
-                ok "Vault indexed ($MD_COUNT files) — semantic search ready"
-            else
-                warn "Indexing failed or timed out"
-                info "You can index later by asking Jarvis: 'index my vault'"
-            fi
-        else
-            info "Skipped — index later by asking Jarvis: 'index my vault'"
-        fi
-    elif [ "$MD_COUNT" -gt 0 ]; then
-        info "Found $MD_COUNT indexable files in vault"
-        info "Index later: ask Jarvis 'index my vault' or run /jarvis-settings"
-        ok "Vault ready"
-    else
-        info "Vault is empty — start by running: jarvis"
-        info "Jarvis will create journal entries and notes as you use it"
-    fi
-else
-    info "Vault directory will be created on first use"
-fi
-
-echo ""
-
-fi  # end INSTALL_METHOD=native indexing
 
 # ═══════════════════════════════════════════════
 # Complete!
@@ -736,13 +521,9 @@ echo -e "${BOLD}  Installation Complete!${NC}"
 echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
 echo ""
 echo -e "  Vault:       ${CYAN}$VAULT_PATH${NC}"
-
-if [ "$INSTALL_METHOD" = "docker" ]; then
-    echo -e "  Method:      ${CYAN}Docker${NC} (container running)"
-    echo -e "  Compose:     ${CYAN}$JARVIS_HOME/docker-compose.yml${NC}"
-    echo -e "  MCP Core:    ${CYAN}http://localhost:8741/mcp${NC}"
-    echo -e "  MCP Todoist: ${CYAN}http://localhost:8742/mcp${NC}"
-fi
+echo -e "  Compose:     ${CYAN}$JARVIS_HOME/docker-compose.yml${NC}"
+echo -e "  MCP Core:    ${CYAN}http://localhost:8741/mcp${NC}"
+echo -e "  MCP Todoist: ${CYAN}http://localhost:8742/mcp${NC}"
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     echo -e "  Shell:       ${CYAN}jarvis${NC} installed to ${INSTALL_DIR:-PATH}"
@@ -755,14 +536,12 @@ echo -e "    ${BLUE}\$ jarvis${NC}                     — Launch Jarvis"
 echo -e "    ${BLUE}\$ jarvis \"/jarvis-recall AI tools\"${NC}  — Search your vault"
 echo -e "    ${BLUE}/jarvis-settings${NC}              — Update configuration"
 
-if [ "$INSTALL_METHOD" = "docker" ]; then
-    echo ""
-    echo -e "  ${BOLD}Docker Management:${NC}"
-    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh status${NC}   — Check container"
-    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh logs${NC}     — View logs"
-    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh restart${NC}  — Restart"
-    echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh update${NC}   — Pull & restart"
-fi
+echo ""
+echo -e "  ${BOLD}Docker Management:${NC}"
+echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh status${NC}   — Check container"
+echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh logs${NC}     — View logs"
+echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh restart${NC}  — Restart"
+echo -e "    ${BLUE}\$ $JARVIS_HOME/jarvis-docker.sh update${NC}   — Pull & restart"
 
 echo ""
 
