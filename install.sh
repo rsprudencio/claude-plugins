@@ -1,11 +1,11 @@
 #!/bin/bash
 # Jarvis Plugin Installer
-# curl -fsSL https://raw.githubusercontent.com/rsprudencio/claude-plugins/refs/heads/master/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/master/install.sh | bash
 set -e
 
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
-MARKETPLACE_NAME="raph-claude-plugins"
-MARKETPLACE_REPO="https://github.com/rsprudencio/claude-plugins"
+MARKETPLACE_NAME="jarvis-plugins"
+MARKETPLACE_REPO="https://github.com/rsprudencio/jarvis"
 
 # ── Interactive input setup ──
 # When piped (curl | bash), stdin is the script — we need /dev/tty for prompts
@@ -120,21 +120,21 @@ echo -e "${BOLD}📦 Install Core Plugin${NC}"
 echo ""
 
 # Add marketplace (may fail if already added — that's OK)
-claude plugin marketplace add rsprudencio/claude-plugins >/dev/null 2>&1 || true
+claude plugin marketplace add rsprudencio/jarvis >/dev/null 2>&1 || true
 
 # Verify marketplace is available
-if ! claude plugin marketplace list 2>/dev/null | grep -q "raph-claude-plugins"; then
+if ! claude plugin marketplace list 2>/dev/null | grep -q "jarvis-plugins"; then
     fail "Could not add marketplace"
-    echo -e "  Run manually: ${BLUE}claude plugin marketplace add rsprudencio/claude-plugins${NC}"
+    echo -e "  Run manually: ${BLUE}claude plugin marketplace add rsprudencio/jarvis${NC}"
     exit 1
 fi
 
 # Install core plugin
-echo -e "  Installing ${BLUE}jarvis@raph-claude-plugins${NC}..."
-claude plugin install jarvis@raph-claude-plugins >/dev/null 2>&1 || {
+echo -e "  Installing ${BLUE}jarvis@jarvis-plugins${NC}..."
+claude plugin install jarvis@jarvis-plugins >/dev/null 2>&1 || {
     fail "Could not install jarvis plugin"
     echo ""
-    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@raph-claude-plugins${NC}"
+    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@jarvis-plugins${NC}"
     exit 1
 }
 

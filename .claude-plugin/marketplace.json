@@ -1,13 +1,13 @@
 {
-  "name": "raph-claude-plugins",
+  "name": "jarvis-plugins",
   "version": "1.0.0",
   "description": "Claude Code plugins by raph - modular tools for productivity and knowledge management",
   "owner": {
     "name": "Raphael Prudencio",
     "url": "https://github.com/rsprudencio"
   },
-  "homepage": "https://github.com/rsprudencio/claude-plugins",
-  "repository": "https://github.com/rsprudencio/claude-plugins",
+  "homepage": "https://github.com/rsprudencio/jarvis",
+  "repository": "https://github.com/rsprudencio/jarvis",
   "license": "CC-BY-NC-4.0",
   "plugins": [
     {

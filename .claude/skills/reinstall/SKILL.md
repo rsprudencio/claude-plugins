@@ -8,13 +8,13 @@ You are helping the developer reinstall Jarvis plugins during active development
 
 ## Modular Architecture
 
-The plugin is split into 3 independent plugins in the `raph-claude-plugins` marketplace:
+The plugin is split into 3 independent plugins in the `jarvis-plugins` marketplace:
 
 | Plugin | Cache Path (relative to config dir) |
 |--------|--------------------------------------|
-| `jarvis` | `plugins/cache/raph-claude-plugins/jarvis/` |
-| `jarvis-todoist` | `plugins/cache/raph-claude-plugins/jarvis-todoist/` |
-| `jarvis-strategic` | `plugins/cache/raph-claude-plugins/jarvis-strategic/` |
+| `jarvis` | `plugins/cache/jarvis-plugins/jarvis/` |
+| `jarvis-todoist` | `plugins/cache/jarvis-plugins/jarvis-todoist/` |
+| `jarvis-strategic` | `plugins/cache/jarvis-plugins/jarvis-strategic/` |
 
 ## Workflow
 
@@ -67,7 +67,7 @@ echo "Using Claude config directory: $DETECTED_DIR"
 # Only run this if user called '/reinstall clean'
 if [ "$1" = "clean" ]; then
   echo "Cleaning plugin cache..."
-  rm -rf "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"*
+  rm -rf "$DETECTED_DIR/plugins/cache/jarvis-plugins/"*
   echo "Cache cleared."
 else
   echo "Skipping cache clear (use '/reinstall clean' to force clean)."
@@ -83,12 +83,12 @@ fi
 ```bash
 unset CLAUDECODE && \
 CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin marketplace update && \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-strategic@raph-claude-plugins 2>/dev/null; \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis@raph-claude-plugins && \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-todoist@raph-claude-plugins && \
-CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-strategic@raph-claude-plugins
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis@jarvis-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-todoist@jarvis-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin uninstall jarvis-strategic@jarvis-plugins 2>/dev/null; \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis@jarvis-plugins && \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-todoist@jarvis-plugins && \
+CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin install jarvis-strategic@jarvis-plugins
 ```
 
 ### Step 3: Verify Installation
@@ -98,8 +98,8 @@ echo ""
 echo "Installed plugins:"
 unset CLAUDECODE && CLAUDE_CONFIG_DIR="$DETECTED_DIR" claude plugin list | grep -E "jarvis|todoist|strategic"
 echo ""
-echo "Active cache directory: $DETECTED_DIR/plugins/cache/raph-claude-plugins/"
-ls -la "$DETECTED_DIR/plugins/cache/raph-claude-plugins/"
+echo "Active cache directory: $DETECTED_DIR/plugins/cache/jarvis-plugins/"
+ls -la "$DETECTED_DIR/plugins/cache/jarvis-plugins/"
 ```
 
 ### Step 4: Remind User to Restart

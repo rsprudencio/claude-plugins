@@ -7,14 +7,14 @@ Jarvis is a context-aware AI assistant that manages your personal knowledge vaul
 **Recommended** (interactive setup with prerequisites check):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rsprudencio/claude-plugins/refs/heads/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/master/install.sh | bash
 ```
 
 **Manual** (plugin only, then configure inside Claude):
 
 ```bash
-claude plugin marketplace add rsprudencio/claude-plugins
-claude plugin install jarvis@raph-claude-plugins
+claude plugin marketplace add rsprudencio/jarvis
+claude plugin install jarvis@jarvis-plugins
 # Then inside Claude: /jarvis-settings
 ```
 
@@ -69,4 +69,4 @@ The default config template ships with the plugin at `defaults/config.json`.
 
 Ask Jarvis: *"What can you do?"* - Jarvis can read `capabilities.json` for a comprehensive feature reference.
 
-Report issues: [github.com/rsprudencio/claude-plugins](https://github.com/rsprudencio/claude-plugins/issues)
+Report issues: [github.com/rsprudencio/jarvis](https://github.com/rsprudencio/jarvis/issues)

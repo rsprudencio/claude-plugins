@@ -11,7 +11,7 @@ Jarvis manages a folder of Markdown or Org-mode files (your "vault") as a person
 ### Option 1: One-Line Installer (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rsprudencio/claude-plugins/refs/heads/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/master/install.sh | bash
 ```
 
 This validates prerequisites, installs the plugin, configures your vault, and sets up the `jarvis` shell command — all in one step.
@@ -29,16 +29,16 @@ If you prefer to install step by step:
 
 ```bash
 # Add the marketplace
-claude plugin marketplace add rsprudencio/claude-plugins
+claude plugin marketplace add rsprudencio/jarvis
 
 # Install core plugin (required)
-claude plugin install jarvis@raph-claude-plugins
+claude plugin install jarvis@jarvis-plugins
 
 # Optional: Todoist integration
-claude plugin install jarvis-todoist@raph-claude-plugins
+claude plugin install jarvis-todoist@jarvis-plugins
 
 # Optional: Strategic analysis (orient, catch-up, patterns, summaries)
-claude plugin install jarvis-strategic@raph-claude-plugins
+claude plugin install jarvis-strategic@jarvis-plugins
 ```
 
 **First-time config:**
@@ -55,8 +55,8 @@ Run the MCP server in a container — no Python or ChromaDB compilation needed o
 
 ```bash
 # Install the plugin (still needed for skills, agents, system prompt)
-claude plugin marketplace add rsprudencio/claude-plugins
-claude plugin install jarvis@raph-claude-plugins
+claude plugin marketplace add rsprudencio/jarvis
+claude plugin install jarvis@jarvis-plugins
 
 # Start the MCP server container
 docker pull ghcr.io/rsprudencio/jarvis:latest
@@ -75,10 +75,10 @@ See [docker/README.md](docker/README.md) for full Docker setup guide.
 ### Option 4: Clone and Install Locally
 
 ```bash
-git clone https://github.com/rsprudencio/claude-plugins.git
-cd claude-plugins
-claude plugin marketplace add rsprudencio/claude-plugins
-claude plugin install jarvis@raph-claude-plugins
+git clone https://github.com/rsprudencio/jarvis.git
+cd jarvis
+claude plugin marketplace add rsprudencio/jarvis
+claude plugin install jarvis@jarvis-plugins
 ```
 
 ### Verify Installation
@@ -279,14 +279,14 @@ If `install.sh` or `check-requirements` reports missing prerequisites:
 
 If `/jarvis:jarvis` or `/jarvis-settings` doesn't work:
 
-1. **Verify plugin installed**: `claude plugin list` — should show `jarvis@raph-claude-plugins`
+1. **Verify plugin installed**: `claude plugin list` — should show `jarvis@jarvis-plugins`
 2. **Check MCP server**: Look for "Jarvis MCP server started" in Claude Code logs
 3. **Run diagnostics**: `./check-requirements` from repo root
 4. **Reinstall**: Use the `/reinstall` skill or manually:
    ```bash
-   rm -rf ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*
-   claude plugin uninstall jarvis@raph-claude-plugins
-   claude plugin install jarvis@raph-claude-plugins
+   rm -rf ~/.claude/plugins/cache/jarvis-plugins/jarvis/*
+   claude plugin uninstall jarvis@jarvis-plugins
+   claude plugin install jarvis@jarvis-plugins
    ```
 5. **Full restart**: Quit and reopen Claude Code (not just reload)
 
@@ -298,7 +298,7 @@ If observations aren't being captured:
    - `background` mode requires Claude API key
    - `background-cli` mode requires Claude CLI installed (`claude --version`)
 2. **Check logs**: Look for "Auto-extract" in Claude Code debug logs
-3. **Verify hooks**: `ls ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*/hooks/` should show `Stop.md`
+3. **Verify hooks**: `ls ~/.claude/plugins/cache/jarvis-plugins/jarvis/*/hooks/` should show `Stop.md`
 
 ### Memory/Semantic Search Issues
 
@@ -327,7 +327,7 @@ If `/recall` returns no results or indexing fails:
 
 - **Check logs**: Claude Code → View → Toggle Developer Tools → Console
 - **Verbose diagnostics**: `./check-requirements --verbose`
-- **Report bug**: [GitHub Issues](https://github.com/rsprudencio/claude-plugins/issues)
+- **Report bug**: [GitHub Issues](https://github.com/rsprudencio/jarvis/issues)
 
 ---
 
@@ -375,4 +375,4 @@ See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**v1.23.0** | [Issues](https://github.com/rsprudencio/claude-plugins/issues) | [Changelog](CLAUDE.md#version-history)
+**v1.23.0** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)

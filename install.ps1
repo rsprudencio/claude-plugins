@@ -1,11 +1,11 @@
 #!/bin/bash
 # Jarvis Plugin Installer
-# curl -fsSL https://raw.githubusercontent.com/rsprudencio/claude-plugins/refs/heads/master/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/master/install.sh | bash
 set -e
 
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
-MARKETPLACE_NAME="raph-claude-plugins"
-MARKETPLACE_REPO="https://github.com/rsprudencio/claude-plugins"
+MARKETPLACE_NAME="jarvis-plugins"
+MARKETPLACE_REPO="https://github.com/rsprudencio/jarvis"
 JARVIS_VERSION="1.15.0"
 
 # ── Interactive input setup ──
@@ -204,20 +204,20 @@ echo -e "${BOLD}Installing Jarvis plugin to get prerequisite checker...${NC}"
 echo ""
 
 # Add marketplace if not already added
-if ! claude plugin marketplace list 2>/dev/null | grep -q "raph-claude-plugins"; then
-    MARKETPLACE_URL="https://github.com/rsprudencio/claude-plugins"
-    claude plugin marketplace add raph-claude-plugins "$MARKETPLACE_URL" >/dev/null 2>&1 || {
+if ! claude plugin marketplace list 2>/dev/null | grep -q "jarvis-plugins"; then
+    MARKETPLACE_URL="https://github.com/rsprudencio/jarvis"
+    claude plugin marketplace add jarvis-plugins "$MARKETPLACE_URL" >/dev/null 2>&1 || {
         warn "Could not add marketplace automatically"
-        echo -e "  Run manually: ${BLUE}claude plugin marketplace add raph-claude-plugins $MARKETPLACE_URL${NC}"
+        echo -e "  Run manually: ${BLUE}claude plugin marketplace add jarvis-plugins $MARKETPLACE_URL${NC}"
     }
 fi
 
 # Install core plugin (temporarily, to get the Python checker)
-echo -e "  Installing ${BLUE}jarvis@raph-claude-plugins${NC} (temporary)..."
-claude plugin install jarvis@raph-claude-plugins >/dev/null 2>&1 || {
+echo -e "  Installing ${BLUE}jarvis@jarvis-plugins${NC} (temporary)..."
+claude plugin install jarvis@jarvis-plugins >/dev/null 2>&1 || {
     fail "Could not install jarvis plugin"
     echo ""
-    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@raph-claude-plugins${NC}"
+    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@jarvis-plugins${NC}"
     exit 1
 }
 

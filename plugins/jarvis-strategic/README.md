@@ -23,7 +23,7 @@ This plugin requires:
 
 1. **Jarvis Core Plugin**
    ```bash
-   claude plugin install jarvis@raph-claude-plugins
+   claude plugin install jarvis@jarvis-plugins
    ```
 
 2. **Strategic memories** stored in vault at `.jarvis/strategic/`
@@ -35,10 +35,10 @@ This plugin requires:
 
 ```bash
 # Install core first
-claude plugin install jarvis@raph-claude-plugins
+claude plugin install jarvis@jarvis-plugins
 
 # Then install Strategic extension
-claude plugin install jarvis-strategic@raph-claude-plugins
+claude plugin install jarvis-strategic@jarvis-plugins
 ```
 
 ---
@@ -88,5 +88,5 @@ All four strategic skills are included:
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/rsprudencio/claude-plugins/issues)
+- **Issues:** [GitHub Issues](https://github.com/rsprudencio/jarvis/issues)
 - **Documentation:** See individual `skills/*/SKILL.md` files

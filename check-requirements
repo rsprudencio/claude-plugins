@@ -74,7 +74,7 @@ print(output)
 # Exit with appropriate code
 if result["healthy"]:
     print("You're ready to install Jarvis:")
-    print("  claude plugin install jarvis@raph-claude-plugins")
+    print("  claude plugin install jarvis@jarvis-plugins")
     sys.exit(0)
 else:
     print("Please install missing requirements before installing Jarvis plugin.")

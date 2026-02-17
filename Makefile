@@ -108,12 +108,12 @@ reinstall: ## Reinstall all 3 Claude plugins (CLAUDE_DIR= required)
 	unset CLAUDECODE; \
 	export CLAUDE_CONFIG_DIR="$$_dir"; \
 	claude plugin marketplace update && \
-	claude plugin uninstall jarvis@raph-claude-plugins 2>/dev/null; \
-	claude plugin uninstall jarvis-todoist@raph-claude-plugins 2>/dev/null; \
-	claude plugin uninstall jarvis-strategic@raph-claude-plugins 2>/dev/null; \
-	claude plugin install jarvis@raph-claude-plugins && \
-	claude plugin install jarvis-todoist@raph-claude-plugins && \
-	claude plugin install jarvis-strategic@raph-claude-plugins
+	claude plugin uninstall jarvis@jarvis-plugins 2>/dev/null; \
+	claude plugin uninstall jarvis-todoist@jarvis-plugins 2>/dev/null; \
+	claude plugin uninstall jarvis-strategic@jarvis-plugins 2>/dev/null; \
+	claude plugin install jarvis@jarvis-plugins && \
+	claude plugin install jarvis-todoist@jarvis-plugins && \
+	claude plugin install jarvis-strategic@jarvis-plugins
 	@echo ""
 	@echo "$(GREEN)✓ All plugins reinstalled$(NC)"
 	@echo "$(YELLOW)⚠ RESTART CLAUDE CODE to apply changes$(NC)"

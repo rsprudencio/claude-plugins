@@ -190,10 +190,10 @@ Edit `plugins/jarvis/.claude-plugin/plugin.json` (and other affected plugin mani
 
 Manual alternative:
 ```bash
-rm -rf ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*
+rm -rf ~/.claude/plugins/cache/jarvis-plugins/jarvis/*
 claude plugin marketplace update
-claude plugin uninstall jarvis@raph-claude-plugins
-claude plugin install jarvis@raph-claude-plugins
+claude plugin uninstall jarvis@jarvis-plugins
+claude plugin install jarvis@jarvis-plugins
 ```
 
 ### Step 3: Restart Claude Code
@@ -220,7 +220,7 @@ If plugin doesn't load after reinstall:
 
 1. **Verify cache cleared**:
    ```bash
-   ls ~/.claude/plugins/cache/raph-claude-plugins/jarvis/
+   ls ~/.claude/plugins/cache/jarvis-plugins/jarvis/
    # Should only show current version
    ```
 
@@ -344,14 +344,14 @@ curl http://localhost:8741/health
 
 ```bash
 # Manual reinstall (if /reinstall unavailable)
-rm -rf ~/.claude/plugins/cache/raph-claude-plugins/jarvis/* && \
+rm -rf ~/.claude/plugins/cache/jarvis-plugins/jarvis/* && \
 claude plugin marketplace update && \
-claude plugin uninstall jarvis@raph-claude-plugins && \
-claude plugin install jarvis@raph-claude-plugins
+claude plugin uninstall jarvis@jarvis-plugins && \
+claude plugin install jarvis@jarvis-plugins
 
 # Check installed version
-cat ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*/plugin.json | grep version
+cat ~/.claude/plugins/cache/jarvis-plugins/jarvis/*/plugin.json | grep version
 
 # View agent configuration
-cat ~/.claude/plugins/cache/raph-claude-plugins/jarvis/*/agents/jarvis-journal-agent.md | head -10
+cat ~/.claude/plugins/cache/jarvis-plugins/jarvis/*/agents/jarvis-journal-agent.md | head -10
 ```

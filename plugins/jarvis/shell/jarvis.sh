@@ -2,7 +2,7 @@
 # Jarvis AI Assistant launcher
 # Discovers installed plugins, concatenates system prompts, and launches Claude.
 # Install to a PATH directory (e.g. ~/.local/bin/jarvis) and chmod +x.
-# Source: https://github.com/rsprudencio/claude-plugins
+# Source: https://github.com/rsprudencio/jarvis
 set -e
 
 system_prompt=""
@@ -32,7 +32,7 @@ done <<< "$plugin_paths"
 # Require core plugin
 if [ "$found_core" = false ]; then
     echo "Error: Jarvis core plugin not installed."
-    echo "Install with: claude plugin install jarvis@raph-claude-plugins"
+    echo "Install with: claude plugin install jarvis@jarvis-plugins"
     exit 1
 fi
 

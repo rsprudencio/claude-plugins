@@ -23,7 +23,7 @@ Includes a built-in MCP server wrapping the official `todoist-api-python` SDK (l
 
 1. **Jarvis Core Plugin**
    ```bash
-   claude plugin install jarvis@raph-claude-plugins
+   claude plugin install jarvis@jarvis-plugins
    ```
 
 2. **Todoist API Token**
@@ -36,10 +36,10 @@ Includes a built-in MCP server wrapping the official `todoist-api-python` SDK (l
 
 ```bash
 # Install core first
-claude plugin install jarvis@raph-claude-plugins
+claude plugin install jarvis@jarvis-plugins
 
 # Then install Todoist extension
-claude plugin install jarvis-todoist@raph-claude-plugins
+claude plugin install jarvis-todoist@jarvis-plugins
 ```
 
 ---
@@ -87,5 +87,5 @@ Run `/jarvis-settings` to configure interactively.
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/rsprudencio/claude-plugins/issues)
+- **Issues:** [GitHub Issues](https://github.com/rsprudencio/jarvis/issues)
 - **Documentation:** See `agents/jarvis-todoist-agent.md` and `skills/jarvis-todoist/SKILL.md`

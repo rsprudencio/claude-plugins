@@ -123,7 +123,7 @@ with open(sys.argv[6], 'w') as f:
 # Args: $1=mode $2=url(for remote)
 rewrite_all_caches() {
     local mode="$1" url="${2:-}"
-    local cache_base="$CLAUDE_CFG/plugins/cache/raph-claude-plugins"
+    local cache_base="$CLAUDE_CFG/plugins/cache/jarvis-plugins"
     local count=0
 
     if [ ! -d "$cache_base" ]; then
@@ -162,7 +162,7 @@ cleanup_user_mcp() {
 
 # Show what .mcp.json format is active in the current installed version.
 show_cache_info() {
-    local cache_base="$CLAUDE_CFG/plugins/cache/raph-claude-plugins"
+    local cache_base="$CLAUDE_CFG/plugins/cache/jarvis-plugins"
 
     for plugin_type in jarvis jarvis-todoist; do
         local plugin_dir="$cache_base/$plugin_type"
