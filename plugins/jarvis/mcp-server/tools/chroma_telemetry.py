@@ -1,9 +1,9 @@
 """ChromaDB telemetry: instrumented collection wrapper with JSONL logging.
 
 Wraps chromadb.Collection to transparently log timing, errors, and
-operation metadata for every ChromaDB call.  Designed to detect SQLite
-corruption, compaction failures, and lock contention early — before they
-cascade into container health-check failures.
+operation metadata for every ChromaDB call.  Designed to detect connection
+failures, rate limiting, and server errors early — before they cascade
+into container health-check failures.
 
 All telemetry is best-effort: logging failures never propagate to callers.
 """
@@ -12,7 +12,6 @@ import asyncio
 import json
 import logging
 import os
-import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,7 +26,6 @@ chromadb_health: dict = {
     "last_write_ok": None,
     "last_error_class": None,
     "doc_count": None,
-    "integrity_check": None,
 }
 
 
@@ -47,24 +45,27 @@ def _get_telemetry_path() -> str:
 
 
 def classify_error(exc: Exception) -> str:
-    """Classify a ChromaDB/SQLite exception into a category.
+    """Classify a ChromaDB HTTP exception into a category.
 
     Categories:
-        sqlite_corrupt  — database disk image is malformed (code 11)
-        sqlite_busy     — database is locked (code 5)
-        compaction_failure — ChromaDB compaction/metadata segment error
-        timeout         — operation timed out
-        unknown         — anything else
+        connection_refused — server not reachable
+        rate_limited       — 429 Too Many Requests
+        server_error       — 5xx server error
+        timeout            — operation timed out
+        auth_error         — 401/403 authentication/authorization failure
+        unknown            — anything else
     """
     msg = str(exc).lower()
-    if "database disk image is malformed" in msg or "code: 11" in msg:
-        return "sqlite_corrupt"
-    if "database is locked" in msg or "code: 5" in msg:
-        return "sqlite_busy"
-    if "compaction" in msg or "metadata segment" in msg:
-        return "compaction_failure"
+    if "connection" in msg and ("refused" in msg or "reset" in msg or "error" in msg):
+        return "connection_refused"
+    if "429" in msg or "too many requests" in msg:
+        return "rate_limited"
+    if any(code in msg for code in ("500", "502", "503", "504")):
+        return "server_error"
     if "timeout" in msg:
         return "timeout"
+    if "unauthorized" in msg or "401" in msg or "403" in msg:
+        return "auth_error"
     return "unknown"
 
 
@@ -175,9 +176,9 @@ class InstrumentedCollection:
             if is_write:
                 chromadb_health["last_write_ok"] = False
                 chromadb_health["last_error_class"] = error_class
-                if error_class == "sqlite_corrupt":
-                    chromadb_health["status"] = "corrupt"
-                elif chromadb_health["status"] != "corrupt":
+                if error_class == "connection_refused":
+                    chromadb_health["status"] = "disconnected"
+                elif chromadb_health["status"] != "disconnected":
                     chromadb_health["status"] = "degraded"
             raise
         finally:
@@ -215,61 +216,13 @@ class InstrumentedCollection:
 # ── Startup integrity check ──────────────────────────────────────────────────
 
 
-def check_integrity(db_path: str) -> dict:
-    """Run PRAGMA quick_check on ChromaDB's SQLite database.
+def check_integrity(db_path: str = "") -> dict:
+    """No-op in HTTP mode — integrity is the server's responsibility.
 
-    Called once on first _get_client() invocation. Logs result to JSONL
-    and stderr. Does NOT block startup on corruption — reads may still
-    work from cache.
-
-    Returns:
-        Dict with 'ok' bool, 'result' string, and optional 'error'.
+    Retained for backward compatibility with any code that calls it.
     """
-    result = {"ok": False, "result": "not_checked"}
-    sqlite_path = os.path.join(db_path, "chroma.sqlite3")
-
-    if not os.path.exists(sqlite_path):
-        result = {"ok": True, "result": "no_database_yet"}
-        chromadb_health["integrity_check"] = "no_database_yet"
-        _log_record("integrity_check", 0, None, None, None)
-        return result
-
-    try:
-        conn = sqlite3.connect(sqlite_path)
-        try:
-            cursor = conn.execute("PRAGMA quick_check")
-            rows = cursor.fetchall()
-            check_result = rows[0][0] if rows else "unknown"
-
-            if check_result == "ok":
-                result = {"ok": True, "result": "ok"}
-                chromadb_health["integrity_check"] = "ok"
-                logger.info(f"[telemetry] SQLite integrity check: ok ({sqlite_path})")
-            else:
-                result = {"ok": False, "result": check_result}
-                chromadb_health["integrity_check"] = "failed"
-                chromadb_health["status"] = "corrupt"
-                logger.critical(
-                    f"[telemetry] SQLite CORRUPT: {check_result} ({sqlite_path})"
-                )
-        finally:
-            conn.close()
-    except Exception as e:
-        result = {"ok": False, "result": "error", "error": str(e)}
-        chromadb_health["integrity_check"] = "error"
-        chromadb_health["status"] = "corrupt"
-        logger.error(f"[telemetry] SQLite integrity check failed: {e}")
-
-    # Log to JSONL
-    _log_record(
-        op="integrity_check",
-        elapsed_ms=0,
-        error=None if result["ok"] else result.get("error", result["result"]),
-        error_class="sqlite_corrupt" if not result["ok"] else None,
-        n_ids=None,
-    )
-
-    return result
+    logger.info("[telemetry] HTTP mode — integrity managed by ChromaDB server")
+    return {"ok": True, "result": "http_mode"}
 
 
 # ── Background health probe ──────────────────────────────────────────────────
@@ -317,7 +270,6 @@ def _probe_once() -> dict:
     Returns probe result dict.
     """
     from .memory import _get_collection
-    from .chroma_lock import chroma_write_lock
 
     result = {"read_ok": False, "write_ok": False}
 
@@ -337,25 +289,25 @@ def _probe_once() -> dict:
         result["read_error"] = str(e)
 
     # Write probe: upsert + delete a sentinel
+    # Server handles serialization — no application-level lock needed
     sentinel_id = "__jarvis_health_probe__"
     try:
-        with chroma_write_lock(timeout=5.0):
-            raw.upsert(
-                ids=[sentinel_id],
-                documents=["health probe"],
-                metadatas=[{"type": "probe", "namespace": "internal"}],
-            )
-            raw.delete(ids=[sentinel_id])
+        raw.upsert(
+            ids=[sentinel_id],
+            documents=["health probe"],
+            metadatas=[{"type": "probe", "namespace": "internal"}],
+        )
+        raw.delete(ids=[sentinel_id])
         result["write_ok"] = True
         chromadb_health["last_write_ok"] = True
-        if chromadb_health["status"] not in ("corrupt",):
+        if chromadb_health["status"] not in ("disconnected",):
             chromadb_health["status"] = "ok"
     except Exception as e:
         error_class = classify_error(e)
         chromadb_health["last_write_ok"] = False
         chromadb_health["last_error_class"] = error_class
-        if error_class == "sqlite_corrupt":
-            chromadb_health["status"] = "corrupt"
+        if error_class == "connection_refused":
+            chromadb_health["status"] = "disconnected"
         else:
             chromadb_health["status"] = "degraded"
         _log_record("probe_write", 0, str(e), error_class, None)

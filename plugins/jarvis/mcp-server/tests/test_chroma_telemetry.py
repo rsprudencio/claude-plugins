@@ -1,10 +1,9 @@
 """Tests for ChromaDB telemetry: instrumented collection, error classification,
-integrity check, config getter, health probe, and JSONL logging."""
+config getter, health probe, and JSONL logging."""
 
 import asyncio
 import json
 import os
-import sqlite3
 import tempfile
 import time
 from pathlib import Path
@@ -37,7 +36,6 @@ def reset_health_state():
         "last_write_ok": None,
         "last_error_class": None,
         "doc_count": None,
-        "integrity_check": None,
     })
     yield
     chromadb_health.update(original)
@@ -78,41 +76,65 @@ def instrumented(mock_collection, telemetry_dir):
 
 
 class TestClassifyError:
-    def test_sqlite_corrupt_by_message(self):
-        exc = Exception("database disk image is malformed")
-        assert classify_error(exc) == "sqlite_corrupt"
+    def test_connection_refused(self):
+        exc = Exception("Connection refused by server")
+        assert classify_error(exc) == "connection_refused"
 
-    def test_sqlite_corrupt_by_code(self):
-        exc = Exception("SQLite error code: 11")
-        assert classify_error(exc) == "sqlite_corrupt"
+    def test_connection_reset(self):
+        exc = Exception("Connection reset by peer")
+        assert classify_error(exc) == "connection_refused"
 
-    def test_sqlite_busy_by_message(self):
-        exc = Exception("database is locked")
-        assert classify_error(exc) == "sqlite_busy"
+    def test_connection_error(self):
+        exc = Exception("Connection error: host unreachable")
+        assert classify_error(exc) == "connection_refused"
 
-    def test_sqlite_busy_by_code(self):
-        exc = Exception("SQLite error code: 5")
-        assert classify_error(exc) == "sqlite_busy"
+    def test_rate_limited_429(self):
+        exc = Exception("HTTP 429 Too Many Requests")
+        assert classify_error(exc) == "rate_limited"
 
-    def test_compaction_failure(self):
-        exc = Exception("Error in compaction: Failed to apply logs to the metadata segment")
-        assert classify_error(exc) == "compaction_failure"
+    def test_rate_limited_text(self):
+        exc = Exception("too many requests, please retry later")
+        assert classify_error(exc) == "rate_limited"
 
-    def test_metadata_segment(self):
-        exc = Exception("metadata segment error during flush")
-        assert classify_error(exc) == "compaction_failure"
+    def test_server_error_500(self):
+        exc = Exception("Internal server error 500")
+        assert classify_error(exc) == "server_error"
+
+    def test_server_error_502(self):
+        exc = Exception("502 Bad Gateway")
+        assert classify_error(exc) == "server_error"
+
+    def test_server_error_503(self):
+        exc = Exception("503 Service Unavailable")
+        assert classify_error(exc) == "server_error"
+
+    def test_server_error_504(self):
+        exc = Exception("504 Gateway Timeout")
+        assert classify_error(exc) == "server_error"
 
     def test_timeout(self):
         exc = Exception("Operation timeout after 30s")
         assert classify_error(exc) == "timeout"
+
+    def test_auth_error_401(self):
+        exc = Exception("401 Unauthorized")
+        assert classify_error(exc) == "auth_error"
+
+    def test_auth_error_403(self):
+        exc = Exception("403 Forbidden")
+        assert classify_error(exc) == "auth_error"
+
+    def test_auth_error_text(self):
+        exc = Exception("Unauthorized access to collection")
+        assert classify_error(exc) == "auth_error"
 
     def test_unknown(self):
         exc = Exception("Something completely different")
         assert classify_error(exc) == "unknown"
 
     def test_case_insensitive(self):
-        exc = Exception("DATABASE DISK IMAGE IS MALFORMED")
-        assert classify_error(exc) == "sqlite_corrupt"
+        exc = Exception("CONNECTION REFUSED by host")
+        assert classify_error(exc) == "connection_refused"
 
 
 # ── _extract_n_ids ───────────────────────────────────────────────────────────
@@ -177,8 +199,8 @@ class TestInstrumentedCollection:
         mock_collection.peek.assert_called_once_with(limit=5)
 
     def test_write_error_propagates(self, instrumented, mock_collection):
-        mock_collection.upsert.side_effect = Exception("database disk image is malformed")
-        with pytest.raises(Exception, match="malformed"):
+        mock_collection.upsert.side_effect = Exception("connection refused")
+        with pytest.raises(Exception, match="refused"):
             instrumented.upsert(ids=["id1"], documents=["doc"])
 
     def test_read_error_propagates(self, instrumented, mock_collection):
@@ -191,31 +213,31 @@ class TestInstrumentedCollection:
         assert chromadb_health["last_write_ok"] is True
 
     def test_write_updates_health_on_failure(self, instrumented, mock_collection):
-        mock_collection.upsert.side_effect = Exception("compaction error")
+        mock_collection.upsert.side_effect = Exception("500 internal server error")
         with pytest.raises(Exception):
             instrumented.upsert(ids=["id1"], documents=["doc"])
         assert chromadb_health["last_write_ok"] is False
-        assert chromadb_health["last_error_class"] == "compaction_failure"
+        assert chromadb_health["last_error_class"] == "server_error"
 
-    def test_corrupt_error_sets_status(self, instrumented, mock_collection):
-        mock_collection.delete.side_effect = Exception("database disk image is malformed")
+    def test_connection_refused_sets_disconnected(self, instrumented, mock_collection):
+        mock_collection.delete.side_effect = Exception("connection refused by host")
         with pytest.raises(Exception):
             instrumented.delete(ids=["id1"])
-        assert chromadb_health["status"] == "corrupt"
+        assert chromadb_health["status"] == "disconnected"
 
-    def test_non_corrupt_error_sets_degraded(self, instrumented, mock_collection):
-        mock_collection.upsert.side_effect = Exception("database is locked")
+    def test_non_connection_error_sets_degraded(self, instrumented, mock_collection):
+        mock_collection.upsert.side_effect = Exception("500 internal server error")
         with pytest.raises(Exception):
             instrumented.upsert(ids=["id1"], documents=["doc"])
         assert chromadb_health["status"] == "degraded"
 
-    def test_corrupt_status_not_overwritten_by_degraded(self, instrumented, mock_collection):
-        """Once status is 'corrupt', a non-corrupt write error shouldn't downgrade to 'degraded'."""
-        chromadb_health["status"] = "corrupt"
-        mock_collection.upsert.side_effect = Exception("database is locked")
+    def test_disconnected_status_not_overwritten_by_degraded(self, instrumented, mock_collection):
+        """Once status is 'disconnected', a non-connection write error shouldn't downgrade to 'degraded'."""
+        chromadb_health["status"] = "disconnected"
+        mock_collection.upsert.side_effect = Exception("500 internal server error")
         with pytest.raises(Exception):
             instrumented.upsert(ids=["id1"], documents=["doc"])
-        assert chromadb_health["status"] == "corrupt"
+        assert chromadb_health["status"] == "disconnected"
 
 
 # ── JSONL logging ────────────────────────────────────────────────────────────
@@ -257,7 +279,7 @@ class TestJSONLLogging:
         assert records[0]["op"] == "count"
 
     @patch("tools.config.get_telemetry_config", return_value={
-        "enabled": False, "log_writes": True, "log_reads": True, "probe_interval_seconds": 300
+        "enabled": False, "log_reads": False, "log_writes": False, "probe_interval_seconds": 300
     })
     def test_nothing_logged_when_disabled(self, mock_cfg, instrumented, telemetry_dir):
         instrumented.upsert(ids=["id1"], documents=["doc"])
@@ -270,15 +292,15 @@ class TestJSONLLogging:
     })
     def test_errors_always_logged(self, mock_cfg, instrumented, mock_collection, telemetry_dir):
         """Errors are logged regardless of log_writes/log_reads settings."""
-        mock_collection.upsert.side_effect = Exception("database disk image is malformed")
+        mock_collection.upsert.side_effect = Exception("connection refused")
         with pytest.raises(Exception):
             instrumented.upsert(ids=["id1"], documents=["doc"])
         jsonl_path = telemetry_dir / "chromadb.jsonl"
         assert jsonl_path.exists()
         record = json.loads(jsonl_path.read_text().strip())
         assert record["ok"] is False
-        assert record["error_class"] == "sqlite_corrupt"
-        assert "malformed" in record["error"]
+        assert record["error_class"] == "connection_refused"
+        assert "refused" in record["error"]
 
     @patch("tools.config.get_telemetry_config", return_value={
         "enabled": True, "log_writes": True, "log_reads": False, "probe_interval_seconds": 300
@@ -291,46 +313,19 @@ class TestJSONLLogging:
         assert record["n_ids"] == 3
 
 
-# ── Integrity check ─────────────────────────────────────────────────────────
+# ── Integrity check (no-op in HTTP mode) ─────────────────────────────────────
 
 
 class TestCheckIntegrity:
-    def test_no_database_yet(self, tmp_path, telemetry_dir):
-        """No SQLite file → ok result."""
-        result = check_integrity(str(tmp_path))
+    def test_returns_ok_in_http_mode(self):
+        """check_integrity is a no-op in HTTP mode."""
+        result = check_integrity("/tmp/whatever")
         assert result["ok"] is True
-        assert result["result"] == "no_database_yet"
-        assert chromadb_health["integrity_check"] == "no_database_yet"
+        assert result["result"] == "http_mode"
 
-    def test_healthy_database(self, tmp_path, telemetry_dir):
-        """Valid SQLite → ok result."""
-        db_path = tmp_path / "chroma.sqlite3"
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
-        conn.close()
-
-        result = check_integrity(str(tmp_path))
+    def test_returns_ok_without_args(self):
+        result = check_integrity()
         assert result["ok"] is True
-        assert result["result"] == "ok"
-        assert chromadb_health["integrity_check"] == "ok"
-
-    def test_corrupt_database(self, tmp_path, telemetry_dir):
-        """Corrupt SQLite file → failed result."""
-        db_path = tmp_path / "chroma.sqlite3"
-        # Write garbage to simulate corruption
-        db_path.write_bytes(b"SQLite format 3\x00" + b"\xff" * 4096)
-
-        result = check_integrity(str(tmp_path))
-        assert result["ok"] is False
-        assert chromadb_health["status"] == "corrupt"
-
-    def test_integrity_logs_to_jsonl(self, tmp_path, telemetry_dir):
-        """Integrity check result should appear in JSONL."""
-        result = check_integrity(str(tmp_path))
-        jsonl_path = telemetry_dir / "chromadb.jsonl"
-        assert jsonl_path.exists()
-        record = json.loads(jsonl_path.read_text().strip())
-        assert record["op"] == "integrity_check"
 
 
 # ── Config getter ────────────────────────────────────────────────────────────
@@ -364,7 +359,7 @@ class TestGetTelemetryConfig:
     def test_config_override(self, mock_config):
         """Config values override defaults."""
         mock_config.set(memory={
-            "db_path": mock_config.db_path,
+            "chroma_data_path": mock_config.db_path,
             "telemetry": {
                 "enabled": True,
                 "log_reads": True,
@@ -394,12 +389,12 @@ class TestLogRecord:
         assert "error_class" not in record
 
     def test_error_record(self, telemetry_dir):
-        _log_record("upsert", 5000.0, "database is locked", "sqlite_busy", 1)
+        _log_record("upsert", 5000.0, "connection refused", "connection_refused", 1)
         jsonl_path = telemetry_dir / "chromadb.jsonl"
         record = json.loads(jsonl_path.read_text().strip())
         assert record["ok"] is False
-        assert record["error_class"] == "sqlite_busy"
-        assert "locked" in record["error"]
+        assert record["error_class"] == "connection_refused"
+        assert "refused" in record["error"]
 
     def test_no_n_ids_omitted(self, telemetry_dir):
         _log_record("count", 1.0, None, None, None)
@@ -507,14 +502,3 @@ class TestMemoryIntegration:
         assert count >= 1
         # Cleanup
         coll.delete(ids=["test::1"])
-
-    def test_integrity_check_runs_on_init(self, mock_config, telemetry_dir):
-        """Integrity check should run on first _get_client() call."""
-        import tools.memory as mem
-
-        mem._chroma_client = None  # force re-init
-        from tools.memory import _get_client
-
-        _get_client()
-        # integrity_check should have been called
-        assert chromadb_health["integrity_check"] is not None

@@ -51,11 +51,11 @@ class TestGetPathDefaults:
 class TestGetPathAbsolute:
     """Absolute paths (memory section) resolve without vault prefix."""
 
-    def test_db_path_default(self, mock_config):
-        # Remove the test-isolation db_path to check default fallback
+    def test_chroma_data_path_default(self, mock_config):
+        # Remove the test-isolation chroma_data_path to check default fallback
         mock_config.delete_key("memory")
 
-        path = get_path("db_path")
+        path = get_path("chroma_data_path")
         expected = os.path.expanduser("~/.jarvis/memory_db")
         assert path == expected
 
@@ -65,7 +65,7 @@ class TestGetPathAbsolute:
         assert path == expected
 
     def test_absolute_not_prefixed_with_vault(self, mock_config):
-        path = get_path("db_path")
+        path = get_path("chroma_data_path")
         assert not path.startswith(str(mock_config.vault_path))
 
 
@@ -78,8 +78,8 @@ class TestGetPathConfigOverrides:
         assert path == os.path.join(str(mock_config.vault_path), "logs/ai")
 
     def test_absolute_override(self, mock_config):
-        mock_config.set(memory={"db_path": "/custom/chroma"})
-        path = get_path("db_path")
+        mock_config.set(memory={"chroma_data_path": "/custom/chroma"})
+        path = get_path("chroma_data_path")
         assert path == "/custom/chroma"
 
     def test_override_does_not_affect_other_paths(self, mock_config):
@@ -89,8 +89,8 @@ class TestGetPathConfigOverrides:
         assert path == os.path.join(str(mock_config.vault_path), "notes")
 
     def test_tilde_expansion_in_absolute(self, mock_config):
-        mock_config.set(memory={"db_path": "~/custom/db"})
-        path = get_path("db_path")
+        mock_config.set(memory={"chroma_data_path": "~/custom/db"})
+        path = get_path("chroma_data_path")
         assert path == os.path.join(str(Path.home()), "custom/db")
 
 
@@ -154,7 +154,7 @@ class TestGetPathErrors:
 
     def test_absolute_path_works_without_vault(self, no_config):
         """Absolute paths don't need vault config."""
-        path = get_path("db_path")
+        path = get_path("chroma_data_path")
         assert path == os.path.expanduser("~/.jarvis/memory_db")
 
 
@@ -186,7 +186,7 @@ class TestGetRelativePath:
 
     def test_raises_for_absolute(self, mock_config):
         with pytest.raises(ValueError, match="absolute path"):
-            get_relative_path("db_path")
+            get_relative_path("chroma_data_path")
 
     def test_raises_for_unknown(self, mock_config):
         with pytest.raises(PathNotConfiguredError):
@@ -237,7 +237,16 @@ class TestValidatePathsConfig:
         assert any("Unknown memory key" in w for w in warnings)
 
     def test_known_memory_keys_no_warning(self, mock_config):
-        mock_config.set(memory={"secret_detection": True, "db_path": "~/.jarvis/db"})
+        mock_config.set(
+            memory={
+                "secret_detection": True,
+                "chroma_data_path": "~/.jarvis/db",
+                "chroma_host": "localhost",
+                "chroma_port": 8743,
+                "chroma_ssl": False,
+                "chroma_headers": {},
+            }
+        )
         warnings = validate_paths_config()
         assert warnings == []
 
@@ -280,39 +289,39 @@ class TestListAllPaths:
         assert entry["resolved"] is None
         assert "error" in entry
         # Absolute paths should still work
-        abs_entry = result["absolute"]["db_path"]
+        abs_entry = result["absolute"]["chroma_data_path"]
         assert abs_entry["resolved"] is not None
 
 
 class TestJarvisHomeEnvVar:
     """Tests for JARVIS_HOME env var overriding absolute path resolution."""
 
-    def test_db_path_uses_jarvis_home(self, tmp_path, mock_config, monkeypatch):
+    def test_chroma_data_path_uses_jarvis_home(self, tmp_path, mock_config, monkeypatch):
         """Absolute paths starting with ~/.jarvis should use JARVIS_HOME."""
         import tools.config as config_module
 
-        # Reset config to use default db_path (starting with ~/.jarvis)
+        # Reset config to use default chroma_data_path (starting with ~/.jarvis)
         config_module._config_cache = None
-        mock_config.set(memory={})  # Remove custom db_path override
+        mock_config.set(memory={})  # Remove custom chroma_data_path override
 
         jarvis_home = tmp_path / "docker_config"
         jarvis_home.mkdir()
         monkeypatch.setenv("JARVIS_HOME", str(jarvis_home))
 
-        resolved = get_path("db_path")
+        resolved = get_path("chroma_data_path")
         assert str(resolved).startswith(str(jarvis_home))
         assert "memory_db" in resolved
 
-    def test_db_path_default_without_env(self, tmp_path, mock_config, monkeypatch):
+    def test_chroma_data_path_default_without_env(self, tmp_path, mock_config, monkeypatch):
         """Without JARVIS_HOME, paths should resolve via ~ expansion."""
         import tools.config as config_module
 
-        # Reset config to use default db_path
+        # Reset config to use default chroma_data_path
         config_module._config_cache = None
         mock_config.set(memory={})
 
         monkeypatch.delenv("JARVIS_HOME", raising=False)
 
-        resolved = get_path("db_path")
+        resolved = get_path("chroma_data_path")
         home = os.path.expanduser("~")
         assert resolved.startswith(home)

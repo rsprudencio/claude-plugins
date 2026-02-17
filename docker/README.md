@@ -30,17 +30,21 @@ Or use the installer: `bash install.sh` and choose **[2] Docker**.
 Host Machine
 ├── Claude Code
 │   ├── Plugin (skills, agents, system-prompt) ← installed via marketplace
-│   └── MCP config → http://localhost:8741/mcp, http://localhost:8742/mcp
+│   ├── MCP config → http://localhost:8741/mcp, http://localhost:8742/mcp
+│   └── Hooks (prompt_search, extract_observation) → ChromaDB :8743
 │
 └── Docker Container
+    ├── ChromaDB      (port 8743) — Semantic memory database
     ├── jarvis-core   (port 8741) — Vault ops, memory, git audit
     ├── jarvis-todoist (port 8742) — Todoist API (if token configured)
     └── Volumes:
         ├── /vault  ← your Obsidian/markdown vault
-        └── /config ← ~/.jarvis/ (config + ChromaDB)
+        └── /config ← ~/.jarvis/ (config + ChromaDB data)
 ```
 
-Both servers use **Streamable HTTP** transport (MCP SDK). Claude Code connects via `"type": "http"` URL-based MCP config.
+The container runs 3 processes managed by `entrypoint.sh`. ChromaDB starts first; once its heartbeat is healthy, jarvis-core and jarvis-todoist launch. All ChromaDB access goes through HTTP — both MCP servers and host-side hooks connect to port 8743.
+
+Both MCP servers use **Streamable HTTP** transport (MCP SDK). Claude Code connects via `"type": "http"` URL-based MCP config.
 
 ## Claude Code MCP Configuration
 
@@ -109,6 +113,8 @@ When transport is not `local`, the plugin's stdio servers detect this at startup
 | `JARVIS_AUTOCRLF` | `false` | Set `true` for Windows hosts (git line ending conversion) |
 | `JARVIS_CORE_PORT` | `8741` | Port for jarvis-core |
 | `JARVIS_TODOIST_PORT` | `8742` | Port for jarvis-todoist |
+| `CHROMA_PORT` | `8743` | Port for ChromaDB server |
+| `CHROMA_HOST` | `127.0.0.1` | ChromaDB bind address (inside container) |
 
 ## Management
 
@@ -164,14 +170,15 @@ Common issues:
 
 ### ChromaDB startup slow
 
-First startup with an empty database takes ~5-10 seconds for ChromaDB initialization. Subsequent starts are faster. The healthcheck has a 10-second start period to accommodate this.
+First startup with an empty database takes ~5-10 seconds for ChromaDB initialization. Subsequent starts are faster. The healthcheck has a 20-second start period to accommodate ChromaDB + jarvis-core startup sequence.
 
 ### Hooks in Docker mode
 
-Claude Code hooks (session-cleanup, prompt-search, stop-extract) run on the **host**, not inside the container. For full hook support with Docker, you need either:
+Claude Code hooks (session-cleanup, prompt-search, stop-extract) run on the **host**, not inside the container. They connect directly to ChromaDB on port 8743 via `HttpClient` — no extra configuration needed as long as port 8743 is exposed.
 
-1. **Native Python on host** — alongside Docker for MCP (hooks import from plugin source)
-2. **Disable hooks** — MCP tools work fully without hooks; hooks are an optimization layer
+Requirements for hooks with Docker:
+1. **Python 3.10+ on host** with `chromadb` package installed (hooks import from plugin source)
+2. ChromaDB port (8743) accessible from host (default in docker-compose.yml)
 
 ## Building Locally
 
@@ -181,7 +188,7 @@ docker build -f docker/Dockerfile -t jarvis-local .
 
 # Run with local image
 docker run -d --name jarvis \
-  -p 8741:8741 -p 8742:8742 \
+  -p 8741:8741 -p 8742:8742 -p 8743:8743 \
   -v ~/my-vault:/vault \
   -v ~/.jarvis:/config \
   -e JARVIS_HOME=/config \

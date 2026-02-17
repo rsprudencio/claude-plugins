@@ -9,7 +9,6 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from .chroma_lock import chroma_write_lock
 from .config import get_promotion_config
 from .file_ops import write_vault_file
 from .format_support import get_write_extension, generate_frontmatter, get_write_format
@@ -248,11 +247,10 @@ def promote(doc_id: str) -> dict:
         new_metadata["vault_type"] = content_type  # Vault-specific type
         new_metadata["namespace"] = "vault::"
 
-        with chroma_write_lock():
-            collection.delete(ids=[doc_id])
-            collection.upsert(
-                ids=[new_vault_id], documents=[file_content], metadatas=[new_metadata]
-            )
+        collection.delete(ids=[doc_id])
+        collection.upsert(
+            ids=[new_vault_id], documents=[file_content], metadatas=[new_metadata]
+        )
 
         return {
             "success": True,

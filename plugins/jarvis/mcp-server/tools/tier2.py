@@ -35,7 +35,6 @@ from .namespaces import (
     NAMESPACE_DECISION,
     NAMESPACE_WORKLOG,
 )
-from .chroma_lock import chroma_write_lock
 from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
@@ -200,29 +199,28 @@ def tier2_write(
     if extra_metadata:
         metadata.update(extra_metadata)
 
-    # Write to ChromaDB under write lock
+    # Write to ChromaDB
     try:
         collection = _get_collection()
-        with chroma_write_lock():
-            # Idempotency for retry/replay pipelines. If the same ingest_event_id
-            # was already written, return existing ID without creating duplicates.
-            if ingest_event_id:
-                existing = collection.get(
-                    where={"ingest_event_id": ingest_event_id},
-                    include=[],
-                )
-                existing_ids = existing.get("ids", [])
-                if existing_ids:
-                    existing_id = sorted(existing_ids)[0]
-                    return {
-                        "success": True,
-                        "id": existing_id,
-                        "content_type": content_type,
-                        "importance_score": importance_score,
-                        "deduplicated": True,
-                    }
+        # Idempotency for retry/replay pipelines. If the same ingest_event_id
+        # was already written, return existing ID without creating duplicates.
+        if ingest_event_id:
+            existing = collection.get(
+                where={"ingest_event_id": ingest_event_id},
+                include=[],
+            )
+            existing_ids = existing.get("ids", [])
+            if existing_ids:
+                existing_id = sorted(existing_ids)[0]
+                return {
+                    "success": True,
+                    "id": existing_id,
+                    "content_type": content_type,
+                    "importance_score": importance_score,
+                    "deduplicated": True,
+                }
 
-            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         result = {
             "success": True,
             "id": doc_id,
@@ -278,13 +276,12 @@ def tier2_read(doc_id: str) -> dict:
         updated_metadata["retrieval_count"] = str(retrieval_count)
         updated_metadata["updated_at"] = now_iso
 
-        # Write back under write lock
-        with chroma_write_lock():
-            collection.upsert(
-                ids=[doc_id],
-                documents=[result["documents"][0]],
-                metadatas=[updated_metadata],
-            )
+        # Write back updated metadata
+        collection.upsert(
+            ids=[doc_id],
+            documents=[result["documents"][0]],
+            metadatas=[updated_metadata],
+        )
 
         return {
             "success": True,
@@ -439,9 +436,7 @@ def tier2_delete(doc_id: str) -> dict:
                 "reason": "not found",
             }
 
-        # Delete under write lock
-        with chroma_write_lock():
-            collection.delete(ids=[doc_id])
+        collection.delete(ids=[doc_id])
 
         return {
             "success": True,
@@ -471,8 +466,7 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         metadata["updated_at"] = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        with chroma_write_lock():
-            collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
         return {"success": True, "doc_id": doc_id, "updated": True}
     except Exception as e:
         logger.error(f"tier2_upsert failed: {e}")

@@ -237,7 +237,6 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
 
     Returns True on success, False on failure (missing doc, ChromaDB error).
     """
-    from .chroma_lock import chroma_write_lock
     from .memory import _get_collection
 
     try:
@@ -253,12 +252,11 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
             "%Y-%m-%dT%H:%M:%SZ"
         )
 
-        with chroma_write_lock():
-            collection.upsert(
-                ids=[old_doc_id],
-                documents=[result["documents"][0]],
-                metadatas=[metadata],
-            )
+        collection.upsert(
+            ids=[old_doc_id],
+            documents=[result["documents"][0]],
+            metadatas=[metadata],
+        )
         return True
     except Exception as exc:
         logger.debug(f"mark_superseded failed for {old_doc_id}: {exc}")

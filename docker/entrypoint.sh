@@ -1,13 +1,16 @@
 #!/bin/bash
 # Jarvis MCP Server - Docker Entrypoint
-# Manages jarvis-core and optionally jarvis-todoist uvicorn processes.
+# Manages ChromaDB server, jarvis-core, and optionally jarvis-todoist.
 
 set -e
 
 CORE_PORT="${JARVIS_CORE_PORT:-8741}"
 TODOIST_PORT="${JARVIS_TODOIST_PORT:-8742}"
+CHROMA_PORT="${CHROMA_PORT:-8743}"
+CHROMA_DATA="${JARVIS_HOME:-/config}/memory_db"
 CORE_PID=""
 TODOIST_PID=""
+CHROMA_PID=""
 
 # --- Git configuration for mounted vault ---
 if [ -d "/vault" ]; then
@@ -21,15 +24,17 @@ fi
 
 # --- Graceful shutdown ---
 cleanup() {
-    echo "[jarvis] Shutting down (draining writes)..."
+    echo "[jarvis] Shutting down..."
     [ -n "$CORE_PID" ] && kill "$CORE_PID" 2>/dev/null
     [ -n "$TODOIST_PID" ] && kill "$TODOIST_PID" 2>/dev/null
-    # Wait up to 10s for graceful shutdown (in-flight writes drain via ASGI lifespan)
+    # Wait up to 10s for jarvis-core to drain in-flight requests
     local timeout=10
     while [ $timeout -gt 0 ] && kill -0 "$CORE_PID" 2>/dev/null; do
         sleep 1
         timeout=$((timeout - 1))
     done
+    # Stop ChromaDB after jarvis-core is done
+    [ -n "$CHROMA_PID" ] && kill "$CHROMA_PID" 2>/dev/null
     echo "[jarvis] Shutdown complete."
     exit 0
 }
@@ -57,22 +62,37 @@ sys.exit(0 if token else 1)
 
 # --- Wait for health check ---
 wait_for_health() {
-    local port="$1"
+    local url="$1"
     local name="$2"
-    local max_retries=30
+    local max_retries="${3:-30}"
     local i=0
 
     while [ $i -lt $max_retries ]; do
-        if curl -sf "http://localhost:${port}/health" > /dev/null 2>&1; then
-            echo "[jarvis] ${name} is ready on port ${port}"
+        if curl -sf "${url}" > /dev/null 2>&1; then
+            echo "[jarvis] ${name} is ready"
             return 0
         fi
         i=$((i + 1))
         sleep 1
     done
-    echo "[jarvis] ERROR: ${name} failed to start on port ${port}"
+    echo "[jarvis] ERROR: ${name} failed to start"
     return 1
 }
+
+# --- Start ChromaDB server ---
+echo "[jarvis] Starting ChromaDB server on port ${CHROMA_PORT}..."
+mkdir -p "${CHROMA_DATA}"
+chroma run \
+    --host 0.0.0.0 \
+    --port "${CHROMA_PORT}" \
+    --path "${CHROMA_DATA}" 2>&1 &
+CHROMA_PID=$!
+
+wait_for_health "http://127.0.0.1:${CHROMA_PORT}/api/v2/heartbeat" "ChromaDB" 30
+
+# Set env vars for jarvis-core HttpClient
+export CHROMA_HOST=127.0.0.1
+export CHROMA_PORT
 
 # --- Start jarvis-core ---
 echo "[jarvis] Starting jarvis-core on port ${CORE_PORT}..."
@@ -99,10 +119,10 @@ else
 fi
 
 # --- Wait for health ---
-wait_for_health "${CORE_PORT}" "jarvis-core"
+wait_for_health "http://localhost:${CORE_PORT}/health" "jarvis-core" 30
 
 if [ -n "$TODOIST_PID" ]; then
-    wait_for_health "${TODOIST_PORT}" "jarvis-todoist"
+    wait_for_health "http://localhost:${TODOIST_PORT}/health" "jarvis-todoist" 30
 fi
 
 echo "[jarvis] All services started successfully."

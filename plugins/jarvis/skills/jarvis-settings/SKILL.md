@@ -275,7 +275,10 @@ Let user change specific paths. All paths are relative to vault root.
 | `importance_scoring` | true | Score content importance on write |
 | `recency_boost_days` | 7 | Boost recent content in search results |
 | `default_importance` | 0.5 | Default importance score (0.0–1.0) for new content |
-| `db_path` | `~/.jarvis/memory_db` | ChromaDB database location |
+| `chroma_host` | `localhost` | ChromaDB server hostname |
+| `chroma_port` | `8743` | ChromaDB server port |
+| `chroma_ssl` | `false` | Use HTTPS for ChromaDB connection |
+| `chroma_data_path` | `~/.jarvis/memory_db` | ChromaDB server data directory |
 
 #### Cross-encoder reranking
 
@@ -325,7 +328,9 @@ mcp_transport:   local
 mcp_remote_url:  (not set)
 
 === Memory ===
-db_path:              ~/.jarvis/memory_db
+chroma_host:          localhost
+chroma_port:          8743
+chroma_data_path:     ~/.jarvis/memory_db
 secret_detection:     true
 importance_scoring:   true
 recency_boost_days:   7

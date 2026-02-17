@@ -27,7 +27,7 @@ Memory System Status
 
 Collection: vault
 Documents indexed: 142
-DB location: ~/.jarvis/memory_db/  (configurable via memory.db_path in ~/.jarvis/config.json)
+ChromaDB: localhost:8743  (configurable via memory.chroma_host/chroma_port in ~/.jarvis/config.json)
 
 Sample entries:
 - notes/projects/jarvis-plugin.md (type: note)

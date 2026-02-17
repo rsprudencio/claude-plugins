@@ -579,7 +579,7 @@ TOOLS = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'db_path')",
+                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'chroma_data_path')",
                 },
                 "substitutions": {
                     "type": "object",
@@ -773,7 +773,7 @@ def handle_resolve_path(args: dict) -> dict:
         resolved = get_path(
             name, substitutions=substitutions, ensure_exists=ensure_exists
         )
-        is_vault_relative = name not in {"db_path", "project_memories_path"}
+        is_vault_relative = name not in {"chroma_data_path", "project_memories_path"}
         result = {
             "success": True,
             "name": name,

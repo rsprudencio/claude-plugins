@@ -1,6 +1,5 @@
 """Tests for unified remove module — routing deletes."""
 
-from contextlib import contextmanager
 
 import pytest
 from tools.remove import remove
@@ -71,36 +70,25 @@ class TestRemoveById:
         assert result["success"]
         assert not test_file.exists()
 
-    def test_delete_vault_cleanup_uses_write_lock(self, mock_config, monkeypatch):
-        """Vault index cleanup runs inside chroma_write_lock."""
+    def test_delete_vault_cleanup_removes_chunks(self, mock_config, monkeypatch):
+        """Vault index cleanup calls _delete_existing_chunks."""
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         test_file = notes_dir / "test.md"
         test_file.write_text("test content")
 
-        import tools.chroma_lock as chroma_lock
         import tools.memory as memory
 
-        state = {"lock_held": False, "delete_called": False}
-
-        @contextmanager
-        def fake_lock(*args, **kwargs):
-            state["lock_held"] = True
-            try:
-                yield
-            finally:
-                state["lock_held"] = False
+        state = {"delete_called": False}
 
         def fake_get_collection():
             return object()
 
         def fake_delete_existing_chunks(collection, file_path):
-            assert state["lock_held"] is True
             assert file_path == "notes/test.md"
             state["delete_called"] = True
             return 3
 
-        monkeypatch.setattr(chroma_lock, "chroma_write_lock", fake_lock)
         monkeypatch.setattr(memory, "_get_collection", fake_get_collection)
         monkeypatch.setattr(
             memory,

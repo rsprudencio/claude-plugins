@@ -465,7 +465,7 @@ class TestQueryVaultReranking:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_rerank_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_rerank_db")}
         )
 
     def _index_test_files(self, mock_config):
@@ -521,7 +521,7 @@ class TestQueryVaultReranking:
         self._index_test_files(mock_config)
         mock_config.set(
             memory={
-                "db_path": str(mock_config.vault_path / ".test_rerank_db"),
+                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_db"),
                 "reranking": {"enabled": False},
             }
         )
@@ -558,7 +558,7 @@ class TestQueryVaultReranking:
         self._index_test_files(mock_config)
         mock_config.set(
             memory={
-                "db_path": str(mock_config.vault_path / ".test_rerank_fetch_db"),
+                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_fetch_db"),
                 "reranking": {"enabled": True, "candidate_count": 50},
             }
         )
@@ -580,7 +580,7 @@ class TestQueryVaultReranking:
         self._index_test_files(mock_config)
         mock_config.set(
             memory={
-                "db_path": str(mock_config.vault_path / ".test_rerank_topk_db"),
+                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_topk_db"),
                 "reranking": {"enabled": True, "top_k": 2},
             }
         )

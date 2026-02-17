@@ -38,7 +38,7 @@ _VAULT_RELATIVE_DEFAULTS = {
 }
 
 _ABSOLUTE_DEFAULTS = {
-    "db_path": "~/.jarvis/memory_db",
+    "chroma_data_path": "~/.jarvis/memory_db",
     "project_memories_path": "~/.jarvis/memories",
 }
 
@@ -63,7 +63,7 @@ def get_path(
     """Resolve a named path to an absolute filesystem path.
 
     Args:
-        name: Path identifier (e.g., "journal_jarvis", "inbox", "db_path")
+        name: Path identifier (e.g., "journal_jarvis", "inbox", "chroma_data_path")
         substitutions: Template variable replacements (e.g., {"YYYY": "2026"})
         ensure_exists: If True, create the directory if it does not exist
 
@@ -170,13 +170,28 @@ def validate_paths_config() -> list:
             warnings.append(f"Path '{name}' contains traversal: '{value}'")
 
     memory = config.get("memory", {})
+    _known_memory_keys = {
+        "secret_detection",
+        "importance_scoring",
+        "recency_boost_days",
+        "default_importance",
+        "chroma_host",
+        "chroma_port",
+        "chroma_ssl",
+        "chroma_headers",
+        "auto_extract",
+        "per_prompt_search",
+        "chunking",
+        "scoring",
+        "expansion",
+        "reranking",
+        "worklog",
+        "conflict_detection",
+        "telemetry",
+        "pattern_detection",
+    }
     for name, value in memory.items():
-        if name not in _ABSOLUTE_DEFAULTS and name not in (
-            "secret_detection",
-            "importance_scoring",
-            "recency_boost_days",
-            "default_importance",
-        ):
+        if name not in _ABSOLUTE_DEFAULTS and name not in _known_memory_keys:
             warnings.append(f"Unknown memory key: '{name}' (will be ignored)")
 
     return warnings

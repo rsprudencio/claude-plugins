@@ -17,7 +17,7 @@ def _reset_chromadb(mock_config):
     mem._chroma_client = None
     mock_config.set(
         memory={
-            "db_path": str(mock_config.vault_path / ".test_crud_db"),
+            "chroma_data_path": str(mock_config.vault_path / ".test_crud_db"),
             "project_memories_path": str(
                 mock_config.vault_path / ".jarvis" / "memories"
             ),

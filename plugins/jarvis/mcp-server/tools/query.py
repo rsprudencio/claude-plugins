@@ -177,8 +177,6 @@ def _increment_retrieval_counts(
         return
 
     try:
-        from .chroma_lock import chroma_write_lock
-
         # Filter to only Tier 2 IDs
         tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
         if not tier2_ids:
@@ -207,12 +205,11 @@ def _increment_retrieval_counts(
             updated_docs.append(result["documents"][i])
             updated_metas.append(updated_metadata)
 
-        # Batch upsert under write lock
+        # Batch upsert
         if updated_ids:
-            with chroma_write_lock():
-                collection.upsert(
-                    ids=updated_ids, documents=updated_docs, metadatas=updated_metas
-                )
+            collection.upsert(
+                ids=updated_ids, documents=updated_docs, metadatas=updated_metas
+            )
 
     except Exception as e:
         # Log but don't fail query
@@ -789,7 +786,7 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
 
             # Storage size
             storage_bytes = 0
-            db_dir = get_path("db_path")
+            db_dir = get_path("chroma_data_path")
             if os.path.isdir(db_dir):
                 for dirpath, _, filenames in os.walk(db_dir):
                     for f in filenames:

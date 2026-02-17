@@ -18,7 +18,6 @@ from typing import Optional
 
 import chromadb
 
-from .chroma_lock import chroma_write_lock
 from .config import get_verified_vault_path, get_chunking_config, get_scoring_config
 from .chunking import chunk_document
 from .scoring import compute_importance
@@ -43,15 +42,31 @@ _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
 
 
 def _get_client() -> chromadb.ClientAPI:
-    """Get or create singleton ChromaDB PersistentClient."""
+    """Get or create singleton ChromaDB HttpClient.
+
+    Connects to a ChromaDB server over HTTP. The server handles all
+    write serialization — no application-level locking needed.
+
+    Configuration is read from get_chroma_config() which respects
+    env var overrides (CHROMA_HOST, CHROMA_PORT) for Docker.
+
+    Raises:
+        Exception: If the ChromaDB server is unreachable.
+    """
     global _chroma_client
     if _chroma_client is None:
-        db_dir = get_path("db_path", ensure_exists=True)
-        _chroma_client = chromadb.PersistentClient(path=db_dir)
-        # One-time integrity check on first init
-        from .chroma_telemetry import check_integrity
+        from .config import get_chroma_config
 
-        check_integrity(db_dir)
+        cfg = get_chroma_config()
+        kwargs = {
+            "host": cfg["host"],
+            "port": cfg["port"],
+            "ssl": cfg["ssl"],
+        }
+        if cfg["headers"]:
+            kwargs["headers"] = cfg["headers"]
+        _chroma_client = chromadb.HttpClient(**kwargs)
+        logger.info(f"ChromaDB HttpClient connected to {cfg['host']}:{cfg['port']}")
     return _chroma_client
 
 
@@ -334,10 +349,9 @@ def index_vault(
                 skipped += 1
                 continue
 
-            # On force re-index, clean up old chunks first (under lock)
+            # On force re-index, clean up old chunks first
             if force:
-                with chroma_write_lock():
-                    _delete_existing_chunks(collection, relative)
+                _delete_existing_chunks(collection, relative)
 
             frontmatter = _parse_frontmatter_for_file(content, filepath)
             title = _extract_title_for_file(content, os.path.basename(filepath))
@@ -358,21 +372,19 @@ def index_vault(
             files_indexed += 1
             chunks_total += n_chunks
 
-            # Flush batch under write lock
+            # Flush batch
             if len(batch_ids) >= _BATCH_SIZE:
-                with chroma_write_lock():
-                    collection.upsert(
-                        ids=batch_ids, documents=batch_docs, metadatas=batch_meta
-                    )
+                collection.upsert(
+                    ids=batch_ids, documents=batch_docs, metadatas=batch_meta
+                )
                 batch_ids, batch_docs, batch_meta = [], [], []
 
         except Exception as e:
             errors.append({"file": relative, "error": str(e)})
 
-    # Flush remaining under write lock
+    # Flush remaining
     if batch_ids:
-        with chroma_write_lock():
-            collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
+        collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
 
     duration = round(time.time() - start, 2)
     return {
@@ -424,10 +436,9 @@ def index_file(relative_path: str) -> dict:
             scoring_config,
         )
 
-        # Delete old chunks + upsert new in a single lock scope
-        with chroma_write_lock():
-            _delete_existing_chunks(collection, relative_path)
-            collection.upsert(ids=ids, documents=docs, metadatas=metas)
+        # Delete old chunks + upsert new
+        _delete_existing_chunks(collection, relative_path)
+        collection.upsert(ids=ids, documents=docs, metadatas=metas)
 
         return {
             "success": True,
@@ -453,8 +464,7 @@ def unindex_file(relative_path: str) -> dict:
     """
     try:
         collection = _get_collection()
-        with chroma_write_lock():
-            deleted = _delete_existing_chunks(collection, relative_path)
+        deleted = _delete_existing_chunks(collection, relative_path)
         return {"success": True, "deleted_chunks": deleted}
     except Exception as e:
         return {"success": False, "error": str(e)}

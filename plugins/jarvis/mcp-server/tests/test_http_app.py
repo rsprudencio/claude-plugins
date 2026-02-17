@@ -40,13 +40,17 @@ def test_app_creates_successfully():
 
 
 def test_health_endpoint(client):
-    """GET /health should return status ok with server name and version."""
+    """GET /health should return status ok with server name, version, and Chroma info."""
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
     assert data["server"] == "jarvis-core"
     assert "version" in data
+    # Health endpoint should include ChromaDB connection info
+    assert "chromadb" in data
+    assert "host" in data["chromadb"]
+    assert "port" in data["chromadb"]
 
 
 def test_not_found(client):

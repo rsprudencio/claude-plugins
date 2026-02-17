@@ -478,7 +478,11 @@
       "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
       "recency_boost_days": { "type": "integer", "default": 7, "description": "Days within which recency boost is applied" },
       "default_importance": { "type": "string", "default": "medium", "description": "Default importance level for new memories" },
-      "db_path": { "type": "string", "default": "~/.jarvis/memory_db", "description": "ChromaDB database directory" }
+      "chroma_host": { "type": "string", "default": "localhost", "description": "ChromaDB server hostname" },
+      "chroma_port": { "type": "integer", "default": 8743, "description": "ChromaDB server port" },
+      "chroma_ssl": { "type": "boolean", "default": false, "description": "Use HTTPS for ChromaDB connection" },
+      "chroma_headers": { "type": "object", "default": {}, "description": "Auth headers for ChromaDB" },
+      "chroma_data_path": { "type": "string", "default": "~/.jarvis/memory_db", "description": "ChromaDB server data directory" }
     },
 
     "memory_auto_extract": {
@@ -516,7 +520,7 @@
         "decisions_promoted": "journal/jarvis/decisions"
       },
       "absolute": {
-        "db_path": "~/.jarvis/memory_db",
+        "chroma_data_path": "~/.jarvis/memory_db",
         "project_memories_path": "~/.jarvis/memories"
       },
       "template_variables": ["{YYYY}", "{MM}", "{WW}"],

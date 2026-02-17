@@ -45,6 +45,19 @@ with open(sys.argv[1]) as f:
 " "$CONFIG_FILE" "$key" "$default"
 }
 
+read_memory_key() {
+    local key="$1" default="$2"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "$default"
+        return
+    fi
+    python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    print(json.load(f).get('memory', {}).get(sys.argv[2], sys.argv[3]))
+" "$CONFIG_FILE" "$key" "$default"
+}
+
 update_config() {
     local mode="$1" remote_url="${2:-}"
     if [ ! -f "$CONFIG_FILE" ]; then
@@ -218,6 +231,28 @@ cmd_status() {
             ;;
     esac
 
+    # ChromaDB status
+    echo ""
+    echo -e "${BOLD}ChromaDB${NC}"
+    echo ""
+    local chroma_port
+    chroma_port=$(read_memory_key "chroma_port" "8743")
+    local chroma_pidfile="$JARVIS_HOME/state/chroma.pid"
+
+    if [ "$mode" = "local" ]; then
+        if [ -f "$chroma_pidfile" ] && kill -0 "$(cat "$chroma_pidfile")" 2>/dev/null; then
+            ok "Local server running (PID $(cat "$chroma_pidfile"), port $chroma_port)"
+        elif curl -sf "http://127.0.0.1:${chroma_port}/api/v2/heartbeat" >/dev/null 2>&1; then
+            ok "Reachable on port $chroma_port (external process)"
+        else
+            fail "Not running — start with: jarvis-transport.sh chroma-start"
+        fi
+    elif [ "$mode" = "container" ]; then
+        info "Running inside Docker container (port $chroma_port)"
+    elif [ "$mode" = "remote" ]; then
+        info "Running on remote host (port $chroma_port)"
+    fi
+
     echo ""
     echo -e "${BOLD}Plugin Cache${NC}"
     echo ""
@@ -244,6 +279,9 @@ cmd_local() {
             docker compose -f "$compose_file" down 2>/dev/null || true
         fi
     fi
+
+    # Auto-start local ChromaDB server
+    cmd_chroma_start
 
     echo ""
     warn "Restart Claude Code to apply changes."
@@ -326,13 +364,113 @@ cmd_remote() {
     echo ""
 }
 
+# ── ChromaDB Lifecycle ──
+
+cmd_chroma_start() {
+    local data_path port pidfile logfile
+    data_path=$(read_memory_key "chroma_data_path" "$HOME/.jarvis/memory_db")
+    data_path="${data_path/#\~/$HOME}"
+    port=$(read_memory_key "chroma_port" "8743")
+    pidfile="$JARVIS_HOME/state/chroma.pid"
+    logfile="$JARVIS_HOME/logs/chroma.log"
+
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        ok "ChromaDB already running (PID $(cat "$pidfile"), port $port)"
+        return 0
+    fi
+
+    # Verify chroma CLI is available
+    if ! command -v chroma >/dev/null 2>&1; then
+        fail "chroma CLI not found"
+        info "Install: pip install chromadb"
+        return 1
+    fi
+
+    mkdir -p "$data_path" "$(dirname "$pidfile")" "$(dirname "$logfile")"
+
+    chroma run --host 127.0.0.1 --port "$port" --path "$data_path" \
+        > "$logfile" 2>&1 &
+    echo $! > "$pidfile"
+
+    # Wait for health
+    for i in $(seq 1 15); do
+        if curl -sf "http://127.0.0.1:${port}/api/v2/heartbeat" >/dev/null 2>&1; then
+            ok "ChromaDB started (PID $(cat "$pidfile"), port $port)"
+            return 0
+        fi
+        sleep 1
+    done
+
+    fail "ChromaDB failed to start (check $logfile)"
+    # Clean up pidfile if server didn't come up
+    rm -f "$pidfile"
+    return 1
+}
+
+cmd_chroma_stop() {
+    local pidfile="$JARVIS_HOME/state/chroma.pid"
+
+    if [ ! -f "$pidfile" ]; then
+        info "ChromaDB is not running (no pidfile)"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$pidfile")
+
+    if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null
+        # Wait for shutdown
+        local timeout=5
+        while [ $timeout -gt 0 ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1
+            timeout=$((timeout - 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        ok "ChromaDB stopped (was PID $pid)"
+    else
+        info "ChromaDB process already gone (stale pidfile)"
+    fi
+
+    rm -f "$pidfile"
+}
+
+cmd_chroma_status() {
+    local port pidfile
+    port=$(read_memory_key "chroma_port" "8743")
+    pidfile="$JARVIS_HOME/state/chroma.pid"
+
+    echo ""
+    echo -e "${BOLD}ChromaDB Status${NC}"
+    echo ""
+
+    if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+        ok "Running (PID $(cat "$pidfile"))"
+    else
+        fail "Not running"
+    fi
+
+    if curl -sf "http://127.0.0.1:${port}/api/v2/heartbeat" >/dev/null 2>&1; then
+        ok "Healthy on port $port"
+    else
+        fail "Not reachable on port $port"
+    fi
+
+    echo ""
+}
+
 # ── Main ──
 
 case "${1:-}" in
-    status)    cmd_status ;;
-    local)     cmd_local ;;
-    container) cmd_container ;;
-    remote)    cmd_remote "${2:-}" ;;
+    status)       cmd_status ;;
+    local)        cmd_local ;;
+    container)    cmd_container ;;
+    remote)       cmd_remote "${2:-}" ;;
+    chroma-start) cmd_chroma_start ;;
+    chroma-stop)  cmd_chroma_stop ;;
+    chroma-status) cmd_chroma_status ;;
     -h|--help|help|"")
         echo ""
         echo -e "${BOLD}Jarvis MCP Transport Switcher${NC}"
@@ -344,12 +482,16 @@ case "${1:-}" in
         echo "  local           Switch to local (stdio) mode"
         echo "  container       Switch to Docker container mode (localhost)"
         echo "  remote <url>    Switch to remote container mode"
+        echo "  chroma-start    Start local ChromaDB server"
+        echo "  chroma-stop     Stop local ChromaDB server"
+        echo "  chroma-status   Check ChromaDB server status"
         echo ""
         echo "Examples:"
         echo "  jarvis-transport.sh status"
         echo "  jarvis-transport.sh container"
         echo "  jarvis-transport.sh remote http://192.168.1.50"
         echo "  jarvis-transport.sh local"
+        echo "  jarvis-transport.sh chroma-start"
         echo ""
         ;;
     *)

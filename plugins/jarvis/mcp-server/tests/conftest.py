@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Generator
 
+import chromadb
 import pytest
 
 
@@ -53,7 +54,7 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         "vault_path": str(temp_vault),
         "vault_confirmed": True,
         "configured_at": "2026-02-02T12:00:00Z",
-        "memory": {"db_path": temp_db_dir},  # Use isolated test database
+        "memory": {"chroma_data_path": temp_db_dir},  # Use isolated test database
     }
     config_file.write_text(json.dumps(config_data))
 
@@ -67,6 +68,16 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         return config_module._config_cache
 
     monkeypatch.setattr(config_module, "get_config", mock_get_config)
+
+    # Patch _get_client to return PersistentClient with temp dir.
+    # Production code uses HttpClient (requires a running Chroma server),
+    # but tests use PersistentClient for isolation. Both implement the same
+    # ClientAPI interface, so all assertions work identically.
+    monkeypatch.setattr(
+        memory_module,
+        "_get_client",
+        lambda: chromadb.PersistentClient(path=temp_db_dir),
+    )
 
     # Return helper to modify config
     class ConfigHelper:
@@ -123,10 +134,7 @@ def no_config(mock_config):
 
 @pytest.fixture(autouse=True)
 def cleanup_chroma_client():
-    """Clean up ChromaDB client and shutdown flag after each test."""
-    import tools.chroma_lock as lock_module
-
-    lock_module._shutting_down = False
+    """Clean up ChromaDB client after each test."""
     yield
     # After test completes, clear the Python reference AND ChromaDB's internal cache
     import tools.memory as memory_module
@@ -134,7 +142,6 @@ def cleanup_chroma_client():
 
     memory_module._chroma_client = None
     SharedSystemClient.clear_system_cache()
-    lock_module._shutting_down = False
 
 
 @pytest.fixture

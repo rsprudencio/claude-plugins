@@ -198,9 +198,9 @@ class TestQueryVault:
         import tools.memory as mem
 
         mem._chroma_client = None
-        # Point db_path at a temp directory via config
+        # Point chroma_data_path at a temp directory via config
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_query_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_query_db")}
         )
 
     def _index_test_files(self, mock_config):
@@ -330,7 +330,7 @@ class TestQueryVault:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_dedup_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_dedup_db")}
         )
 
         from tools.memory import index_file
@@ -380,7 +380,7 @@ class TestDocRead:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_read_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_read_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -452,7 +452,7 @@ class TestCollectionStats:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_stats_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_stats_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -510,7 +510,7 @@ class TestCollectionStats:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_stats_empty_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_stats_empty_db")}
         )
 
         result = collection_stats()
@@ -535,7 +535,7 @@ class TestTierAwareQuery:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_tier_query_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_tier_query_db")}
         )
 
         # Index a file
@@ -564,7 +564,7 @@ class TestTierAwareQuery:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_source_query_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_source_query_db")}
         )
 
         # Index a file
@@ -592,7 +592,7 @@ class TestTierAwareQuery:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_mixed_tier_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_mixed_tier_db")}
         )
 
         # Index a Tier 1 file
@@ -629,7 +629,7 @@ class TestTierAwareQuery:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_retrieval_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_retrieval_db")}
         )
 
         # Add Tier 2 observation
@@ -663,7 +663,7 @@ class TestIncrementRetrievalCountsFractional:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_frac_inc_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_frac_inc_db")}
         )
 
         from tools.tier2 import tier2_write
@@ -688,7 +688,7 @@ class TestIncrementRetrievalCountsFractional:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_frac_round_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_frac_round_db")}
         )
 
         from tools.tier2 import tier2_write
@@ -714,7 +714,7 @@ class TestIncrementRetrievalCountsFractional:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_default_inc_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_default_inc_db")}
         )
 
         from tools.tier2 import tier2_write
@@ -739,7 +739,7 @@ class TestIncrementRetrievalCountsFractional:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_skip_tier1_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_skip_tier1_db")}
         )
 
         from tools.memory import index_file
@@ -773,7 +773,7 @@ class TestSemanticContextFractionalBump:
         mem._chroma_client = None
         mock_config.set(
             memory={
-                "db_path": str(mock_config.vault_path / ".test_sc_frac_db"),
+                "chroma_data_path": str(mock_config.vault_path / ".test_sc_frac_db"),
                 "per_prompt_search": {"passive_retrieval_increment": 0.05},
             }
         )
@@ -805,7 +805,7 @@ class TestSemanticContextFractionalBump:
         mem._chroma_client = None
         mock_config.set(
             memory={
-                "db_path": str(mock_config.vault_path / ".test_sc_zero_db"),
+                "chroma_data_path": str(mock_config.vault_path / ".test_sc_zero_db"),
                 "per_prompt_search": {"passive_retrieval_increment": 0},
             }
         )

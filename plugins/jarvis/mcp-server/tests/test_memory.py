@@ -158,7 +158,7 @@ class TestIndexVault:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_memory_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db")}
         )
 
         # Create test files
@@ -195,7 +195,7 @@ class TestIndexVault:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_memory_db2")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db2")}
         )
 
         templates_dir = mock_config.vault_path / "templates"
@@ -214,7 +214,7 @@ class TestIndexVault:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_memory_db_dotdir")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db_dotdir")}
         )
 
         dot_dir = mock_config.vault_path / ".jarvis" / "strategic"
@@ -237,7 +237,7 @@ class TestIndexVault:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_memory_db_serena")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db_serena")}
         )
 
         serena_dir = mock_config.vault_path / ".serena" / "memories"
@@ -260,7 +260,7 @@ class TestIndexFile:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_memory_db3")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db3")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -294,7 +294,7 @@ class TestCollectionCreation:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_fresh_install_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_fresh_install_db")}
         )
 
         collection = mem._get_collection()
@@ -312,7 +312,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_chunk_h2_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_h2_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -352,7 +352,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_chunk_single_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_single_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -372,7 +372,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_chunk_ids_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_ids_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -400,7 +400,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_reindex_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_reindex_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -435,7 +435,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_vault_chunk_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_vault_chunk_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -459,7 +459,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_score_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_score_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -485,7 +485,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_perchunk_score_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_perchunk_score_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -528,7 +528,7 @@ class TestChunkingIntegration:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_parent_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_parent_db")}
         )
 
         notes_dir = mock_config.vault_path / "notes"
@@ -554,7 +554,7 @@ class TestTierMetadata:
 
         mem._chroma_client = None
         mock_config.set(
-            memory={"db_path": str(mock_config.vault_path / ".test_tier_metadata_db")}
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_tier_metadata_db")}
         )
 
         # Index a file

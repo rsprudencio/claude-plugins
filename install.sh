@@ -548,12 +548,15 @@ services:
     ports:
       - "8741:8741"
       - "8742:8742"
+      - "8743:8743"
     volumes:
       - "$VAULT_PATH:/vault"
       - "$JARVIS_HOME:/config"
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
+      - CHROMA_HOST=127.0.0.1
+      - CHROMA_PORT=8743
       - TODOIST_API_TOKEN=${TODOIST_TOKEN:-}
       - JARVIS_AUTOCRLF=false
     restart: unless-stopped
@@ -561,7 +564,7 @@ services:
       test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 20s
       retries: 3
 COMPOSEEOF
 ok "Docker Compose file: $COMPOSE_FILE"
@@ -660,6 +663,23 @@ fi  # end INSTALL_METHOD=docker
 # ═══════════════════════════════════════════════
 
 if [ "$INSTALL_METHOD" = "native" ]; then
+
+# Start ChromaDB server (required for vault indexing via HttpClient)
+echo -e "${BOLD}🔗 Start ChromaDB Server${NC}"
+echo ""
+
+TRANSPORT_SRC="$PLUGIN_DIR/scripts/jarvis-transport.sh"
+if [ -f "$TRANSPORT_SRC" ]; then
+    if bash "$TRANSPORT_SRC" chroma-start 2>/dev/null; then
+        ok "ChromaDB server running"
+    else
+        warn "ChromaDB failed to start — vault indexing may fail"
+        info "You can start it later: jarvis-transport.sh chroma-start"
+    fi
+else
+    warn "Transport helper not found — skipping ChromaDB start"
+fi
+echo ""
 
 echo -e "${BOLD}📚 Index Vault${NC}"
 echo ""

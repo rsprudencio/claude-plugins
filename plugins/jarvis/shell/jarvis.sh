@@ -89,8 +89,34 @@ for line in plugin_paths_raw.strip().splitlines():
         print(f'Synced {name} plugin to {transport} transport')
 " "$JARVIS_CONFIG" "$plugin_paths" 2>/dev/null || true
 
-    # Read transport mode for container auto-start
+    # Read transport mode for auto-start
     transport=$(python3 -c "import json; print(json.load(open('$JARVIS_CONFIG')).get('mcp_transport','local'))" 2>/dev/null || echo "local")
+
+    # Auto-start ChromaDB for local mode (required for HttpClient)
+    if [ "$transport" = "local" ]; then
+        # Find transport helper (installed alongside jarvis)
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        TRANSPORT_HELPER=""
+        # Check common locations
+        for candidate in "$JARVIS_HOME/jarvis-transport.sh" "$SCRIPT_DIR/../scripts/jarvis-transport.sh"; do
+            if [ -f "$candidate" ]; then
+                TRANSPORT_HELPER="$candidate"
+                break
+            fi
+        done
+        # Also check the installed plugin for the script
+        if [ -z "$TRANSPORT_HELPER" ]; then
+            while IFS='|' read -r pname ppath; do
+                if [ "$pname" = "jarvis" ] && [ -f "$ppath/scripts/jarvis-transport.sh" ]; then
+                    TRANSPORT_HELPER="$ppath/scripts/jarvis-transport.sh"
+                    break
+                fi
+            done <<< "$plugin_paths"
+        fi
+        if [ -n "$TRANSPORT_HELPER" ]; then
+            bash "$TRANSPORT_HELPER" chroma-start 2>/dev/null || true
+        fi
+    fi
 
     if [ "$transport" = "container" ]; then
         if ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then

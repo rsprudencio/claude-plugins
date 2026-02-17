@@ -1,6 +1,6 @@
 # Jarvis MCP Server - Docker Image
-# Runs jarvis-core (port 8741) and optionally jarvis-todoist (port 8742)
-# via Streamable HTTP transport for Claude Code integration.
+# Runs ChromaDB (port 8743), jarvis-core (port 8741), and optionally
+# jarvis-todoist (port 8742) via Streamable HTTP transport.
 
 # ---- Builder stage: install Python dependencies ----
 FROM python:3.12-slim AS builder
@@ -57,10 +57,11 @@ ENV JARVIS_VERSION=$JARVIS_VERSION
 # Default ports
 ENV JARVIS_CORE_PORT=8741
 ENV JARVIS_TODOIST_PORT=8742
+ENV CHROMA_PORT=8743
 
-EXPOSE 8741 8742
+EXPOSE 8741 8742 8743
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -sf http://localhost:${JARVIS_CORE_PORT}/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

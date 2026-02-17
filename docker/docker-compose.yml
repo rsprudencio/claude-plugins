@@ -7,12 +7,15 @@ services:
     ports:
       - "${JARVIS_CORE_PORT:-8741}:8741"
       - "${JARVIS_TODOIST_PORT:-8742}:8742"
+      - "${CHROMA_PORT:-8743}:8743"
     volumes:
       - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
       - "${JARVIS_HOME:-~/.jarvis}:/config"
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
+      - CHROMA_HOST=127.0.0.1
+      - CHROMA_PORT=${CHROMA_PORT:-8743}
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
     stop_grace_period: 30s

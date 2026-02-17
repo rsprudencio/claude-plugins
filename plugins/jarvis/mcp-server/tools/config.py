@@ -428,6 +428,32 @@ def get_worklog_config() -> dict:
     return {**defaults, **memory_config.get("worklog", {})}
 
 
+def get_chroma_config() -> dict:
+    """Get ChromaDB HTTP client configuration.
+
+    Env vars take precedence (Docker), then config file, then defaults.
+
+    Returns config dict with:
+    - host: ChromaDB server hostname (default "localhost")
+    - port: ChromaDB server port (default 8743)
+    - ssl: Use HTTPS (default False)
+    - headers: Auth headers dict (default {})
+    - data_path: Where Chroma server stores data (default "~/.jarvis/memory_db")
+    """
+    config = get_config()
+    memory = config.get("memory", {})
+    return {
+        "host": os.environ.get("CHROMA_HOST") or memory.get("chroma_host", "localhost"),
+        "port": int(os.environ.get("CHROMA_PORT") or memory.get("chroma_port", 8743)),
+        "ssl": memory.get("chroma_ssl", False),
+        "headers": memory.get("chroma_headers", {}),
+        "data_path": (
+            os.environ.get("CHROMA_DATA_PATH")
+            or memory.get("chroma_data_path", "~/.jarvis/memory_db")
+        ),
+    }
+
+
 def get_mcp_transport() -> str:
     """Get MCP transport mode. Returns 'local', 'container', or 'remote'."""
     return get_config().get("mcp_transport", "local")
