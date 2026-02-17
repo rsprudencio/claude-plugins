@@ -473,7 +473,7 @@ def get_chroma_config() -> dict:
         "headers": headers,
         "data_path": (
             os.environ.get("CHROMA_DATA_PATH")
-            or memory.get("chroma_data_path", "~/.jarvis/memory_db")
+            or memory.get("chroma_data_path", "~/.jarvis/db")
         ),
     }
 
@@ -495,15 +495,6 @@ def _parse_chroma_url(raw_url: str) -> tuple:
     port = parsed.port or (443 if ssl else 8743)
     return parsed.hostname, int(port), ssl
 
-
-def get_mcp_transport() -> str:
-    """Get MCP transport mode. Returns 'local', 'container', or 'remote'."""
-    return get_config().get("mcp_transport", "local")
-
-
-def get_mcp_remote_url() -> str:
-    """Get MCP remote base URL (for remote mode)."""
-    return get_config().get("mcp_remote_url", "")
 
 
 def get_debug_info() -> dict:

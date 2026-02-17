@@ -22,7 +22,7 @@ Jarvis Configuration
 Vault:        ~/.jarvis/vault/
 File Format:  Markdown (.md)
 Auto-Extract: background (min text: 200 chars)
-Memory DB:    ~/.jarvis/memory_db/ (configurable)
+Memory DB:    ~/.jarvis/db/ (configurable)
 Shell:        jarvis command in PATH
 Version:      1.19.0
 ```
@@ -278,7 +278,7 @@ Let user change specific paths. All paths are relative to vault root.
 | `chroma_host` | `localhost` | ChromaDB server hostname |
 | `chroma_port` | `8743` | ChromaDB server port |
 | `chroma_ssl` | `false` | Use HTTPS for ChromaDB connection |
-| `chroma_data_path` | `~/.jarvis/memory_db` | ChromaDB server data directory |
+| `chroma_data_path` | `~/.jarvis/db` | ChromaDB server data directory |
 
 #### Cross-encoder reranking
 
@@ -330,7 +330,7 @@ mcp_remote_url:  (not set)
 === Memory ===
 chroma_host:          localhost
 chroma_port:          8743
-chroma_data_path:     ~/.jarvis/memory_db
+chroma_data_path:     ~/.jarvis/db
 secret_detection:     true
 importance_scoring:   true
 recency_boost_days:   7
@@ -401,7 +401,7 @@ For existing config updates, **merge** changes — don't overwrite keys that wer
 Also ensure directories exist:
 ```bash
 mkdir -p [vault_path]
-mkdir -p ~/.jarvis/memory_db
+mkdir -p ~/.jarvis/db
 ```
 
 ### 5. Summary

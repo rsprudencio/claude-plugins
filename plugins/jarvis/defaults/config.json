@@ -3,8 +3,6 @@
   "file_format": "md",
   "vault_confirmed": false,
   "configured_at": "__REQUIRED__",
-  "mcp_transport": "local",
-  "mcp_remote_url": "",
   "memory": {
     "chroma_url": "",
     "chroma_host": "localhost",
@@ -13,7 +11,7 @@
     "chroma_api_key": "",
     "chroma_auth_header": "X-Chroma-Token",
     "chroma_headers": {},
-    "chroma_data_path": "~/.jarvis/memory_db",
+    "chroma_data_path": "~/.jarvis/db",
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,

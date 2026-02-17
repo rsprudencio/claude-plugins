@@ -392,7 +392,7 @@
       },
       "tier2_chromadb_first": {
         "description": "Ephemeral auto-generated content (observations, patterns, summaries)",
-        "storage": "ChromaDB only (at ~/.jarvis/memory_db/)",
+        "storage": "ChromaDB only (at ~/.jarvis/db/)",
         "namespace_prefixes": ["obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::"],
         "persistence": "ChromaDB-only, disposable, promotable to Tier 1"
       }
@@ -482,7 +482,7 @@
       "chroma_port": { "type": "integer", "default": 8743, "description": "ChromaDB server port" },
       "chroma_ssl": { "type": "boolean", "default": false, "description": "Use HTTPS for ChromaDB connection" },
       "chroma_headers": { "type": "object", "default": {}, "description": "Auth headers for ChromaDB" },
-      "chroma_data_path": { "type": "string", "default": "~/.jarvis/memory_db", "description": "ChromaDB server data directory" }
+      "chroma_data_path": { "type": "string", "default": "~/.jarvis/db", "description": "ChromaDB server data directory" }
     },
 
     "memory_auto_extract": {
@@ -520,7 +520,7 @@
         "decisions_promoted": "journal/jarvis/decisions"
       },
       "absolute": {
-        "chroma_data_path": "~/.jarvis/memory_db",
+        "chroma_data_path": "~/.jarvis/db",
         "project_memories_path": "~/.jarvis/memories"
       },
       "template_variables": ["{YYYY}", "{MM}", "{WW}"],
@@ -547,7 +547,7 @@
     },
     "chromadb": {
       "purpose": "Embedded vector database for semantic search and Tier 2 ephemeral storage",
-      "storage": "~/.jarvis/memory_db/ (outside vault to avoid Obsidian Sync pollution)",
+      "storage": "~/.jarvis/db/ (outside vault to avoid Obsidian Sync pollution)",
       "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md and .org files", "Configurable file format (Markdown/Org-mode)"]
     },
     "todoist_api": {

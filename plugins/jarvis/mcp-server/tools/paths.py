@@ -38,7 +38,7 @@ _VAULT_RELATIVE_DEFAULTS = {
 }
 
 _ABSOLUTE_DEFAULTS = {
-    "chroma_data_path": "~/.jarvis/memory_db",
+    "chroma_data_path": "~/.jarvis/db",
     "project_memories_path": "~/.jarvis/memories",
 }
 

@@ -425,8 +425,8 @@ if [ "$SKIP_CONFIG" != true ]; then
     ok "Vault directory ready: $VAULT_PATH"
 
     # Create memory DB directory
-    mkdir -p "$JARVIS_HOME/memory_db"
-    ok "Memory DB directory ready: $JARVIS_HOME/memory_db/"
+    mkdir -p "$JARVIS_HOME/db"
+    ok "Memory DB directory ready: $JARVIS_HOME/db/"
 
     # Write config from shipped template (SSoT) with user values substituted
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

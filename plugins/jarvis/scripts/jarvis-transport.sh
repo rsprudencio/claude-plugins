@@ -368,7 +368,7 @@ cmd_remote() {
 
 cmd_chroma_start() {
     local data_path port pidfile logfile
-    data_path=$(read_memory_key "chroma_data_path" "$HOME/.jarvis/memory_db")
+    data_path=$(read_memory_key "chroma_data_path" "$HOME/.jarvis/db")
     data_path="${data_path/#\~/$HOME}"
     port=$(read_memory_key "chroma_port" "8743")
     pidfile="$JARVIS_HOME/state/chroma.pid"

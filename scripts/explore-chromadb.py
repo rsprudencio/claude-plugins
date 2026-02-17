@@ -346,8 +346,8 @@ def main():
     parser = argparse.ArgumentParser(description="Interactive ChromaDB Explorer")
     parser.add_argument(
         "--db-path",
-        default="~/.jarvis/memory_db",
-        help="Path to ChromaDB database (default: ~/.jarvis/memory_db)",
+        default="~/.jarvis/db",
+        help="Path to ChromaDB database (default: ~/.jarvis/db)",
     )
     parser.add_argument("--list", action="store_true", help="List all collections")
     parser.add_argument(

@@ -17,7 +17,7 @@ Your configuration is stored in `~/.jarvis/config.json`. Read it to know:
 - `modules`: Which features are enabled (pkm, todoist, git_audit)
 - `paths`: Configurable vault directory paths (use `jarvis_resolve_path` / `jarvis_list_paths` tools)
 - `memory.chroma_host` / `memory.chroma_port`: ChromaDB server connection (default: `localhost:8743`)
-- `memory.chroma_data_path`: ChromaDB server data directory (default: `~/.jarvis/memory_db/`)
+- `memory.chroma_data_path`: ChromaDB server data directory (default: `~/.jarvis/db/`)
 - `memory.auto_extract`: Auto-Extract configuration (mode, thresholds). Configure via `/jarvis-settings`
 - `memory.pattern_detection`: Background pattern detection (enabled, scan interval, thresholds)
 - `promotion`: Tier 2 → Tier 1 promotion criteria (importance, retrieval count, age)
@@ -235,7 +235,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 
 ### How It Works
 - Vault `.md` and `.org` files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
-- ChromaDB server stores data at `memory.chroma_data_path` (default: `~/.jarvis/memory_db/`, outside the vault to avoid Obsidian Sync pollution)
+- ChromaDB server stores data at `memory.chroma_data_path` (default: `~/.jarvis/db/`, outside the vault to avoid Obsidian Sync pollution)
 - `/jarvis-recall` finds related content by meaning, not just keywords (returns both Tier 1 and Tier 2)
 - Journal entries are auto-indexed after creation (via `jarvis_index_file`)
 - Explorer agent uses semantic pre-search before keyword search

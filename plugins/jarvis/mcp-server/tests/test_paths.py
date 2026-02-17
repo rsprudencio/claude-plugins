@@ -56,7 +56,7 @@ class TestGetPathAbsolute:
         mock_config.delete_key("memory")
 
         path = get_path("chroma_data_path")
-        expected = os.path.expanduser("~/.jarvis/memory_db")
+        expected = os.path.expanduser("~/.jarvis/db")
         assert path == expected
 
     def test_project_memories_path_default(self, mock_config):
@@ -155,7 +155,7 @@ class TestGetPathErrors:
     def test_absolute_path_works_without_vault(self, no_config):
         """Absolute paths don't need vault config."""
         path = get_path("chroma_data_path")
-        assert path == os.path.expanduser("~/.jarvis/memory_db")
+        assert path == os.path.expanduser("~/.jarvis/db")
 
 
 class TestGetPathNormalization:
@@ -313,7 +313,7 @@ class TestJarvisHomeEnvVar:
 
         resolved = get_path("chroma_data_path")
         assert str(resolved).startswith(str(jarvis_home))
-        assert "memory_db" in resolved
+        assert resolved.endswith("/db")
 
     def test_chroma_data_path_default_without_env(self, tmp_path, mock_config, monkeypatch):
         """Without JARVIS_HOME, paths should resolve via ~ expansion."""

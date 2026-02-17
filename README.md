@@ -304,7 +304,7 @@ If observations aren't being captured:
 
 If `/recall` returns no results or indexing fails:
 
-1. **Check database**: `ls ~/.jarvis/memory_db/` — should contain ChromaDB files
+1. **Check database**: `ls ~/.jarvis/db/` — should contain ChromaDB files
 2. **Rebuild index**: Run `/memory-index` to re-index all vault files
 3. **Check stats**: Run `/memory-stats` to see document count
 4. **Verify Python packages**: Jarvis uses `chromadb` via uv — should auto-install on first use

@@ -521,8 +521,8 @@ if [ "$SKIP_CONFIG" != true ]; then
     ok "Vault directory ready: $VAULT_PATH"
 
     # Create memory DB directory
-    mkdir -p "$JARVIS_HOME/memory_db"
-    ok "Memory DB directory ready: $JARVIS_HOME/memory_db/"
+    mkdir -p "$JARVIS_HOME/db"
+    ok "Memory DB directory ready: $JARVIS_HOME/db/"
 
     # Write full config with all defaults visible
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -533,7 +533,7 @@ if [ "$SKIP_CONFIG" != true ]; then
   "configured_at": "$TIMESTAMP",
   "version": "$JARVIS_VERSION",
   "memory": {
-    "db_path": "~/.jarvis/memory_db",
+    "db_path": "~/.jarvis/db",
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,
