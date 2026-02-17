@@ -1,8 +1,8 @@
 [project]
 name = "jarvis-core"
-version = "1.33.0"
+version = "1.33.1"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "mcp>=1.0.0",
     "chromadb>=1.5.0",

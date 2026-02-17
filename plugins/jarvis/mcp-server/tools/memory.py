@@ -39,7 +39,7 @@ _chroma_client = None
 _COLLECTION_NAME = "jarvis"
 _BATCH_SIZE = 50
 # Directories to skip during indexing (non-content directories)
-_SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash"}
+_SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
 
 
 def _get_client() -> chromadb.ClientAPI:
@@ -297,7 +297,7 @@ def index_vault(
     indexable_files = []
     for ext in INDEXABLE_EXTENSIONS:
         indexable_files.extend(
-            glob.glob(os.path.join(search_path, "**", f"*{ext}"), recursive=True)
+            glob.glob(os.path.join(search_path, "**", f"*{ext}"), recursive=True, include_hidden=True)
         )
 
     files_indexed = 0

@@ -208,6 +208,48 @@ class TestIndexVault:
 
         mem._chroma_client = None
 
+    def test_index_vault_includes_dot_directories(self, mock_config):
+        """Should index files in dot-prefixed directories like .jarvis/."""
+        import tools.memory as mem
+
+        mem._chroma_client = None
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_memory_db_dotdir")}
+        )
+
+        dot_dir = mock_config.vault_path / ".jarvis" / "strategic"
+        dot_dir.mkdir(parents=True, exist_ok=True)
+        (dot_dir / "test-values.md").write_text("# Test Values\n\nSome strategic content here.")
+
+        result = index_vault(force=True)
+        assert result["success"] is True
+        assert result["files_indexed"] >= 1
+
+        collection = mem._get_collection()
+        results = collection.get(where={"parent_file": ".jarvis/strategic/test-values.md"})
+        assert len(results["ids"]) > 0
+
+        mem._chroma_client = None
+
+    def test_index_vault_skips_serena(self, mock_config):
+        """Should skip .serena directory (deprecated Serena memories)."""
+        import tools.memory as mem
+
+        mem._chroma_client = None
+        mock_config.set(
+            memory={"db_path": str(mock_config.vault_path / ".test_memory_db_serena")}
+        )
+
+        serena_dir = mock_config.vault_path / ".serena" / "memories"
+        serena_dir.mkdir(parents=True, exist_ok=True)
+        (serena_dir / "old-file.md").write_text("# Old Serena Memory\n\nStale content.")
+
+        result = index_vault()
+        assert result["success"] is True
+        assert result["files_skipped"] >= 1
+
+        mem._chroma_client = None
+
 
 class TestIndexFile:
     """Tests for single file indexing."""
