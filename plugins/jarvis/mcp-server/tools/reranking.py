@@ -9,9 +9,11 @@ Applied ONLY to query_vault(). NOT applied to semantic_context() (per-prompt sea
 which has a ~100ms latency budget.
 
 Dependencies: onnxruntime (already via chromadb), tokenizers (~5MB).
-Model: ~23MB ONNX, downloaded on first use to ~/.jarvis/models/cross-encoder/.
+Model: ~92MB ONNX, baked into Docker image at /app/models/cross-encoder/.
+Falls back to download with SHA-256 verification for local dev.
 """
 
+import hashlib
 import logging
 import math
 import os
@@ -31,6 +33,12 @@ _MODEL_FILES = {
     "tokenizer.json": f"{_HF_BASE}/tokenizer.json",
 }
 
+# SHA-256 hashes for integrity verification (HF commit c5ee24cb)
+_MODEL_HASHES = {
+    "model.onnx": "5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a",
+    "tokenizer.json": "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+}
+
 # Thread-safe singleton state
 _lock = threading.Lock()
 _session = None  # onnxruntime.InferenceSession
@@ -39,7 +47,13 @@ _init_failed = False  # Sticky failure flag
 
 
 def _get_model_dir() -> Path:
-    """Return the local model cache directory."""
+    """Return the model directory. Prefers baked-in JARVIS_MODEL_DIR (Docker),
+    falls back to JARVIS_HOME/models/cross-encoder (local dev)."""
+    baked_dir = os.environ.get("JARVIS_MODEL_DIR")
+    if baked_dir:
+        p = Path(baked_dir)
+        if p.is_dir():
+            return p
     jarvis_home = os.environ.get("JARVIS_HOME", str(Path.home() / ".jarvis"))
     return Path(jarvis_home) / "models" / "cross-encoder"
 
@@ -57,13 +71,29 @@ def _download_file(url: str, dest: Path) -> None:
         raise
 
 
+def _verify_file_hash(filepath: Path, expected_hash: str) -> bool:
+    """Verify SHA-256 hash of a file. Returns True if match, False otherwise."""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        while chunk := f.read(8192):
+            sha256.update(chunk)
+    return sha256.hexdigest() == expected_hash
+
+
 def _ensure_model_files(model_dir: Path) -> None:
-    """Download model files if not already present."""
+    """Download model files if not already present, with SHA-256 verification."""
     for filename, url in _MODEL_FILES.items():
         filepath = model_dir / filename
         if not filepath.exists():
             logger.info(f"Downloading {filename} for cross-encoder reranking...")
             _download_file(url, filepath)
+            # Verify hash after download
+            expected = _MODEL_HASHES.get(filename)
+            if expected and not _verify_file_hash(filepath, expected):
+                filepath.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Hash mismatch for {filename}: file may be corrupted or tampered"
+                )
 
 
 def _init_model() -> bool:

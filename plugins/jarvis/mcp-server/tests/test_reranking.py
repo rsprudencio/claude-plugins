@@ -14,6 +14,7 @@ from tools.reranking import (
     _get_model_dir,
     _ensure_model_files,
     _download_file,
+    _verify_file_hash,
 )
 
 
@@ -341,7 +342,9 @@ class TestEnsureModelFiles:
         model_dir = tmp_path / "models"
         model_dir.mkdir()
 
-        with patch("tools.reranking._download_file") as mock_dl:
+        with patch("tools.reranking._download_file") as mock_dl, patch(
+            "tools.reranking._verify_file_hash", return_value=True
+        ):
             with patch(
                 "tools.reranking._MODEL_FILES",
                 {
@@ -368,6 +371,49 @@ class TestEnsureModelFiles:
             ):
                 with pytest.raises(OSError, match="network error"):
                     _ensure_model_files(model_dir)
+
+    def test_hash_mismatch_deletes_file_and_raises(self, tmp_path):
+        """Downloaded file with wrong hash is deleted and RuntimeError raised."""
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+
+        def fake_download(url, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"corrupted model data")
+
+        with patch("tools.reranking._download_file", side_effect=fake_download):
+            with patch(
+                "tools.reranking._MODEL_FILES",
+                {"model.onnx": "http://example.com/model.onnx"},
+            ):
+                with pytest.raises(RuntimeError, match="Hash mismatch"):
+                    _ensure_model_files(model_dir)
+                # File should be deleted after hash mismatch
+                assert not (model_dir / "model.onnx").exists()
+
+    def test_hash_match_keeps_file(self, tmp_path):
+        """Downloaded file with correct hash is kept."""
+        import hashlib
+
+        model_dir = tmp_path / "models"
+        model_dir.mkdir()
+        content = b"valid model content"
+        correct_hash = hashlib.sha256(content).hexdigest()
+
+        def fake_download(url, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
+
+        with patch("tools.reranking._download_file", side_effect=fake_download):
+            with patch(
+                "tools.reranking._MODEL_FILES",
+                {"model.onnx": "http://example.com/model.onnx"},
+            ), patch(
+                "tools.reranking._MODEL_HASHES",
+                {"model.onnx": correct_hash},
+            ):
+                _ensure_model_files(model_dir)
+                assert (model_dir / "model.onnx").exists()
 
 
 class TestDownloadFile:
@@ -422,6 +468,46 @@ class TestGetModelDir:
         with patch.dict("os.environ", {"JARVIS_HOME": str(tmp_path)}):
             model_dir = _get_model_dir()
             assert str(model_dir).startswith(str(tmp_path))
+
+    def test_jarvis_model_dir_takes_precedence(self, tmp_path):
+        """JARVIS_MODEL_DIR env var overrides JARVIS_HOME-based path."""
+        model_dir = tmp_path / "baked-models"
+        model_dir.mkdir()
+        with patch.dict(
+            "os.environ",
+            {"JARVIS_MODEL_DIR": str(model_dir), "JARVIS_HOME": "/should/not/use"},
+        ):
+            result = _get_model_dir()
+            assert result == model_dir
+
+    def test_jarvis_model_dir_nonexistent_falls_back(self, tmp_path):
+        """JARVIS_MODEL_DIR is ignored if directory doesn't exist."""
+        with patch.dict(
+            "os.environ",
+            {"JARVIS_MODEL_DIR": "/nonexistent/path", "JARVIS_HOME": str(tmp_path)},
+        ):
+            result = _get_model_dir()
+            assert str(result).startswith(str(tmp_path))
+
+
+class TestVerifyFileHash:
+    """Tests for SHA-256 file hash verification."""
+
+    def test_correct_hash(self, tmp_path):
+        """Returns True when hash matches."""
+        import hashlib
+
+        filepath = tmp_path / "test.bin"
+        content = b"test content for hashing"
+        filepath.write_bytes(content)
+        expected = hashlib.sha256(content).hexdigest()
+        assert _verify_file_hash(filepath, expected) is True
+
+    def test_wrong_hash(self, tmp_path):
+        """Returns False when hash doesn't match."""
+        filepath = tmp_path / "test.bin"
+        filepath.write_bytes(b"some content")
+        assert _verify_file_hash(filepath, "0" * 64) is False
 
 
 class TestRerankingConfig:
