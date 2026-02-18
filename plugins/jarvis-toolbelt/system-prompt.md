@@ -1,13 +1,24 @@
 # Professional Engineering Toolbelt
 
-A collection of professional engineering skills for software development workflows.
+A collection of professional engineering skills and agents for software development workflows.
+
+## Available Agents
+
+### Security Agent (`jarvis-security-agent`)
+Adversarial security reviewer with 4 explicit modes:
+- **THREAT-MODEL**: Design-level analysis of architecture docs, RFCs, TDDs
+- **CODE-REVIEW**: Implementation-level vulnerability scanning with file:line evidence
+- **CONFIG-AUDIT**: Infrastructure misconfigurations, secrets exposure, permissions
+- **CHANGE-REVIEW**: Delta analysis of PRs and diffs for new attack surface and regressions
+
+Invoked via `/jarvis-toolbelt:jarvis-security-review` or by asking for a security review.
 
 ## Available Skills
 
 ### Security Review (`/jarvis-toolbelt:jarvis-security-review`)
-Structured security review producing a threat model, findings table, and testable acceptance criteria.
+Delegates to the security agent for structured adversarial review.
 - Trigger: "security review", "threat model", "review for vulnerabilities", "security audit"
-- Output: Markdown report with STRIDE threat model, prioritized findings, and security DoD
+- Output: Structured report with findings table, severity ratings, and must-fix checklist
 
 ---
 
