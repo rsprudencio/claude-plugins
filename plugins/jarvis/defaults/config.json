@@ -97,7 +97,14 @@
     "on_promoted_file_deleted": "remove"
   },
   "todoist": {
-    "api_token": ""
+    "api_token": "",
+    "prompt_alerts": {
+      "enabled": false,
+      "sync_interval_seconds": 900,
+      "max_per_category": 3,
+      "api_timeout_seconds": 5,
+      "debug": false
+    }
   },
   "paths": {
     "journal_jarvis": "journal/jarvis",

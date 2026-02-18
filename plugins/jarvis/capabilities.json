@@ -589,6 +589,22 @@
       "on_promoted_file_deleted": { "type": "string", "default": "remove", "options": ["remove", "revert_to_chromadb"], "description": "What to do when a promoted vault file is deleted" }
     },
 
+    "todoist_prompt_alerts": {
+      "_note": "Config path: todoist.prompt_alerts. Background sync loop fetches tasks from Todoist REST API and writes a local JSON cache. The UserPromptSubmit hook reads the cache (~3ms) to inject <todoist-alerts> blocks alongside vault memories.",
+      "enabled": { "type": "boolean", "default": false, "description": "Master switch for Todoist prompt alerts (opt-in)" },
+      "sync_interval_seconds": { "type": "integer", "default": 900, "description": "Seconds between API sync cycles" },
+      "max_per_category": { "type": "integer", "default": 3, "description": "Max tasks shown per alert category in hook output" },
+      "api_timeout_seconds": { "type": "integer", "default": 5, "description": "HTTP timeout for Todoist API calls" },
+      "debug": { "type": "boolean", "default": false, "description": "Enable detailed logging" },
+      "alert_categories": {
+        "overdue": "Tasks with due date before today",
+        "due_today": "Tasks due today (excluding overdue timed tasks)",
+        "inbox_unprocessed": "Inbox tasks with no labels (raw captures)",
+        "scheduled_actions": "Tasks with the jarvis-scheduled label"
+      },
+      "cache_file": "~/.jarvis/state/todoist_cache.json"
+    },
+
     "paths": {
       "_note": "All vault-relative paths are configurable. Use jarvis_resolve_path to resolve at runtime.",
       "vault_relative": {

@@ -10,6 +10,7 @@ to stdout for injection into Claude's context. Silent on errors (exit 0,
 no output) to avoid disrupting the user's conversation.
 """
 import json
+import os
 import sys
 import time
 import xml.sax.saxutils as saxutils
@@ -311,35 +312,66 @@ def main():
         sys.exit(0)
 
     matches = result.get("matches", [])
-    if not matches:
+    output_parts = []
+
+    if matches:
+        # Format vault/tier2 memories
+        output_parts.append(_format_memories(matches, result.get("query_ms", 0)))
+
+        # Deferred retrieval bump: POST surfaced IDs to MCP server (fire-and-forget)
+        surfaced_ids = result.get("surfaced_ids", [])
+        if surfaced_ids:
+            _post_bump_retrieval(surfaced_ids, config)
+
+        # JSONL telemetry (always on, lightweight)
+        _write_telemetry(prompt_text, query_ms, matches, result)
+
+        if debug:
+            n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
+            n_tier2 = len(matches) - n_vault
+            budget = result.get("budget_used", {})
+            sources = " ".join(f'{m["source"]}({m["relevance"]})' for m in matches)
+            _debug_log(
+                "FOUND",
+                f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
+                f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
+                prompt_text,
+                injected=output_parts[0],
+            )
+    else:
         if debug:
             _debug_log("EMPTY", f"{query_ms}ms | 0 results", prompt_text)
-        sys.exit(0)
 
-    # Format output (Claude sees this via stdout)
-    output = _format_memories(matches, result.get("query_ms", 0))
+    # Todoist alerts (independent of vault matches — always check)
+    try:
+        from todoist_check import get_todoist_alerts as _get_todoist_alerts
 
-    # Deferred retrieval bump: POST surfaced IDs to MCP server (fire-and-forget)
-    surfaced_ids = result.get("surfaced_ids", [])
-    if surfaced_ids:
-        _post_bump_retrieval(surfaced_ids, config)
+        todoist_cfg = config.get("todoist_prompt_alerts", {})
+        if not todoist_cfg:
+            # Fall back to reading from full config
+            try:
+                from tools.config import get_config as _get_config
 
-    # JSONL telemetry (always on, lightweight)
-    _write_telemetry(prompt_text, query_ms, matches, result)
+                todoist_cfg = _get_config().get("todoist", {}).get("prompt_alerts", {})
+            except Exception:
+                todoist_cfg = {}
 
-    if debug:
-        n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
-        n_tier2 = len(matches) - n_vault
-        budget = result.get("budget_used", {})
-        sources = " ".join(f'{m["source"]}({m["relevance"]})' for m in matches)
-        _debug_log(
-            "FOUND",
-            f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
-            f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
-            prompt_text,
-            injected=output,
-        )
+        if todoist_cfg.get("enabled", False):
+            cache_path = str(Path.home() / ".jarvis" / "state" / "todoist_cache.json")
+            # Respect JARVIS_HOME env var for Docker
+            jarvis_home = os.environ.get("JARVIS_HOME")
+            if jarvis_home:
+                cache_path = str(Path(jarvis_home) / "state" / "todoist_cache.json")
+            alerts_xml = _get_todoist_alerts(
+                cache_path,
+                max_per_category=todoist_cfg.get("max_per_category", 3),
+            )
+            if alerts_xml:
+                output_parts.append(alerts_xml)
+    except Exception:
+        pass  # Never fail the hook
 
+    output = "\n".join(output_parts)
     if output:
         print(output)
 

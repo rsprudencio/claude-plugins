@@ -424,6 +424,30 @@ def get_telemetry_config() -> dict:
     return {**defaults, **memory_config.get("telemetry", {})}
 
 
+def get_todoist_prompt_alerts_config() -> dict:
+    """Get Todoist per-prompt alert configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for Todoist prompt alerts (default False)
+    - sync_interval_seconds: Seconds between API syncs (default 900)
+    - max_per_category: Max tasks to show per alert type (default 3)
+    - api_timeout_seconds: HTTP timeout for Todoist API calls (default 5)
+    - debug: Enable detailed logging (default False)
+
+    Config lives at todoist.prompt_alerts in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {
+        "enabled": False,
+        "sync_interval_seconds": 900,
+        "max_per_category": 3,
+        "api_timeout_seconds": 5,
+        "debug": False,
+    }
+    todoist_config = config.get("todoist", {}).get("prompt_alerts", {})
+    return {**defaults, **todoist_config}
+
+
 def get_worklog_config() -> dict:
     """Get worklog configuration with defaults.
 

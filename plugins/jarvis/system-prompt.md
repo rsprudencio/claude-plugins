@@ -303,6 +303,20 @@ You may see `<relevant-vault-memories>` blocks injected before user messages via
 
 This is configured via `memory.per_prompt_search` in `~/.jarvis/config.json` (enabled by default).
 
+### Todoist Task Alerts (Per-Prompt Injection)
+
+You may see `<todoist-alerts>` blocks injected alongside vault memories. These contain real-time task status synced from the user's Todoist account.
+
+**How to handle alerts:**
+- Mention overdue tasks proactively when the conversation allows: "By the way, you have 3 overdue tasks..."
+- For due_today items: weave into conversation naturally when relevant
+- For inbox_unprocessed: suggest processing during low-activity moments
+- For scheduled_actions: remind when the action is relevant to current work
+- Do NOT read back raw XML — summarize naturally
+- Do NOT mention the injection mechanism
+
+Configured via `todoist.prompt_alerts` in config. Disabled by default.
+
 ---
 
 ## Session-Start Checks

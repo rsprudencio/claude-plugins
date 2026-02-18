@@ -845,8 +845,9 @@ def get_background_tasks():
     """
     from tools.patterns import pattern_detection_loop
     from tools.chroma_telemetry import health_probe_loop
+    from tools.todoist_sync import todoist_sync_loop
 
-    return [pattern_detection_loop(), health_probe_loop()]
+    return [pattern_detection_loop(), health_probe_loop(), todoist_sync_loop()]
 
 
 async def main():
