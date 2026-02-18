@@ -16,8 +16,43 @@ from .memory import _get_collection
 from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
-from .config import get_expansion_config, get_per_prompt_config, get_reranking_config
+from .config import get_expansion_config, get_per_prompt_config, get_reranking_config, get_staleness_config
 from .format_support import detect_format
+from .staleness import check_staleness, deserialize_mtimes
+
+
+def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
+    """In-place annotate raw query entries with staleness information.
+
+    Only processes entries in the obs:: namespace (auto-extracted observations).
+    Reads file_mtimes from already-fetched metadata and compares against current
+    filesystem state. No additional ChromaDB operations.
+
+    Args:
+        raw_entries: List of entry dicts with 'doc_id', 'metadata', 'relevance' keys.
+        staleness_config: Config dict with 'penalty' (float) key.
+    """
+    penalty = staleness_config.get("penalty", 0.15)
+
+    for entry in raw_entries:
+        doc_id = entry.get("doc_id", "")
+        if not doc_id.startswith("obs::"):
+            continue
+
+        meta = entry.get("metadata", {})
+        mtimes_json = meta.get("file_mtimes", "")
+        if not mtimes_json:
+            continue
+
+        recorded = deserialize_mtimes(mtimes_json)
+        if not recorded:
+            continue
+
+        result = check_staleness(recorded)
+        if result["is_stale"]:
+            entry["is_stale"] = True
+            entry["staleness_info"] = result
+            entry["relevance"] = max(0.0, entry["relevance"] - penalty)
 
 
 def _detect_format_from_entry(entry: dict) -> str:
@@ -313,6 +348,11 @@ def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -
             }
         )
 
+    # Staleness annotation: penalize observations whose tracked files changed
+    staleness_config = get_staleness_config()
+    if staleness_config.get("enabled", True):
+        _annotate_staleness(raw_entries, staleness_config)
+
     # Chunk deduplication: keep best-relevance chunk per parent_file
     best_per_file = {}
     for entry in raw_entries:
@@ -383,6 +423,11 @@ def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -
         }
         if chunk_heading:
             result_entry["chunk_heading"] = chunk_heading
+        if entry.get("is_stale"):
+            result_entry["stale"] = True
+            stale_info = entry.get("staleness_info", {})
+            if stale_info.get("stale_files"):
+                result_entry["stale_files"] = stale_info["stale_files"]
         results.append(result_entry)
         all_ids.append(doc_id)
 
@@ -533,6 +578,11 @@ def semantic_context(
             }
         )
 
+    # Staleness annotation: penalize observations whose tracked files changed
+    staleness_config = get_staleness_config()
+    if staleness_config.get("enabled", True):
+        _annotate_staleness(raw_entries, staleness_config)
+
     # Chunk deduplication: keep best-relevance chunk per parent_file
     best_per_file = {}
     for entry in raw_entries:
@@ -621,6 +671,8 @@ def semantic_context(
         }
         if chunk_heading:
             match["heading"] = chunk_heading
+        if entry.get("is_stale"):
+            match["stale"] = True
         matches.append(match)
 
     query_ms = round((time.time() - start) * 1000, 1)

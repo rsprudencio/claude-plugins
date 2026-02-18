@@ -501,14 +501,6 @@ chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
 echo ""
 
-# Copy service helper script
-TRANSPORT_SRC="$PLUGIN_DIR/scripts/jarvis-transport.sh"
-TRANSPORT_DEST="$JARVIS_HOME/jarvis-transport.sh"
-if [ -f "$TRANSPORT_SRC" ]; then
-    cp "$TRANSPORT_SRC" "$TRANSPORT_DEST"
-    chmod +x "$TRANSPORT_DEST"
-    ok "Service helper: $TRANSPORT_DEST"
-fi
 echo ""
 
 

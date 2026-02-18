@@ -68,6 +68,10 @@
       "divergence_threshold": 0.4,
       "max_candidates": 10
     },
+    "staleness": {
+      "enabled": true,
+      "penalty": 0.15
+    },
     "telemetry": {
       "enabled": true,
       "log_reads": false,

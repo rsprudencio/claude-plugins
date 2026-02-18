@@ -197,6 +197,8 @@ def _format_memories(matches: list, query_ms: float) -> str:
             attrs.append(f'heading="{saxutils.escape(match["heading"])}"')
         if display_mode == "reference":
             attrs.append('ref="vault"')
+        if match.get("stale"):
+            attrs.append('stale="true"')
 
         content = saxutils.escape(match.get("content", ""))
         lines.append(f'<memory {" ".join(attrs)}>')

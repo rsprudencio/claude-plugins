@@ -1,0 +1,19 @@
+{
+  "name": "jarvis-toolbelt",
+  "description": "General-purpose professional engineering skills - security review, TDD workflows, and more",
+  "version": "1.0.0",
+  "author": {
+    "name": "Raphael Prudencio"
+  },
+  "homepage": "https://github.com/rsprudencio/jarvis",
+  "repository": "https://github.com/rsprudencio/jarvis",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "jarvis",
+    "toolbelt",
+    "security-review",
+    "tdd",
+    "threat-model",
+    "engineering"
+  ]
+}

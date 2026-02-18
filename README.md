@@ -139,9 +139,9 @@ Jarvis delegates work to specialized agents that run in isolated context windows
 - **Audit Agent** (Haiku) — JARVIS protocol git commits, history queries, rollbacks
 - **Explorer Agent** (Haiku) — Vault-wide search with regex, date filtering, semantic pre-search
 
-### 21 MCP Tools
+### 22 MCP Tools
 
-Python-based MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [docs/capabilities.json](docs/capabilities.json) for the full reference.
+Python-based MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json) for the full reference.
 
 ---
 
@@ -155,7 +155,7 @@ Your vault files (`.md` or `.org`) and strategic memories. Git-tracked, visible 
 **Tier 2 — Ephemeral (Auto-Generated)**
 Observations captured from your conversations, patterns, summaries. Lives in ChromaDB only. Review with `/jarvis-promote` — valuable items get promoted to permanent vault files.
 
-**Auto-Extract** runs passively after each conversation turn, using Haiku to identify insights worth remembering. Configurable modes: `background` (recommended), `background-api`, `background-cli`, or `disabled`.
+**Auto-Extract** runs passively after each conversation turn, using Haiku to identify insights worth remembering. Set to `background` (recommended) or `disabled` in `/jarvis-settings`.
 
 ---
 
@@ -183,8 +183,6 @@ Jarvis works on **macOS, Linux, Windows, and WSL** with automatic platform detec
 
 **Git**: Install [Git for Windows](https://git-scm.com/download/win) which includes Git Bash - a Unix-like terminal for Windows.
 
-**uv**: Download installer from [astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
-
 **Shell integration**: The `jarvis` executable is installed to `~/.local/bin/` and works in any shell (Bash, Zsh, Git Bash, etc.).
 
 ### PATH Enrichment
@@ -192,8 +190,7 @@ Jarvis works on **macOS, Linux, Windows, and WSL** with automatic platform detec
 Jarvis automatically checks common install locations even if they're not in your `PATH`:
 
 **Unix (macOS/Linux):**
-- `~/.local/bin` — pip user installs, uv
-- `~/.cargo/bin` — Rust tools (alternative uv install)
+- `~/.local/bin` — pip user installs
 
 **Windows:**
 - `%LOCALAPPDATA%\Programs\Python` — Microsoft Store Python
@@ -229,10 +226,10 @@ If `install.sh` or `check-requirements` reports missing prerequisites:
 - **Linux**: `sudo apt install python3` (Debian/Ubuntu) or `sudo yum install python3` (RedHat/CentOS)
 - **Windows**: Install from [Microsoft Store](https://www.microsoft.com/store/productId/9NCVDN91XZQP) or [python.org](https://python.org/downloads/)
 
-**"uv not found"**
-- **macOS/Linux**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **Windows**: Download from [astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
-- After install, restart your terminal or run `export PATH="$HOME/.local/bin:$PATH"`
+**"Docker not found"**
+- Install Docker Desktop from [docs.docker.com/get-docker/](https://docs.docker.com/get-docker/)
+- Ensure Docker Compose is included (it is in Docker Desktop)
+- After install, restart your terminal
 
 **"git not found"**
 - **macOS**: `xcode-select --install` or `brew install git`
@@ -263,9 +260,7 @@ If `/jarvis:jarvis` or `/jarvis-settings` doesn't work:
 
 If observations aren't being captured:
 
-1. **Check mode**: Run `/jarvis-settings` → Auto-Extract Configuration
-   - `background` mode requires Claude API key
-   - `background-cli` mode requires Claude CLI installed (`claude --version`)
+1. **Check mode**: Run `/jarvis-settings` → Auto-Extract Configuration. Mode should be `background` (requires Anthropic API key; auto-falls back to Claude CLI).
 2. **Check logs**: Look for "Auto-extract" in Claude Code debug logs
 3. **Verify hooks**: `ls ~/.claude/plugins/cache/jarvis-plugins/jarvis/*/hooks/` should show `Stop.md`
 
@@ -274,9 +269,9 @@ If observations aren't being captured:
 If `/recall` returns no results or indexing fails:
 
 1. **Check database**: `ls ~/.jarvis/db/` — should contain ChromaDB files
-2. **Rebuild index**: Run `/memory-index` to re-index all vault files
+2. **Rebuild index**: Run `/jarvis-settings` → "Re-index vault"
 3. **Check stats**: Run `/memory-stats` to see document count
-4. **Verify Python packages**: Jarvis uses `chromadb` via uv — should auto-install on first use
+4. **Verify container running**: ChromaDB runs inside the Docker container — check with `docker compose -f ~/.jarvis/docker-compose.yml ps`
 
 ### Windows-Specific Issues
 
@@ -312,7 +307,7 @@ If `/recall` returns no results or indexing fails:
 │   ├── jarvis/                   # Core plugin
 │   │   ├── agents/               # Journal, audit, explorer agents
 │   │   ├── skills/               # 9 core skills
-│   │   ├── mcp-server/           # Python MCP server (21 tools, 652 tests)
+│   │   ├── mcp-server/           # Python MCP server (22 tools, 1398 tests)
 │   │   ├── hooks/                # Auto-extract Stop hook
 │   │   └── system-prompt.md      # Jarvis identity
 │   ├── jarvis-todoist/           # Todoist extension
@@ -324,15 +319,15 @@ If `/recall` returns no results or indexing fails:
 ### Running Tests
 
 ```bash
-cd plugins/jarvis/mcp-server && uv run pytest -v
+cd plugins/jarvis/mcp-server && python3 -m pytest -v
 ```
 
-652 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
+1398 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
 
 ### Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** — Development conventions and version history
-- **[docs/capabilities.json](docs/capabilities.json)** — Full capability reference
+- **[plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json)** — Full capability reference (AI-first)
 
 ---
 
@@ -344,4 +339,4 @@ See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**v1.23.0** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)
+**v1.38.0** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)

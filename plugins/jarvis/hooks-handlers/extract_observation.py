@@ -1178,6 +1178,11 @@ def store_observation(
         extra["git_branch"] = git_branch
     if relevant_files:
         extra["relevant_files"] = ",".join(relevant_files)
+        from tools.staleness import record_file_mtimes, serialize_mtimes
+
+        mtimes = record_file_mtimes(relevant_files)
+        if mtimes:
+            extra["file_mtimes"] = serialize_mtimes(mtimes)
     if scope:
         extra["scope"] = scope
     if session_id:

@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 from tools.system_check import (
     check_python_version,
-    check_uv,
+    check_docker,
     check_git,
     check_platform_specific,
     run_system_check,
@@ -36,63 +36,65 @@ class TestCheckPythonVersion:
         assert details["current"] == "3.9.5"
 
 
-class TestCheckUV:
-    """Tests for uv/uvx checking."""
-
-    @patch("tools.system_check.which")
-    def test_check_uv_uvx_found(self, mock_which):
-        """Test uvx found."""
-        mock_which.side_effect = lambda cmd, enriched: (
-            "/usr/local/bin/uvx" if cmd == "uvx" else None
-        )
-
-        is_valid, message, details = check_uv()
-        assert is_valid == True
-        assert "✓ uvx found" in message
-        assert details["uvx_path"] == "/usr/local/bin/uvx"
-
-    @patch("tools.system_check.which")
-    def test_check_uv_only_uv_found(self, mock_which):
-        """Test only uv found (uvx should be available too)."""
-        mock_which.side_effect = lambda cmd, enriched: (
-            "/usr/local/bin/uv" if cmd == "uv" else None
-        )
-
-        is_valid, message, details = check_uv()
-        assert is_valid == True
-        assert "✓ uv found" in message
-        assert "uvx should be available" in message
-        assert details["uv_path"] == "/usr/local/bin/uv"
-
-    @patch("tools.system_check.which")
-    def test_check_uv_not_found(self, mock_which):
-        """Test uv not found."""
-        mock_which.return_value = None
-
-        is_valid, message, details = check_uv()
-        assert is_valid == False
-        assert "✗ uv" in message
-        assert "not found" in message
-        assert details["uv_path"] is None
-        assert details["uvx_path"] is None
+class TestCheckDocker:
+    """Tests for Docker with Compose checking."""
 
     @patch("tools.system_check.which")
     @patch("subprocess.run")
-    def test_check_uv_with_version(self, mock_run, mock_which):
-        """Test uvx version extraction."""
-        mock_which.side_effect = lambda cmd, enriched: (
-            "/usr/local/bin/uvx" if cmd == "uvx" else None
-        )
+    def test_check_docker_found(self, mock_run, mock_which):
+        """Test Docker with Compose found."""
+        mock_which.return_value = "/usr/local/bin/docker"
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "uv 0.9.30 (Homebrew 2026-02-04)"
-        mock_run.return_value = mock_result
+        def run_side_effect(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            if "compose" in cmd:
+                result.stdout = "Docker Compose version v2.24.5"
+            else:
+                result.stdout = "Docker version 25.0.3, build 4debf41"
+            return result
 
-        is_valid, message, details = check_uv()
+        mock_run.side_effect = run_side_effect
+
+        is_valid, message, details = check_docker()
         assert is_valid == True
-        assert "version" in details
-        assert "0.9.30" in details["version"]
+        assert "✓ Docker with Compose found" in message
+        assert details["docker_path"] == "/usr/local/bin/docker"
+        assert details["compose_available"] == True
+
+    @patch("tools.system_check.which")
+    def test_check_docker_not_found(self, mock_which):
+        """Test Docker not found."""
+        mock_which.return_value = None
+
+        is_valid, message, details = check_docker()
+        assert is_valid == False
+        assert "not found" in message
+        assert details["docker_path"] is None
+
+    @patch("tools.system_check.which")
+    @patch("subprocess.run")
+    def test_check_docker_no_compose(self, mock_run, mock_which):
+        """Test Docker found but Compose plugin missing."""
+        mock_which.return_value = "/usr/local/bin/docker"
+
+        def run_side_effect(cmd, **kwargs):
+            result = MagicMock()
+            if "compose" in cmd:
+                result.returncode = 1
+                result.stdout = ""
+            else:
+                result.returncode = 0
+                result.stdout = "Docker version 25.0.3"
+            return result
+
+        mock_run.side_effect = run_side_effect
+
+        is_valid, message, details = check_docker()
+        assert is_valid == False
+        assert "Compose" in message
+        assert details["docker_path"] == "/usr/local/bin/docker"
+        assert details["compose_available"] == False
 
 
 class TestCheckGit:
@@ -184,7 +186,7 @@ class TestRunSystemCheck:
 
         details = result["details"]
         assert "python" in details
-        assert "uv" in details
+        assert "docker" in details
         assert "git" in details
         assert "platform" in details
 
@@ -194,18 +196,22 @@ class TestRunSystemCheck:
 
         summary = result["summary"]
         assert "python" in summary
-        assert "uv" in summary
+        assert "docker" in summary
         assert "git" in summary
 
     @patch("tools.system_check.check_python_version")
-    @patch("tools.system_check.check_uv")
+    @patch("tools.system_check.check_docker")
     @patch("tools.system_check.check_git")
     def test_run_system_check_healthy_when_all_pass(
-        self, mock_git, mock_uv, mock_python
+        self, mock_git, mock_docker, mock_python
     ):
         """Test healthy=True when all critical checks pass."""
         mock_python.return_value = (True, "✓ Python 3.11.6", {"current": "3.11.6"})
-        mock_uv.return_value = (True, "✓ uvx found", {"uvx_path": "/usr/bin/uvx"})
+        mock_docker.return_value = (
+            True,
+            "✓ Docker with Compose found",
+            {"docker_path": "/usr/bin/docker", "compose_available": True},
+        )
         mock_git.return_value = (True, "✓ git found", {"git_path": "/usr/bin/git"})
 
         result = run_system_check()
@@ -213,17 +219,17 @@ class TestRunSystemCheck:
         assert len(result["critical_issues"]) == 0
 
     @patch("tools.system_check.check_python_version")
-    @patch("tools.system_check.check_uv")
+    @patch("tools.system_check.check_docker")
     @patch("tools.system_check.check_git")
     def test_run_system_check_unhealthy_when_check_fails(
-        self, mock_git, mock_uv, mock_python
+        self, mock_git, mock_docker, mock_python
     ):
         """Test healthy=False when any critical check fails."""
         mock_python.return_value = (True, "✓ Python 3.11.6", {"current": "3.11.6"})
-        mock_uv.return_value = (
+        mock_docker.return_value = (
             False,
-            "✗ uv not found",
-            {"uv_path": None, "uvx_path": None},
+            "✗ Docker not found",
+            {"docker_path": None, "compose_available": False},
         )
         mock_git.return_value = (True, "✓ git found", {"git_path": "/usr/bin/git"})
 
@@ -254,13 +260,13 @@ class TestFormatCheckResult:
         assert "Platform:" in output
         assert "Machine:" in output
 
-    @patch("tools.system_check.check_uv")
-    def test_format_check_result_with_issues(self, mock_uv):
+    @patch("tools.system_check.check_docker")
+    def test_format_check_result_with_issues(self, mock_docker):
         """Test formatting when there are critical issues."""
-        mock_uv.return_value = (
+        mock_docker.return_value = (
             False,
-            "✗ uv not found",
-            {"uv_path": None, "uvx_path": None},
+            "✗ Docker not found",
+            {"docker_path": None, "compose_available": False},
         )
 
         result = run_system_check()

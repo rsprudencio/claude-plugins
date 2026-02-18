@@ -52,7 +52,7 @@ version: ## Show current plugin version
 
 test: ## Run MCP server pytest suite
 	@echo "$(CYAN)Running tests...$(NC)"
-	cd plugins/jarvis/mcp-server && uv run pytest tests/ -x -q
+	cd plugins/jarvis/mcp-server && python3 -m pytest tests/ -x -q
 	@echo "$(GREEN)✓ Tests passed$(NC)"
 
 bump: ## Bump version (VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic])
@@ -95,7 +95,7 @@ restart: ## Restart Docker container via compose
 		echo "$(GREEN)✓ Container healthy$(NC)" || \
 		echo "$(RED)✗ Health check failed$(NC)"
 
-reinstall: ## Reinstall all 3 Claude plugins (CLAUDE_DIR= required)
+reinstall: ## Reinstall all 4 Claude plugins (CLAUDE_DIR= required)
 	@if [ -z "$(CLAUDE_DIR)" ]; then \
 		echo "$(RED)Error: CLAUDE_DIR is required$(NC)"; \
 		echo "  make reinstall CLAUDE_DIR=~/.claude"; \
@@ -105,15 +105,15 @@ reinstall: ## Reinstall all 3 Claude plugins (CLAUDE_DIR= required)
 	@echo "$(CYAN)Reinstalling plugins...$(NC)"
 	@_dir=$$(eval echo "$(CLAUDE_DIR)"); \
 	echo "  Config dir: $$_dir"; \
-	unset CLAUDECODE; \
-	export CLAUDE_CONFIG_DIR="$$_dir"; \
-	claude plugin marketplace update && \
-	claude plugin uninstall jarvis@jarvis-plugins 2>/dev/null; \
-	claude plugin uninstall jarvis-todoist@jarvis-plugins 2>/dev/null; \
-	claude plugin uninstall jarvis-strategic@jarvis-plugins 2>/dev/null; \
-	claude plugin install jarvis@jarvis-plugins && \
-	claude plugin install jarvis-todoist@jarvis-plugins && \
-	claude plugin install jarvis-strategic@jarvis-plugins
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin marketplace update && \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin uninstall jarvis@jarvis-plugins 2>/dev/null; \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin uninstall jarvis-todoist@jarvis-plugins 2>/dev/null; \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin uninstall jarvis-strategic@jarvis-plugins 2>/dev/null; \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin uninstall jarvis-toolbelt@jarvis-plugins 2>/dev/null; \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin install jarvis@jarvis-plugins && \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin install jarvis-todoist@jarvis-plugins && \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin install jarvis-strategic@jarvis-plugins && \
+	env -u CLAUDECODE CLAUDE_CONFIG_DIR="$$_dir" claude plugin install jarvis-toolbelt@jarvis-plugins
 	@echo ""
 	@echo "$(GREEN)✓ All plugins reinstalled$(NC)"
 	@echo "$(YELLOW)⚠ RESTART CLAUDE CODE to apply changes$(NC)"

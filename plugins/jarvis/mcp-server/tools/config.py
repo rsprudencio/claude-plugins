@@ -348,6 +348,21 @@ def get_conflict_detection_config() -> dict:
     return {**defaults, **memory_config.get("conflict_detection", {})}
 
 
+def get_staleness_config() -> dict:
+    """Get observation staleness tracking configuration with defaults.
+
+    Returns config dict with:
+    - enabled: Master switch for staleness detection (default True)
+    - penalty: Relevance score penalty applied to stale observations (default 0.15)
+
+    Config lives at memory.staleness in ~/.jarvis/config.json.
+    """
+    config = get_config()
+    defaults = {"enabled": True, "penalty": 0.15}
+    memory_config = config.get("memory", {})
+    return {**defaults, **memory_config.get("staleness", {})}
+
+
 def get_pattern_detection_config() -> dict:
     """Get pattern detection configuration with defaults.
 

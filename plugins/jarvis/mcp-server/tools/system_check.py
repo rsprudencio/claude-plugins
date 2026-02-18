@@ -46,42 +46,65 @@ def check_python_version() -> Tuple[bool, str, Dict]:
     return is_valid, message, details
 
 
-def check_uv() -> Tuple[bool, str, Dict]:
-    """Check if uv/uvx is available.
+def check_docker() -> Tuple[bool, str, Dict]:
+    """Check if Docker with Compose is available.
 
     Returns:
         (is_valid, message, details)
     """
-    uv_path = which("uv", enriched=True)
-    uvx_path = which("uvx", enriched=True)
+    docker_path = which("docker", enriched=True)
 
     details = {
-        "uv_path": uv_path,
-        "uvx_path": uvx_path,
-        "required_for": "MCP server execution",
+        "docker_path": docker_path,
+        "compose_available": False,
+        "required_for": "MCP server execution (Docker container)",
     }
 
-    # Get version if available
-    if uvx_path:
-        try:
-            result = subprocess.run(
-                [uvx_path, "--version"], capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                version = extract_version(result.stdout)
-                if version:
-                    details["version"] = str(version)
-                else:
-                    details["version"] = result.stdout.strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
+    if not docker_path:
+        return False, format_error_message("docker", "not found on PATH"), details
 
-    if uvx_path:
-        return True, f"✓ uvx found at {uvx_path}", details
-    elif uv_path:
-        return True, f"✓ uv found at {uv_path} (uvx should be available)", details
+    # Check docker compose
+    try:
+        result = subprocess.run(
+            [docker_path, "compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            details["compose_available"] = True
+            version = extract_version(result.stdout)
+            if version:
+                details["compose_version"] = str(version)
+            else:
+                details["compose_version"] = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Get docker version
+    try:
+        result = subprocess.run(
+            [docker_path, "--version"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            version = extract_version(result.stdout)
+            if version:
+                details["version"] = str(version)
+            else:
+                details["version"] = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    if details["compose_available"]:
+        return True, f"✓ Docker with Compose found at {docker_path}", details
     else:
-        return False, format_error_message("uv", "not found on PATH"), details
+        return (
+            False,
+            format_error_message(
+                "docker", "found but Compose plugin missing"
+            ),
+            details,
+        )
 
 
 def check_git() -> Tuple[bool, str, Dict]:
@@ -189,7 +212,7 @@ def run_system_check() -> Dict:
     """
     critical_checks = [
         ("python", check_python_version()),
-        ("uv", check_uv()),
+        ("docker", check_docker()),
         ("git", check_git()),
     ]
 
@@ -238,7 +261,10 @@ def run_system_check() -> Dict:
         "details": details,
         "summary": {
             "python": details["python"]["current"],
-            "uv": bool(details["uv"]["uvx_path"] or details["uv"]["uv_path"]),
+            "docker": bool(
+                details["docker"]["docker_path"]
+                and details["docker"]["compose_available"]
+            ),
             "git": bool(details["git"]["git_path"]),
         },
     }
@@ -264,7 +290,7 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
 
     # Critical requirements
     lines.append("Critical Requirements:")
-    for name in ["python", "uv", "git"]:
+    for name in ["python", "docker", "git"]:
         if name in result["details"]:
             check_details = result["details"][name]
             if name == "python":
@@ -274,13 +300,18 @@ def format_check_result(result: Dict, verbose: bool = False) -> str:
                     else "✗"
                 )
                 lines.append(f"  {status} Python {check_details['current']}")
-            elif name == "uv":
-                if check_details["uvx_path"]:
-                    lines.append(f"  ✓ uvx: {check_details['uvx_path']}")
-                elif check_details["uv_path"]:
-                    lines.append(f"  ✓ uv: {check_details['uv_path']}")
+            elif name == "docker":
+                if check_details["docker_path"] and check_details["compose_available"]:
+                    compose_ver = check_details.get("compose_version", "unknown")
+                    lines.append(
+                        f"  ✓ Docker: {check_details['docker_path']} (Compose {compose_ver})"
+                    )
+                elif check_details["docker_path"]:
+                    lines.append(
+                        f"  ✗ Docker: found but Compose missing"
+                    )
                 else:
-                    lines.append(f"  ✗ uv/uvx: not found")
+                    lines.append(f"  ✗ Docker: not found")
             elif name == "git":
                 if check_details["git_path"]:
                     version = check_details.get("version", "unknown")

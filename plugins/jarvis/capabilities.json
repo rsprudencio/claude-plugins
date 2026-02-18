@@ -1,7 +1,7 @@
 {
   "$schema": "jarvis-capabilities/v2",
   "description": "AI-first reference for Jarvis plugin capabilities. Designed for Jarvis to self-reference when answering user questions about features, workflows, and best practices.",
-  "last_updated": "2026-02-14",
+  "last_updated": "2026-02-18",
 
   "identity": {
     "name": "Jarvis",
@@ -17,19 +17,19 @@
 
   "plugins": {
     "jarvis": {
-      "version": "1.29.0",
+      "version": "1.38.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract, pattern detection",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-core", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
     "jarvis-todoist": {
-      "version": "1.5.1",
+      "version": "1.5.4",
       "description": "Todoist integration via official SDK (local stdio MCP, no external HTTP dependency)",
       "provides": ["agents/todoist", "skills/todoist", "mcp/todoist-api"],
       "requires": ["jarvis"]
     },
     "jarvis-strategic": {
-      "version": "1.1.0",
+      "version": "1.1.1",
       "description": "Strategic analysis, briefings, pattern detection, summaries",
       "provides": ["skills/strategic"],
       "requires": ["jarvis"]
@@ -255,7 +255,7 @@
   },
 
   "mcp_tools": {
-    "_note": "Provided by jarvis-core MCP server. 21 tools across 6 categories.",
+    "_note": "Provided by jarvis-core MCP server. 22 tools across 6 categories.",
 
     "unified_content_api": {
       "_note": "Single entry points for all content operations. Routes automatically by parameter.",
@@ -429,9 +429,7 @@
       "handler": "stop-extract.sh → extract_observation.py (background)",
       "modes": {
         "disabled": "No extraction, zero overhead",
-        "background": "Smart fallback: tries Anthropic API first, falls back to Claude CLI",
-        "background-api": "Force Anthropic SDK (requires ANTHROPIC_API_KEY)",
-        "background-cli": "Force Claude CLI via OAuth"
+        "background": "Smart fallback: tries Anthropic API first, falls back to Claude CLI"
       },
       "thresholds": {
         "min_turn_chars": "200 — minimum total text in a turn to trigger extraction"
@@ -517,7 +515,7 @@
     },
 
     "memory_auto_extract": {
-      "mode": { "type": "string", "default": "background", "options": ["disabled", "background", "background-api", "background-cli"] },
+      "mode": { "type": "string", "default": "background", "options": ["disabled", "background"] },
       "min_turn_chars": { "type": "integer", "default": 200, "description": "Minimum text in a turn to trigger extraction" },
       "max_transcript_lines": { "type": "integer", "default": 500, "description": "Max new lines to read from transcript per invocation" },
       "dedup_threshold": { "type": "float", "default": 0.95, "description": "Embedding relevance threshold for observation dedup. Higher = stricter (fewer false positives). Lower = catches more duplicates. Scale: 0.0 = unrelated, 1.0 = identical meaning." },
@@ -565,6 +563,11 @@
     "memory_worklog": {
       "enabled": { "type": "boolean", "default": true, "description": "Enable worklog extraction alongside observations" },
       "dedup_threshold": { "type": "float", "default": 0.7, "description": "Jaccard word-overlap threshold for worklog dedup within a session. Higher = more similar (1.0 = identical). Lower value catches more duplicates." }
+    },
+
+    "memory_staleness": {
+      "enabled": { "type": "boolean", "default": true, "description": "Enable observation staleness detection based on file modification times" },
+      "penalty": { "type": "float", "default": 0.15, "description": "Relevance score penalty applied to observations whose tracked files have changed since capture" }
     },
 
     "memory_pattern_detection": {
