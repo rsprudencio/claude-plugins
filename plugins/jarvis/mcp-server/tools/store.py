@@ -16,6 +16,7 @@ from typing import Optional
 
 from .namespaces import TIER2_TYPES, parse_id, get_tier, TIER_CHROMADB
 from .format_support import is_indexable
+from .routing_utils import validate_exactly_one, parse_memory_scope
 
 logger = logging.getLogger("jarvis-core")
 
@@ -50,18 +51,14 @@ def store(
     - type: Create new memory or tier2 content
     """
     # Validate: exactly ONE routing param must be set
-    routing_params = sum(1 for p in [id, relative_path, type] if p)
-    if routing_params == 0:
-        return {
-            "success": False,
-            "error": "Provide one of: id (update existing), "
-            "relative_path (new vault file), type (new memory/tier2)",
-        }
-    if routing_params > 1:
-        return {
-            "success": False,
-            "error": "Provide only ONE of: id, relative_path, type",
-        }
+    error = validate_exactly_one(
+        [id, relative_path, type],
+        "Provide one of: id (update existing), "
+        "relative_path (new vault file), type (new memory/tier2)",
+        "Provide only ONE of: id, relative_path, type",
+    )
+    if error:
+        return error
 
     # Route 1: ID-based update (from retrieve results)
     if id:
@@ -160,12 +157,12 @@ def _store_by_id(
 
     # Memory document (memory::global::name or memory::project::name)
     if parsed.namespace == "memory":
-        scope = "global" if "global" in parsed.full_prefix else "project"
+        scope, project = parse_memory_scope(parsed)
         return _store_memory(
             name=parsed.content_id,
             content=content,
             scope=scope,
-            project=parsed.project if scope == "project" else None,
+            project=project,
             tags=tags,
             importance=importance,
             overwrite=True,  # ID-based = update existing

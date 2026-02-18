@@ -38,31 +38,28 @@ session_manager = StreamableHTTPSessionManager(
 )
 
 
-async def health_response(scope, receive, send):
-    """Minimal ASGI response for /health endpoint."""
-    body = json.dumps(
-        {"status": "ok", "server": "jarvis-todoist-api", "version": _VERSION}
-    ).encode()
+async def _json_response(send, data: dict, status: int = 200):
+    """Send a JSON response."""
+    body = json.dumps(data).encode()
     await send(
         {
             "type": "http.response.start",
-            "status": 200,
+            "status": status,
             "headers": [[b"content-type", b"application/json"]],
         }
     )
     await send({"type": "http.response.body", "body": body})
+
+
+async def health_response(scope, receive, send):
+    """Minimal ASGI response for /health endpoint."""
+    await _json_response(
+        send, {"status": "ok", "server": "jarvis-todoist-api", "version": _VERSION}
+    )
 
 
 async def not_found(scope, receive, send):
-    body = json.dumps({"error": "Not found"}).encode()
-    await send(
-        {
-            "type": "http.response.start",
-            "status": 404,
-            "headers": [[b"content-type", b"application/json"]],
-        }
-    )
-    await send({"type": "http.response.body", "body": body})
+    await _json_response(send, {"error": "Not found"}, status=404)
 
 
 async def app(scope, receive, send):

@@ -44,17 +44,6 @@ session_manager = StreamableHTTPSessionManager(
 # --- ASGI helpers ---
 
 
-async def _read_body(receive) -> bytes:
-    """Read the full request body from ASGI receive."""
-    body = b""
-    while True:
-        message = await receive()
-        body += message.get("body", b"")
-        if not message.get("more_body", False):
-            break
-    return body
-
-
 async def _json_response(send, data: dict, status: int = 200):
     """Send a JSON response."""
     body = json.dumps(data).encode()

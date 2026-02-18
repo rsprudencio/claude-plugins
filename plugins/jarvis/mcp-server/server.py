@@ -28,6 +28,7 @@ Tools - Format Support:
 - jarvis_get_format_reference
 """
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -625,81 +626,6 @@ async def list_tools() -> list[Tool]:
     return TOOLS
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    logger.info(f"Tool: {name}, args: {arguments}")
-
-    handlers = {
-        "jarvis_commit": handle_commit,
-        "jarvis_status": lambda args: get_status(),
-        "jarvis_parse_last_commit": lambda args: parse_last_commit(),
-        "jarvis_push": lambda args: push_to_remote(args.get("branch")),
-        "jarvis_move_files": lambda args: move_files(args.get("moves", [])),
-        "jarvis_query_history": lambda args: query_history(
-            operation=args.get("operation", "all"),
-            since=args.get("since"),
-            limit=args.get("limit", 10),
-            file_path=args.get("file"),
-        ),
-        "jarvis_rollback": lambda args: rollback_commit(args.get("commit_hash")),
-        "jarvis_file_history": lambda args: file_history(
-            args.get("file_path"), args.get("limit", 10)
-        ),
-        "jarvis_rewrite_commit_messages": lambda args: rewrite_commit_messages(
-            count=args.get("count", 1), patterns=args.get("patterns")
-        ),
-        # Unified content API
-        "jarvis_store": lambda args: store(**args),
-        "jarvis_retrieve": lambda args: retrieve(**args),
-        "jarvis_remove": lambda args: remove(**args),
-        # Vault file operations (read-only)
-        "jarvis_read_vault_file": lambda args: read_vault_file(
-            args.get("relative_path", "")
-        ),
-        "jarvis_list_vault_dir": lambda args: list_vault_dir(
-            args.get("relative_path", ".")
-        ),
-        "jarvis_file_exists": lambda args: file_exists_in_vault(
-            args.get("relative_path", "")
-        ),
-        # Memory indexing operations
-        "jarvis_index_vault": lambda args: index_vault(
-            force=args.get("force", False),
-            directory=args.get("directory"),
-            include_sensitive=args.get("include_sensitive", False),
-        ),
-        "jarvis_index_file": lambda args: index_file(args.get("relative_path", "")),
-        "jarvis_collection_stats": lambda args: collection_stats(
-            sample_size=args.get("sample_size", 5), detailed=args.get("detailed", False)
-        ),
-        # Path configuration
-        "jarvis_resolve_path": lambda args: handle_resolve_path(args),
-        "jarvis_list_paths": lambda args: handle_list_paths(),
-        "jarvis_promote": lambda args: promote(doc_id=args.get("doc_id", "")),
-        "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
-    }
-
-    try:
-        handler = handlers.get(name)
-        if handler:
-            if asyncio.iscoroutinefunction(handler):
-                result = await handler(arguments)
-            else:
-                result = handler(arguments)
-        else:
-            result = {"success": False, "error": f"Unknown tool: {name}"}
-
-        return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        return [
-            TextContent(
-                type="text", text=json.dumps({"success": False, "error": str(e)})
-            )
-        ]
-
-
 async def handle_commit(args: dict) -> dict:
     """Handle jarvis_commit."""
     operation = args.get("operation")
@@ -835,6 +761,83 @@ def handle_get_format_reference() -> dict:
         "extension": ext,
         "reference": reference_content,
     }
+
+
+# Tool name -> handler mapping (module-level to avoid per-call allocation)
+_HANDLERS = {
+    "jarvis_commit": handle_commit,
+    "jarvis_status": lambda args: get_status(),
+    "jarvis_parse_last_commit": lambda args: parse_last_commit(),
+    "jarvis_push": lambda args: push_to_remote(args.get("branch")),
+    "jarvis_move_files": lambda args: move_files(args.get("moves", [])),
+    "jarvis_query_history": lambda args: query_history(
+        operation=args.get("operation", "all"),
+        since=args.get("since"),
+        limit=args.get("limit", 10),
+        file_path=args.get("file"),
+    ),
+    "jarvis_rollback": lambda args: rollback_commit(args.get("commit_hash")),
+    "jarvis_file_history": lambda args: file_history(
+        args.get("file_path"), args.get("limit", 10)
+    ),
+    "jarvis_rewrite_commit_messages": lambda args: rewrite_commit_messages(
+        count=args.get("count", 1), patterns=args.get("patterns")
+    ),
+    # Unified content API
+    "jarvis_store": lambda args: store(**args),
+    "jarvis_retrieve": lambda args: retrieve(**args),
+    "jarvis_remove": lambda args: remove(**args),
+    # Vault file operations (read-only)
+    "jarvis_read_vault_file": lambda args: read_vault_file(
+        args.get("relative_path", "")
+    ),
+    "jarvis_list_vault_dir": lambda args: list_vault_dir(
+        args.get("relative_path", ".")
+    ),
+    "jarvis_file_exists": lambda args: file_exists_in_vault(
+        args.get("relative_path", "")
+    ),
+    # Memory indexing operations
+    "jarvis_index_vault": lambda args: index_vault(
+        force=args.get("force", False),
+        directory=args.get("directory"),
+        include_sensitive=args.get("include_sensitive", False),
+    ),
+    "jarvis_index_file": lambda args: index_file(args.get("relative_path", "")),
+    "jarvis_collection_stats": lambda args: collection_stats(
+        sample_size=args.get("sample_size", 5),
+        detailed=args.get("detailed", False),
+    ),
+    # Path configuration
+    "jarvis_resolve_path": lambda args: handle_resolve_path(args),
+    "jarvis_list_paths": lambda args: handle_list_paths(),
+    "jarvis_promote": lambda args: promote(doc_id=args.get("doc_id", "")),
+    "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
+}
+
+
+@server.call_tool()
+async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    logger.info(f"Tool: {name}, args: {arguments}")
+
+    try:
+        handler = _HANDLERS.get(name)
+        if handler:
+            result = handler(arguments or {})
+            if inspect.isawaitable(result):
+                result = await result
+        else:
+            result = {"success": False, "error": f"Unknown tool: {name}"}
+
+        return [TextContent(type="text", text=json.dumps(result, indent=2))]
+
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=True)
+        return [
+            TextContent(
+                type="text", text=json.dumps({"success": False, "error": str(e)})
+            )
+        ]
 
 
 def get_background_tasks():

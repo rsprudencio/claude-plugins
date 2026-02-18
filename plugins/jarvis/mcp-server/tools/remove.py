@@ -9,6 +9,7 @@ import os
 from typing import Optional
 
 from .namespaces import get_tier, TIER_CHROMADB
+from .routing_utils import validate_exactly_one, parse_memory_scope
 
 
 def _remove_vault_file(id: str, confirm: bool = False) -> dict:
@@ -62,16 +63,13 @@ def remove(
     confirm: bool = False,
 ) -> dict:
     """Unified delete entry point."""
-    if not id and not name:
-        return {
-            "success": False,
-            "error": "Provide id (document ID) or name (memory name)",
-        }
-    if id and name:
-        return {
-            "success": False,
-            "error": "Provide only ONE of: id, name",
-        }
+    error = validate_exactly_one(
+        [id, name],
+        "Provide id (document ID) or name (memory name)",
+        "Provide only ONE of: id, name",
+    )
+    if error:
+        return error
 
     if id:
         tier = get_tier(id)
@@ -86,11 +84,11 @@ def remove(
             from .memory_crud import memory_delete
 
             parsed = parse_id(id)
-            scope = "global" if "global" in parsed.full_prefix else "project"
+            scope, project = parse_memory_scope(parsed)
             return memory_delete(
                 name=parsed.content_id,
                 scope=scope,
-                project=parsed.project if scope == "project" else None,
+                project=project,
                 confirm=confirm,
             )
         else:

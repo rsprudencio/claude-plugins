@@ -8,6 +8,35 @@ from typing import Tuple
 _config_cache = None
 
 
+# ── Merge helpers ──────────────────────────────────────────────────────
+
+
+def _as_dict(value) -> dict:
+    """Return *value* if it is a dict, otherwise an empty dict."""
+    return value if isinstance(value, dict) else {}
+
+
+def _merge_with_defaults(defaults: dict, overrides) -> dict:
+    """Shallow-merge *overrides* (may be non-dict) onto *defaults*."""
+    return {**defaults, **_as_dict(overrides)}
+
+
+def _get_config_section(section: str) -> dict:
+    """Return a top-level config section as a dict (safe for missing keys)."""
+    return _as_dict(get_config().get(section, {}))
+
+
+def _get_memory_section(subsection: str | None = None) -> dict:
+    """Return the memory config, or a nested subsection of it."""
+    mem = _get_config_section("memory")
+    if subsection is None:
+        return mem
+    return _as_dict(mem.get(subsection, {}))
+
+
+# ── Path resolution ───────────────────────────────────────────────────
+
+
 def _resolve_jarvis_home() -> Path:
     """Resolve the Jarvis home directory.
 
@@ -131,14 +160,13 @@ def get_memory_config() -> dict:
     recency_boost_days, default_importance.
     Backward-compatible: configs without 'memory' section get defaults.
     """
-    config = get_config()
     defaults = {
         "secret_detection": True,
         "importance_scoring": True,
         "recency_boost_days": 7,
         "default_importance": 0.5,
     }
-    return {**defaults, **config.get("memory", {})}
+    return _merge_with_defaults(defaults, _get_memory_section())
 
 
 def get_promotion_config() -> dict:
@@ -154,7 +182,6 @@ def get_promotion_config() -> dict:
 
     Backward-compatible: configs without 'promotion' section get defaults.
     """
-    config = get_config()
     defaults = {
         "importance_threshold": 0.85,
         "retrieval_count_threshold": 3,
@@ -162,7 +189,7 @@ def get_promotion_config() -> dict:
         "age_importance_score": 0.7,
         "on_promoted_file_deleted": "remove",
     }
-    return {**defaults, **config.get("promotion", {})}
+    return _merge_with_defaults(defaults, _get_config_section("promotion"))
 
 
 def get_auto_extract_config() -> dict:
@@ -186,7 +213,6 @@ def get_auto_extract_config() -> dict:
 
     Config lives at memory.auto_extract in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "mode": "background",
         "min_turn_chars": 200,
@@ -195,8 +221,7 @@ def get_auto_extract_config() -> dict:
         "dedup_threshold": 0.95,
         "debug": False,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("auto_extract", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("auto_extract"))
 
 
 def get_chunking_config() -> dict:
@@ -210,15 +235,13 @@ def get_chunking_config() -> dict:
 
     Config lives at memory.chunking in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "min_chunk_chars": 200,
         "max_chunk_chars": 1500,
         "heading_levels": [2, 3],
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("chunking", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("chunking"))
 
 
 def get_scoring_config() -> dict:
@@ -232,15 +255,13 @@ def get_scoring_config() -> dict:
 
     Config lives at memory.scoring in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "recency_half_life_days": 7.0,
         "type_weights": {},
         "concept_patterns": {},
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("scoring", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("scoring"))
 
 
 def get_per_prompt_config() -> dict:
@@ -253,7 +274,6 @@ def get_per_prompt_config() -> dict:
 
     Config lives at memory.per_prompt_search in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "threshold": 0.5,
@@ -261,8 +281,7 @@ def get_per_prompt_config() -> dict:
         "debug": False,
         "passive_retrieval_increment": 0.01,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("per_prompt_search", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("per_prompt_search"))
 
 
 def get_file_format() -> str:
@@ -287,15 +306,13 @@ def get_expansion_config() -> dict:
 
     Config lives at memory.expansion in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "max_expansion_terms": 5,
         "synonyms": {},
         "intent_patterns": [],
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("expansion", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("expansion"))
 
 
 def get_reranking_config() -> dict:
@@ -311,7 +328,6 @@ def get_reranking_config() -> dict:
 
     Config lives at memory.reranking in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "candidate_count": 100,
@@ -320,8 +336,7 @@ def get_reranking_config() -> dict:
         "max_latency_ms": 1000,
         "batch_size": 32,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("reranking", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("reranking"))
 
 
 def get_conflict_detection_config() -> dict:
@@ -336,7 +351,6 @@ def get_conflict_detection_config() -> dict:
 
     Config lives at memory.conflict_detection in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "use_llm": False,
@@ -344,8 +358,7 @@ def get_conflict_detection_config() -> dict:
         "divergence_threshold": 0.4,
         "max_candidates": 10,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("conflict_detection", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("conflict_detection"))
 
 
 def get_staleness_config() -> dict:
@@ -357,10 +370,8 @@ def get_staleness_config() -> dict:
 
     Config lives at memory.staleness in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {"enabled": True, "penalty": 0.15}
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("staleness", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("staleness"))
 
 
 def get_pattern_detection_config() -> dict:
@@ -378,7 +389,6 @@ def get_pattern_detection_config() -> dict:
 
     Config lives at memory.pattern_detection in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "scan_interval_seconds": 300,
@@ -389,8 +399,7 @@ def get_pattern_detection_config() -> dict:
         "lookback_minutes": 10,
         "merge_threshold": 0.7,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("pattern_detection", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("pattern_detection"))
 
 
 def get_telemetry_config() -> dict:
@@ -420,8 +429,7 @@ def get_telemetry_config() -> dict:
         "log_writes": True,
         "probe_interval_seconds": 300,
     }
-    memory_config = get_config().get("memory", {})
-    return {**defaults, **memory_config.get("telemetry", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("telemetry"))
 
 
 def get_todoist_prompt_alerts_config() -> dict:
@@ -436,7 +444,6 @@ def get_todoist_prompt_alerts_config() -> dict:
 
     Config lives at todoist.prompt_alerts in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": False,
         "sync_interval_seconds": 900,
@@ -444,8 +451,8 @@ def get_todoist_prompt_alerts_config() -> dict:
         "api_timeout_seconds": 5,
         "debug": False,
     }
-    todoist_config = config.get("todoist", {}).get("prompt_alerts", {})
-    return {**defaults, **todoist_config}
+    todoist_alerts = _as_dict(_get_config_section("todoist").get("prompt_alerts", {}))
+    return _merge_with_defaults(defaults, todoist_alerts)
 
 
 def get_worklog_config() -> dict:
@@ -458,13 +465,11 @@ def get_worklog_config() -> dict:
 
     Config lives at memory.worklog in ~/.jarvis/config.json.
     """
-    config = get_config()
     defaults = {
         "enabled": True,
         "dedup_threshold": 0.7,
     }
-    memory_config = config.get("memory", {})
-    return {**defaults, **memory_config.get("worklog", {})}
+    return _merge_with_defaults(defaults, _get_memory_section("worklog"))
 
 
 def get_chroma_config() -> dict:
@@ -480,8 +485,7 @@ def get_chroma_config() -> dict:
     - Convenience: ``chroma_api_key`` + ``chroma_auth_header`` (default X-Chroma-Token)
     - Manual: ``chroma_headers: {"Authorization": "Bearer xxx"}``
     """
-    config = get_config()
-    memory = config.get("memory", {})
+    memory = _get_memory_section()
 
     # --- Resolve connection endpoint ---
     raw_url = (

@@ -9,6 +9,8 @@ Routes reads based on parameters:
 
 from typing import Optional
 
+from .routing_utils import validate_exactly_one
+
 
 def retrieve(
     query: Optional[str] = None,
@@ -38,18 +40,14 @@ def retrieve(
     4. list_type -> list content ("tier2" or "memory")
     """
     # Count how many routing params are set
-    routing_params = sum(1 for p in [query, id, name, list_type] if p)
-    if routing_params == 0:
-        return {
-            "success": False,
-            "error": "Provide one of: query (search), id (read by ID), "
-            "name (memory name), list_type ('tier2' or 'memory')",
-        }
-    if routing_params > 1:
-        return {
-            "success": False,
-            "error": "Provide only ONE of: query, id, name, list_type",
-        }
+    error = validate_exactly_one(
+        [query, id, name, list_type],
+        "Provide one of: query (search), id (read by ID), "
+        "name (memory name), list_type ('tier2' or 'memory')",
+        "Provide only ONE of: query, id, name, list_type",
+    )
+    if error:
+        return error
 
     # Route 1: Semantic search
     if query:
