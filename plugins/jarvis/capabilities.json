@@ -407,6 +407,33 @@
         "params": ["count", "patterns"],
         "returns": ["commits_rewritten", "old_hashes", "new_hashes"]
       }
+    },
+
+    "cli_scripts": {
+      "_note": "Host-side CLI scripts in hooks-handlers/ directory. Not MCP tools — invoked via Bash tool.",
+      "path_resolution": {
+        "_note": "Resolve plugin directory at runtime. ALWAYS use this — never Glob for scripts.",
+        "pattern": "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/jarvis-plugins/jarvis/<version>/",
+        "version_source": "curl -s localhost:8741/health | python3 -c 'import sys,json;print(json.load(sys.stdin)[\"version\"])'"
+      },
+      "adversarial_review": {
+        "purpose": "Run adversarial review of a plan using an external AI CLI in a read-only sandbox",
+        "location": "hooks-handlers/adversarial_review.py (within resolved plugin directory)",
+        "usage": "python3 \"$PLUGIN_DIR/hooks-handlers/adversarial_review.py\" '{\"max_findings\": 5}' --plan-file /tmp/plan.txt",
+        "stdin_alternative": "echo 'plan text' | python3 \"$PLUGIN_DIR/hooks-handlers/adversarial_review.py\" '{\"max_findings\": 5}'",
+        "options_json": ["max_findings", "context", "focus_areas[]", "assumptions[]", "timeout_seconds", "model", "profile", "cwd", "include_raw", "provider"],
+        "returns": "JSON on stdout: {success, provider, review: {status, summary, findings[], counter_proposal, agreement}}",
+        "exit_codes": {"0": "review completed (even needs_revision)", "1": "execution failure"},
+        "safety": [
+          "--sandbox read-only (no filesystem writes)",
+          "--ephemeral (no session persistence)",
+          "Prompt via stdin (avoids ARG_MAX)",
+          "Best-effort MCP server isolation",
+          "Working directory confined to vault boundary"
+        ],
+        "providers": ["codex"],
+        "latency": "1-4 minutes typical"
+      }
     }
   },
 

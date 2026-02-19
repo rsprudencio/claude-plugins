@@ -188,6 +188,55 @@ Paths are configurable via `~/.jarvis/config.json` under `paths`. Use `jarvis_re
 
 ---
 
+## Plugin Path Resolution
+
+Some Jarvis features run as host-side scripts (not MCP tools). To locate them reliably, resolve the plugin cache directory at runtime:
+
+```bash
+PLUGIN_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/jarvis-plugins/jarvis/$(curl -s localhost:8741/health | python3 -c 'import sys,json;print(json.load(sys.stdin)["version"])')"
+```
+
+This constructs the deterministic path: `$CLAUDE_CONFIG_DIR/plugins/cache/jarvis-plugins/jarvis/<version>/`
+
+Scripts are in `hooks-handlers/` within this directory. **Always use this pattern** — never Glob for scripts, as stale cached versions may exist.
+
+---
+
+## Adversarial Plan Review
+
+Stress-test a plan before implementation by spawning an external AI CLI (Codex) in a read-only sandbox as a devil's advocate.
+
+**How to run:**
+1. Write the plan to a temp file
+2. Resolve the plugin directory (see "Plugin Path Resolution" above)
+3. Run via Bash tool:
+   ```
+   python3 "$PLUGIN_DIR/hooks-handlers/adversarial_review.py" '{"max_findings": 5}' --plan-file /tmp/plan.txt
+   ```
+   Or pipe from stdin: `echo "plan text" | python3 "$PLUGIN_DIR/hooks-handlers/adversarial_review.py" '{"max_findings": 5}'`
+4. Parse the JSON result and present structured findings
+
+Exit code 0 = review completed (even if `status: "needs_revision"`), 1 = failure. JSON on stdout either way.
+
+**Options JSON fields:** `max_findings`, `context`, `focus_areas`, `assumptions`, `timeout_seconds`, `model`, `profile`, `cwd`, `include_raw`, `provider`
+
+**When to use:**
+- Before implementing complex plans with multiple files or architectural decisions
+- When the user asks for a second opinion or review
+- For high-risk changes (data migrations, security-sensitive features)
+
+**When NOT to use:**
+- Simple, obvious changes (typo fixes, single-line edits)
+- When the user wants to move fast and has already validated the approach
+
+**Notes:**
+- Latency is 1-4 minutes (runs a full external CLI subprocess)
+- The reviewer runs in `--sandbox read-only` with no write access
+- Single-shot only — Jarvis drives the review loop, not the script
+- Pass `"include_raw": true` in options for debugging if structured output fails
+
+---
+
 ## Memory System (Semantic Search)
 
 Jarvis has a ChromaDB-backed semantic memory that indexes vault files (`.md` and `.org`) for meaning-based search.

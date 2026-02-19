@@ -164,6 +164,14 @@ def _get_enriched_paths() -> List[Path]:
                 home / ".cargo" / "bin",  # Rust tools (uv alternative install)
             ]
         )
+    if system == "Darwin":
+        # Homebrew on Apple Silicon and Intel
+        paths.extend(
+            [
+                Path("/opt/homebrew/bin"),  # Apple Silicon Homebrew
+                Path("/usr/local/bin"),  # Intel Homebrew
+            ]
+        )
     elif system == "Windows":
         # Windows specific paths
         local_appdata = os.environ.get("LOCALAPPDATA")
