@@ -15,6 +15,10 @@ logger = logging.getLogger("jarvis-core.git_ops")
 def get_status() -> dict:
     """Get current git status (staged, unstaged, untracked files).
 
+    Uses -z flag so filenames with spaces or non-ASCII characters are
+    returned unquoted with NUL separators, avoiding C-style escaping
+    that breaks downstream git add commands.
+
     Returns:
         {
             "success": bool,
@@ -24,7 +28,7 @@ def get_status() -> dict:
             "error": str (if failed)
         }
     """
-    success, result = run_git_command(["status", "--porcelain"])
+    success, result = run_git_command(["status", "--porcelain", "-z"])
 
     if not success:
         return {
@@ -36,12 +40,21 @@ def get_status() -> dict:
     unstaged = []
     untracked = []
 
-    for line in result.get("stdout", "").strip().split("\n"):
-        if not line:
+    # -z uses NUL separators; filenames are never quoted
+    entries = result.get("stdout", "").split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        if len(entry) < 3:
+            i += 1
             continue
 
-        status = line[:2]
-        file_path = line[3:]
+        status = entry[:2]
+        file_path = entry[3:]
+
+        # Renames/copies produce a second NUL-separated path (the "from" path)
+        if status[0] in ("R", "C"):
+            i += 1  # skip the originating path
 
         # First character: staged status
         # Second character: unstaged status
@@ -51,6 +64,8 @@ def get_status() -> dict:
             unstaged.append(file_path)
         if status[0] == "?" and status[1] == "?":
             untracked.append(file_path)
+
+        i += 1
 
     return {
         "success": True,
