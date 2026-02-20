@@ -280,6 +280,7 @@ Jarvis uses a two-tier memory architecture for different durability requirements
 | `/jarvis-promote` | Browse and promote Tier 2 content to permanent files |
 | `/jarvis-worklog` | Review what you worked on today/this week |
 | `/jarvis-memory-stats` | Show memory system health and stats |
+| `/jarvis-close` | Session closure checklist before ending a session |
 
 ### How It Works
 - Vault `.md` and `.org` files are indexed into the `jarvis` ChromaDB collection with namespaced IDs (`vault::` prefix)
