@@ -170,6 +170,7 @@ def invoke_cli(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                cwd=working_dir,
             )
         except subprocess.TimeoutExpired:
             return ProviderResult(timed_out=True, error=f"CLI timed out after {timeout}s")

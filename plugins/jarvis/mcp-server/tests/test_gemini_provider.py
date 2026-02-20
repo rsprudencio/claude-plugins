@@ -78,28 +78,47 @@ class TestBuildCommand:
             working_dir="/vault",
         )
         assert cmd[0] == "/usr/bin/gemini"
-        assert cmd[1] == "exec"
-        assert cmd[-1] == "-"
+        # Gemini uses default command (no 'exec' subcommand)
+        assert "exec" not in cmd
+        # Uses -p "" to trigger headless mode (stdin provides prompt)
+        assert "-p" in cmd
+        idx = cmd.index("-p")
+        assert cmd[idx + 1] == ""
 
-    def test_sandbox_read_only(self, provider):
+    def test_approval_mode_plan(self, provider):
         cmd = provider.build_command(
             binary="gemini",
             output_path="/tmp/out.md",
             schema_path="/tmp/schema.json",
             working_dir="/vault",
         )
-        assert "--sandbox" in cmd
-        idx = cmd.index("--sandbox")
-        assert cmd[idx + 1] == "read-only"
+        assert "--approval-mode" in cmd
+        idx = cmd.index("--approval-mode")
+        assert cmd[idx + 1] == "plan"
 
-    def test_ephemeral(self, provider):
+    def test_json_output_format(self, provider):
         cmd = provider.build_command(
             binary="gemini",
             output_path="/tmp/out.md",
             schema_path="/tmp/schema.json",
             working_dir="/vault",
         )
-        assert "--ephemeral" in cmd
+        assert "-o" in cmd
+        idx = cmd.index("-o")
+        assert cmd[idx + 1] == "json"
+
+    def test_no_codex_specific_flags(self, provider):
+        """Gemini CLI doesn't support Codex-specific flags."""
+        cmd = provider.build_command(
+            binary="gemini",
+            output_path="/tmp/out.md",
+            schema_path="/tmp/schema.json",
+            working_dir="/vault",
+        )
+        codex_flags = ["--color", "--output-last-message", "--output-schema",
+                       "--ephemeral", "--skip-git-repo-check", "--cd", "--sandbox"]
+        for flag in codex_flags:
+            assert flag not in cmd, f"Codex-specific flag {flag} found in Gemini command"
 
     def test_model_override(self, provider):
         cmd = provider.build_command(
@@ -109,8 +128,8 @@ class TestBuildCommand:
             working_dir="/vault",
             model="gemini-pro",
         )
-        assert "--model" in cmd
-        idx = cmd.index("--model")
+        assert "-m" in cmd
+        idx = cmd.index("-m")
         assert cmd[idx + 1] == "gemini-pro"
 
     def test_no_model_by_default(self, provider):
@@ -120,7 +139,7 @@ class TestBuildCommand:
             schema_path="/tmp/schema.json",
             working_dir="/vault",
         )
-        assert "--model" not in cmd
+        assert "-m" not in cmd
 
 
 # ---------------------------------------------------------------------------
@@ -129,15 +148,40 @@ class TestBuildCommand:
 
 
 class TestReadResponse:
-    def test_reads_from_file(self, provider, tmp_path):
-        out_file = tmp_path / "response.md"
-        out_file.write_text('{"status": "approved"}')
-        result = provider.read_response(str(out_file), "fallback")
+    def test_extracts_response_field(self, provider):
+        """Gemini -o json puts model text in top-level 'response' field."""
+        stdout = json.dumps({
+            "session_id": "abc-123",
+            "response": '{"status": "approved"}',
+            "stats": {},
+        })
+        result = provider.read_response("/nonexistent/path", stdout)
         assert result == '{"status": "approved"}'
 
-    def test_falls_back_to_stdout(self, provider):
-        result = provider.read_response("/nonexistent/path", "stdout output")
-        assert result == "stdout output"
+    def test_extracts_multiline_response(self, provider):
+        stdout = json.dumps({
+            "session_id": "abc-123",
+            "response": "line1\nline2\nline3",
+            "stats": {},
+        })
+        result = provider.read_response("/nonexistent/path", stdout)
+        assert "line1" in result
+        assert "line3" in result
+
+    def test_falls_back_to_raw_stdout(self, provider):
+        """When stdout isn't parseable JSON, return raw text."""
+        result = provider.read_response("/nonexistent/path", "plain text output")
+        assert result == "plain text output"
+
+    def test_empty_stdout(self, provider):
+        result = provider.read_response("/nonexistent/path", "")
+        assert result == ""
+
+    def test_no_response_field_returns_raw(self, provider):
+        """If JSON lacks 'response' key, return raw stdout."""
+        stdout = json.dumps({"error": "something went wrong"})
+        result = provider.read_response("/nonexistent/path", stdout)
+        assert result == stdout
 
 
 # ---------------------------------------------------------------------------

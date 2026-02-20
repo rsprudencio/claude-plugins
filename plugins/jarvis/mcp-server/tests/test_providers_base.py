@@ -17,6 +17,7 @@ from providers.base import (
 )
 from providers._registry import REGISTRY, resolve_provider
 from providers.codex import CodexProvider
+from providers.gemini import GeminiProvider
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,36 @@ class TestRegistry:
             assert isinstance(adapter, ProviderAdapter), (
                 f"Provider '{name}' does not satisfy ProviderAdapter protocol"
             )
+
+    def test_resolve_none_returns_first_available(self):
+        """resolve_provider(None) auto-selects first available CLI."""
+        with patch.object(CodexProvider, "is_available", return_value=(True, "/usr/bin/codex")):
+            adapter = resolve_provider(None)
+            assert adapter is not None
+            assert adapter.name == "codex"
+
+    def test_resolve_none_falls_back_to_api_key(self):
+        """If no CLI available, prefer provider with API key."""
+        with (
+            patch.object(CodexProvider, "is_available", return_value=(False, None)),
+            patch.object(GeminiProvider, "is_available", return_value=(False, None)),
+            patch.object(CodexProvider, "has_api_key", return_value=False),
+            patch.object(GeminiProvider, "has_api_key", return_value=True),
+        ):
+            adapter = resolve_provider(None)
+            assert adapter is not None
+            assert adapter.name == "gemini"
+
+    def test_resolve_none_last_resort(self):
+        """If nothing available, return first registered (for error handling)."""
+        with (
+            patch.object(CodexProvider, "is_available", return_value=(False, None)),
+            patch.object(GeminiProvider, "is_available", return_value=(False, None)),
+            patch.object(CodexProvider, "has_api_key", return_value=False),
+            patch.object(GeminiProvider, "has_api_key", return_value=False),
+        ):
+            adapter = resolve_provider(None)
+            assert adapter is not None  # Still returns something
 
 
 # ---------------------------------------------------------------------------

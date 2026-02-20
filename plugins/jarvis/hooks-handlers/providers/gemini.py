@@ -48,37 +48,49 @@ class GeminiProvider:
     ) -> list[str]:
         """Build the gemini CLI command line.
 
-        Gemini CLI uses a similar exec pattern to Codex.
-        Adjust flags based on actual gemini CLI interface.
+        Gemini CLI interface differs from Codex:
+        - No `exec` subcommand — uses default command with `-p`
+        - `--approval-mode plan` for read-only sandbox
+        - `-o json` for structured output (no --output-schema)
+        - No --output-last-message, --ephemeral, --skip-git-repo-check, --cd
+        - Working directory is set via subprocess cwd kwarg instead
         """
         cmd = [
             binary,
-            "exec",
-            "--color", "never",
-            "--output-last-message", output_path,
-            "--output-schema", schema_path,
-            "--sandbox", "read-only",
-            "--ephemeral",
-            "--skip-git-repo-check",
-            "--cd", working_dir,
+            "--approval-mode", "plan",
+            "-o", "json",
+            "-p", "",  # empty string triggers headless mode; actual prompt comes via stdin
         ]
 
         if model:
-            cmd.extend(["--model", model])
-        if profile:
-            cmd.extend(["--profile", profile])
+            cmd.extend(["-m", model])
 
-        cmd.append("-")  # read prompt from stdin
         return cmd
 
     def read_response(self, output_path: str, stdout: str) -> str:
-        """Read the Gemini response, preferring output file."""
-        if os.path.isfile(output_path):
-            with open(output_path, "r", encoding="utf-8") as f:
-                text = f.read().strip()
-                if text:
-                    return text
-        return stdout.strip()
+        """Read the Gemini response from stdout.
+
+        Gemini CLI with `-o json` outputs a single JSON object:
+        {"session_id": "...", "response": "model text", "stats": {...}}
+
+        The model's response text is in the top-level `response` field.
+        No output file is used (unlike Codex).
+        """
+        import json as _json
+
+        text = stdout.strip()
+        if not text:
+            return ""
+
+        try:
+            obj = _json.loads(text)
+            if isinstance(obj, dict) and "response" in obj:
+                return obj["response"]
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+        # Fallback: return raw stdout for the orchestrator to parse
+        return text
 
     def availability_error(self) -> str:
         """Human-readable error for when neither CLI nor API is available."""
