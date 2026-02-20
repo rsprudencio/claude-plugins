@@ -78,15 +78,16 @@ python3 "$PLUGIN_DIR/hooks-handlers/adversarial_review.py" \
 ```
 
 **Options JSON fields:**
-- `max_findings` (int, 1-20): Maximum findings to return
+- `max_findings` (int, 1-20): Maximum findings per round
 - `provider` (string): CLI provider — "codex" or "gemini"
+- `rounds` (int, 1-5): Number of review rounds (default 1). Each subsequent round receives previous findings as context and is instructed to find only NEW issues. Findings accumulate across rounds with a `round` field.
 - `context` (string): Additional context for the reviewer
 - `focus_areas` (string[]): Specific areas to scrutinize
 - `assumptions` (string[]): Stated assumptions to challenge
-- `timeout_seconds` (int, 10-600): Subprocess timeout
+- `timeout_seconds` (int, 10-600): Per-round subprocess timeout
 - `model` (string): Model override for the CLI
 - `profile` (string): Profile override for the CLI
-- `include_raw` (bool): Include raw CLI output in response
+- `include_raw` (bool): Include raw CLI output and per-round details
 
 ### Step 4: Parse and Present Results
 
@@ -98,13 +99,14 @@ Format the findings as a structured report:
 ## Adversarial Review: [mode]
 **Provider**: [provider name]
 **Status**: [APPROVED | NEEDS REVISION]
+**Rounds**: [rounds_completed] (if multi-round)
 **Summary**: [summary text]
 
 ### Findings
 
-| # | Severity | Title | Problem | Impact | Fix |
-|---|----------|-------|---------|--------|-----|
-[findings table]
+| # | Round | Severity | Title | Problem | Impact | Fix |
+|---|-------|----------|-------|---------|--------|-----|
+[findings table — include Round column if rounds > 1]
 
 ### Counter-Proposal
 [if has_alternative is true, present description and trade-offs]
@@ -122,8 +124,9 @@ On failure (`"success": false`):
 ## Scope Limits
 
 - **One plan per review.** Don't batch multiple plans.
-- **Max 20 findings.** Default 8.
-- **Timeout: 4 minutes default.** External CLI calls take 1-4 minutes.
+- **Max 20 findings per round.** Default 8.
+- **Up to 5 rounds.** Each round ~1-4 minutes. Multi-round reviews probe deeper but take proportionally longer.
+- **Timeout: 4 minutes per round.** Total time = timeout x rounds.
 - **Read-only sandbox.** The external CLI cannot modify any files.
 
 ---

@@ -370,6 +370,125 @@ def _normalize_review_payload(raw: dict, max_findings: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
+MAX_ROUNDS = 5
+
+
+def _summarize_findings_for_context(findings: list[dict]) -> str:
+    """Summarize previous round findings as context for the next round."""
+    if not findings:
+        return ""
+
+    lines = ["## Previous Review Findings (Already Identified)", ""]
+    for f in findings:
+        lines.append(f"- **[{f['severity'].upper()}] {f['title']}**: {f['problem']}")
+    lines.extend([
+        "",
+        "## Instructions for This Round",
+        "",
+        "The findings above have ALREADY been identified. Do NOT repeat them.",
+        "Instead, look for NEW issues that were missed:",
+        "- Second-order effects and subtle interactions between components",
+        "- Edge cases and failure modes not yet covered",
+        "- Assumptions that haven't been challenged",
+        "- Operational, security, or performance concerns at a deeper level",
+        "",
+        "If no genuinely new issues remain, set status to 'approved' with an empty findings array.",
+    ])
+    return "\n".join(lines)
+
+
+def _run_single_review(
+    plan: str,
+    adapter,
+    binary_path: str,
+    context: Optional[str],
+    assumptions: Optional[list[str]],
+    focus_areas: Optional[list[str]],
+    max_findings: int,
+    timeout: int,
+    working_dir: str,
+    model: Optional[str],
+    profile: Optional[str],
+    provider: str,
+    include_raw: bool,
+) -> dict:
+    """Execute a single review round against the provider.
+
+    Returns the standard response dict (success/error/review).
+    """
+    prompt = _build_prompt(
+        plan=plan,
+        context=context,
+        assumptions=assumptions,
+        focus_areas=focus_areas,
+        max_findings=max_findings,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "response.md")
+        schema_path = os.path.join(tmpdir, "review_schema.json")
+
+        with open(schema_path, "w", encoding="utf-8") as f:
+            json.dump(_REVIEW_SCHEMA, f)
+
+        cmd = adapter.build_command(
+            binary=binary_path,
+            output_path=output_path,
+            schema_path=schema_path,
+            working_dir=working_dir,
+            model=model,
+            profile=profile,
+        )
+
+        try:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Review timed out after {timeout} seconds",
+                "provider": provider,
+            }
+
+        raw_text = adapter.read_response(output_path, result.stdout)
+
+        if result.returncode != 0 and not raw_text:
+            stderr_snippet = (result.stderr or "")[:500]
+            return {
+                "success": False,
+                "error": f"Provider '{provider}' exited with code {result.returncode}",
+                "stderr": stderr_snippet,
+                "provider": provider,
+            }
+
+        parsed = _extract_json_object(raw_text)
+        if parsed is None:
+            response: dict = {
+                "success": False,
+                "error": "Could not parse structured review from provider output",
+                "provider": provider,
+            }
+            if include_raw:
+                response["raw_output"] = raw_text[:5000]
+            return response
+
+        review = _normalize_review_payload(parsed, max_findings)
+
+        response = {
+            "success": True,
+            "provider": provider,
+            "review": review,
+        }
+        if include_raw:
+            response["raw_output"] = raw_text[:5000]
+        return response
+
+
 def adversarial_review(
     plan: str,
     provider: str = "codex",
@@ -382,8 +501,13 @@ def adversarial_review(
     profile: Optional[str] = None,
     cwd: Optional[str] = None,
     include_raw: bool = False,
+    rounds: int = 1,
 ) -> dict:
     """Run an adversarial review of a plan using an external AI CLI.
+
+    Supports multi-round refinement: each subsequent round receives
+    previous findings as context with instructions to find only NEW
+    issues. Findings are aggregated across rounds with a `round` field.
 
     This is a synchronous function suitable for both direct CLI use
     and wrapping with asyncio.to_thread() in async contexts.
@@ -394,15 +518,17 @@ def adversarial_review(
         context: Additional context for the reviewer.
         assumptions: List of stated assumptions.
         focus_areas: List of areas to focus on.
-        max_findings: Maximum number of findings (clamped to 1-20).
-        timeout_seconds: Subprocess timeout (clamped to 10-600).
+        max_findings: Maximum findings per round (clamped to 1-20).
+        timeout_seconds: Per-round subprocess timeout (clamped to 10-600).
         model: Model override for the CLI.
         profile: Profile override for the CLI.
         cwd: Working directory (must be within vault).
         include_raw: If True, include raw CLI output in response.
+        rounds: Number of review rounds (1-5, default 1).
 
     Returns:
-        Dict with success status, review payload, and metadata.
+        Dict with success status, aggregated review payload, and metadata.
+        When rounds > 1, findings include a `round` field (1-indexed).
     """
     # Validate plan
     if not plan or not plan.strip():
@@ -428,86 +554,106 @@ def adversarial_review(
     timeout = _normalize_timeout(timeout_seconds)
     max_f = _normalize_max_findings(max_findings)
     working_dir = _resolve_working_directory(cwd)
+    num_rounds = max(1, min(int(rounds) if isinstance(rounds, (int, float)) else 1, MAX_ROUNDS))
 
-    # Build prompt
-    prompt = _build_prompt(
-        plan=plan,
-        context=context,
-        assumptions=assumptions,
-        focus_areas=focus_areas,
-        max_findings=max_f,
-    )
-
-    # Execute in temp directory for output files
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = os.path.join(tmpdir, "response.md")
-        schema_path = os.path.join(tmpdir, "review_schema.json")
-
-        # Write schema file
-        with open(schema_path, "w", encoding="utf-8") as f:
-            json.dump(_REVIEW_SCHEMA, f)
-
-        # Build command via adapter
-        cmd = adapter.build_command(
-            binary=binary_path,
-            output_path=output_path,
-            schema_path=schema_path,
+    # Single round — fast path (backward compatible)
+    if num_rounds == 1:
+        return _run_single_review(
+            plan=plan,
+            adapter=adapter,
+            binary_path=binary_path,
+            context=context,
+            assumptions=assumptions,
+            focus_areas=focus_areas,
+            max_findings=max_f,
+            timeout=timeout,
             working_dir=working_dir,
             model=model,
             profile=profile,
+            provider=provider,
+            include_raw=include_raw,
         )
 
-        # Run subprocess with stdin prompt delivery
-        try:
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "error": f"Review timed out after {timeout} seconds",
-                "provider": provider,
-            }
+    # Multi-round loop
+    all_findings: list[dict] = []
+    round_results: list[dict] = []
+    last_review: Optional[dict] = None
 
-        # Read response via adapter
-        raw_text = adapter.read_response(output_path, result.stdout)
+    for round_num in range(1, num_rounds + 1):
+        # Build context for this round
+        round_context_parts = []
+        if context:
+            round_context_parts.append(context)
+        if all_findings:
+            round_context_parts.append(_summarize_findings_for_context(all_findings))
+        round_context = "\n\n".join(round_context_parts) if round_context_parts else None
 
-        if result.returncode != 0 and not raw_text:
-            stderr_snippet = (result.stderr or "")[:500]
-            return {
-                "success": False,
-                "error": f"Provider '{provider}' exited with code {result.returncode}",
-                "stderr": stderr_snippet,
-                "provider": provider,
-            }
+        result = _run_single_review(
+            plan=plan,
+            adapter=adapter,
+            binary_path=binary_path,
+            context=round_context,
+            assumptions=assumptions,
+            focus_areas=focus_areas,
+            max_findings=max_f,
+            timeout=timeout,
+            working_dir=working_dir,
+            model=model,
+            profile=profile,
+            provider=provider,
+            include_raw=include_raw,
+        )
 
-        # Parse JSON
-        parsed = _extract_json_object(raw_text)
-        if parsed is None:
-            response: dict = {
-                "success": False,
-                "error": "Could not parse structured review from provider output",
-                "provider": provider,
-            }
-            if include_raw:
-                response["raw_output"] = raw_text[:5000]
-            return response
+        round_results.append({"round": round_num, "result": result})
 
-        # Normalize
-        review = _normalize_review_payload(parsed, max_f)
+        if not result.get("success"):
+            # Round failed — stop and return what we have
+            break
 
-        response = {
-            "success": True,
-            "provider": provider,
-            "review": review,
-        }
-        if include_raw:
-            response["raw_output"] = raw_text[:5000]
-        return response
+        review = result["review"]
+        last_review = review
+
+        # Tag findings with round number and collect
+        for finding in review.get("findings", []):
+            finding["round"] = round_num
+            all_findings.append(finding)
+
+        # If the reviewer approved with no new findings, stop early
+        if review.get("status") == "approved" and not review.get("findings"):
+            break
+
+    # Aggregate results
+    if not last_review:
+        # All rounds failed — return the first error
+        first = round_results[0]["result"] if round_results else {}
+        return first
+
+    # Re-number finding IDs sequentially across rounds
+    for i, finding in enumerate(all_findings):
+        finding["id"] = f"F{i + 1}"
+
+    # Build aggregated response — approved only if NO round produced findings
+    final_status = "approved" if not all_findings else "needs_revision"
+
+    response: dict = {
+        "success": True,
+        "provider": provider,
+        "rounds_completed": len(round_results),
+        "review": {
+            "status": final_status,
+            "summary": last_review.get("summary", "No summary provided"),
+            "findings": all_findings,
+            "counter_proposal": last_review.get("counter_proposal", {
+                "has_alternative": False, "description": "", "trade_offs": "",
+            }),
+            "agreement": last_review.get("agreement", {
+                "strengths": [], "well_handled": [],
+            }),
+        },
+    }
+    if include_raw:
+        response["round_details"] = round_results
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +719,7 @@ def _cli_main() -> int:
         profile=options.get("profile"),
         cwd=options.get("cwd"),
         include_raw=options.get("include_raw", False),
+        rounds=options.get("rounds", 1),
     )
 
     print(json.dumps(result, indent=2))

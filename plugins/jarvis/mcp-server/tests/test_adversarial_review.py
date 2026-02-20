@@ -17,6 +17,7 @@ from adversarial_review import (
     _build_prompt,
     _extract_json_object,
     _normalize_review_payload,
+    _summarize_findings_for_context,
     _codex_build_command,
     _codex_read_response,
     adversarial_review,
@@ -25,6 +26,7 @@ from adversarial_review import (
     MAX_TIMEOUT_SECONDS,
     DEFAULT_MAX_FINDINGS,
     MAX_ALLOWED_FINDINGS,
+    MAX_ROUNDS,
     PROVIDERS,
 )
 
@@ -592,3 +594,303 @@ class TestCommandSafety:
 
         cmd = mock_run.call_args[0][0]
         assert "--output-schema" in cmd
+
+
+# ---------------------------------------------------------------------------
+# TestSummarizeFindingsForContext
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeFindingsForContext:
+    def test_empty_findings(self):
+        assert _summarize_findings_for_context([]) == ""
+
+    def test_single_finding(self):
+        findings = [{"severity": "high", "title": "Missing retry", "problem": "No retries"}]
+        result = _summarize_findings_for_context(findings)
+        assert "HIGH" in result
+        assert "Missing retry" in result
+        assert "Do NOT repeat" in result
+
+    def test_multiple_findings(self):
+        findings = [
+            {"severity": "high", "title": "Issue A", "problem": "Problem A"},
+            {"severity": "low", "title": "Issue B", "problem": "Problem B"},
+        ]
+        result = _summarize_findings_for_context(findings)
+        assert "Issue A" in result
+        assert "Issue B" in result
+        assert "NEW issues" in result
+
+
+# ---------------------------------------------------------------------------
+# TestMultiRoundReview
+# ---------------------------------------------------------------------------
+
+
+# Distinct review responses for each round
+ROUND_1_REVIEW = {
+    "status": "needs_revision",
+    "summary": "Round 1: Found fundamental design gap.",
+    "findings": [
+        {
+            "id": "F1",
+            "severity": "high",
+            "title": "Missing error handling",
+            "problem": "No error recovery path",
+            "impact": "Silent failures",
+            "fix": "Add try/catch with retry",
+        }
+    ],
+    "counter_proposal": {"has_alternative": False, "description": "", "trade_offs": ""},
+    "agreement": {"strengths": ["Good modularity"], "well_handled": ["Clean API"]},
+}
+
+ROUND_2_REVIEW = {
+    "status": "needs_revision",
+    "summary": "Round 2: Found secondary concerns.",
+    "findings": [
+        {
+            "id": "F1",
+            "severity": "medium",
+            "title": "No rate limiting",
+            "problem": "Unbounded request rate",
+            "impact": "Resource exhaustion",
+            "fix": "Add token bucket limiter",
+        }
+    ],
+    "counter_proposal": {"has_alternative": True, "description": "Use queue", "trade_offs": "Latency"},
+    "agreement": {"strengths": ["Error handling addressed"], "well_handled": []},
+}
+
+ROUND_3_APPROVED = {
+    "status": "approved",
+    "summary": "Round 3: All issues addressed.",
+    "findings": [],
+    "counter_proposal": {"has_alternative": False, "description": "", "trade_offs": ""},
+    "agreement": {"strengths": ["Comprehensive"], "well_handled": ["All gaps closed"]},
+}
+
+
+def _make_multi_round_mock(*responses):
+    """Create a mock that returns different responses on successive calls."""
+    call_count = [0]
+
+    def mock_run(cmd, **kwargs):
+        idx = min(call_count[0], len(responses) - 1)
+        response = responses[idx]
+        call_count[0] += 1
+
+        for i, arg in enumerate(cmd):
+            if arg == "--output-last-message" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text(json.dumps(response))
+                break
+        return Mock(returncode=0, stdout="", stderr="")
+
+    return mock_run
+
+
+class TestMultiRoundReview:
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_single_round_backward_compat(self, mock_run, mock_which, mock_vault):
+        """rounds=1 (default) produces the same output as before."""
+        mock_run.side_effect = _make_mock_run(SAMPLE_REVIEW)
+        result = adversarial_review(plan="Test plan", rounds=1)
+
+        assert result["success"] is True
+        assert "rounds_completed" not in result  # Single round has no rounds_completed
+        assert len(result["review"]["findings"]) == 1
+        assert mock_run.call_count == 1
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_three_rounds_accumulates_findings(self, mock_run, mock_which, mock_vault):
+        """Three rounds accumulate findings from all rounds."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=3)
+
+        assert result["success"] is True
+        assert result["rounds_completed"] == 3
+        assert len(result["review"]["findings"]) == 3
+        assert mock_run.call_count == 3
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_findings_tagged_with_round(self, mock_run, mock_which, mock_vault):
+        """Each finding has a round field indicating which round found it."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2)
+
+        findings = result["review"]["findings"]
+        assert findings[0]["round"] == 1
+        assert findings[1]["round"] == 2
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_findings_renumbered_sequentially(self, mock_run, mock_which, mock_vault):
+        """Finding IDs are renumbered F1, F2, F3... across rounds."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2)
+
+        ids = [f["id"] for f in result["review"]["findings"]]
+        assert ids == ["F1", "F2"]
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_early_stop_on_approved(self, mock_run, mock_which, mock_vault):
+        """If a round returns approved with no findings, stop early."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_3_APPROVED,
+        )
+        result = adversarial_review(plan="Test plan", rounds=3)
+
+        assert result["success"] is True
+        assert result["rounds_completed"] == 2  # Stopped at round 2
+        assert mock_run.call_count == 2
+        # Still has round 1 findings
+        assert len(result["review"]["findings"]) == 1
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_final_status_needs_revision_when_findings_exist(self, mock_run, mock_which, mock_vault):
+        """Final status is needs_revision if any round produced findings."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2)
+
+        assert result["review"]["status"] == "needs_revision"
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_final_status_approved_when_last_round_approves(self, mock_run, mock_which, mock_vault):
+        """Final status is approved only if last round approved with no findings."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_3_APPROVED,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2)
+
+        # Round 1 had findings, so even though round 2 approved, overall is needs_revision
+        assert result["review"]["status"] == "needs_revision"
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_previous_findings_in_prompt_context(self, mock_run, mock_which, mock_vault):
+        """Subsequent rounds receive previous findings as context."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        adversarial_review(plan="Test plan", rounds=2)
+
+        # Second call should have previous findings in the prompt
+        assert mock_run.call_count == 2
+        second_prompt = mock_run.call_args_list[1][1]["input"]
+        assert "Missing error handling" in second_prompt
+        assert "Do NOT repeat" in second_prompt
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_round_failure_stops_loop(self, mock_run, mock_which, mock_vault):
+        """If a round fails, stop and return accumulated findings."""
+        call_count = [0]
+
+        def mock_fn(cmd, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                for i, arg in enumerate(cmd):
+                    if arg == "--output-last-message" and i + 1 < len(cmd):
+                        Path(cmd[i + 1]).write_text(json.dumps(ROUND_1_REVIEW))
+                        break
+                return Mock(returncode=0, stdout="", stderr="")
+            else:
+                return Mock(returncode=1, stdout="", stderr="crash")
+
+        mock_run.side_effect = mock_fn
+        result = adversarial_review(plan="Test plan", rounds=3)
+
+        # Round 1 succeeded, round 2 failed — still returns round 1 findings
+        assert result["success"] is True
+        assert result["rounds_completed"] == 2
+        assert len(result["review"]["findings"]) == 1
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_rounds_clamped_to_max(self, mock_run, mock_which, mock_vault):
+        """Rounds are clamped to MAX_ROUNDS (5)."""
+        mock_run.side_effect = _make_multi_round_mock(ROUND_1_REVIEW)
+        adversarial_review(plan="Test plan", rounds=100)
+
+        assert mock_run.call_count == MAX_ROUNDS
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_rounds_zero_treated_as_one(self, mock_run, mock_which, mock_vault):
+        """rounds=0 is clamped to 1."""
+        mock_run.side_effect = _make_mock_run(SAMPLE_REVIEW)
+        result = adversarial_review(plan="Test plan", rounds=0)
+
+        assert result["success"] is True
+        assert mock_run.call_count == 1
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_counter_proposal_from_last_round(self, mock_run, mock_which, mock_vault):
+        """Counter-proposal comes from the last successful round."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2)
+
+        cp = result["review"]["counter_proposal"]
+        assert cp["has_alternative"] is True
+        assert cp["description"] == "Use queue"
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_include_raw_multi_round(self, mock_run, mock_which, mock_vault):
+        """include_raw=True provides round_details in multi-round mode."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        result = adversarial_review(plan="Test plan", rounds=2, include_raw=True)
+
+        assert "round_details" in result
+        assert len(result["round_details"]) == 2
+        assert result["round_details"][0]["round"] == 1
+        assert result["round_details"][1]["round"] == 2
+
+    @patch("adversarial_review._get_vault_path", return_value="/tmp")
+    @patch("adversarial_review._which", return_value="/usr/bin/codex")
+    @patch("adversarial_review.subprocess.run")
+    def test_user_context_preserved_across_rounds(self, mock_run, mock_which, mock_vault):
+        """User-provided context is included in every round, not just the first."""
+        mock_run.side_effect = _make_multi_round_mock(
+            ROUND_1_REVIEW, ROUND_2_REVIEW,
+        )
+        adversarial_review(plan="Test plan", rounds=2, context="This is a Python project")
+
+        # Both rounds should have the user context
+        first_prompt = mock_run.call_args_list[0][1]["input"]
+        second_prompt = mock_run.call_args_list[1][1]["input"]
+        assert "This is a Python project" in first_prompt
+        assert "This is a Python project" in second_prompt

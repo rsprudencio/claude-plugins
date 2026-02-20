@@ -17,7 +17,7 @@ description: Run the Jarvis adversarial agent for devil's advocate plan review. 
    >
    > [plan text]
 
-   Include any additional context the user provided (focus areas, assumptions, specific concerns).
+   Include any additional context the user provided (focus areas, assumptions, specific concerns). If the user asks for multi-round review (e.g., "3 rounds", "deep review", "thorough review"), include in the prompt: `Use the provider option "rounds": N`.
 
 3. **Return the report**: The agent produces a structured adversarial review. Present it directly to the user.
 
