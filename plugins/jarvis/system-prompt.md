@@ -204,19 +204,18 @@ Scripts are in `hooks-handlers/` within this directory. **Always use this patter
 
 ## Adversarial Plan Review
 
-Stress-test a plan before implementation by spawning an external AI CLI (Codex) in a read-only sandbox as a devil's advocate.
+Stress-test a plan before implementation using the `jarvis-adversarial-agent` from the toolbelt plugin.
 
-**How to run:**
+**Preferred method:** Use `/jarvis-toolbelt:jarvis-adversarial-review` skill or delegate to `jarvis-adversarial-agent`.
+
+**Direct CLI fallback** (if agent unavailable):
 1. Write the plan to a temp file
 2. Resolve the plugin directory (see "Plugin Path Resolution" above)
 3. Run via Bash tool:
    ```
    python3 "$PLUGIN_DIR/hooks-handlers/adversarial_review.py" '{"max_findings": 5}' --plan-file /tmp/plan.txt
    ```
-   Or pipe from stdin: `echo "plan text" | python3 "$PLUGIN_DIR/hooks-handlers/adversarial_review.py" '{"max_findings": 5}'`
 4. Parse the JSON result and present structured findings
-
-Exit code 0 = review completed (even if `status: "needs_revision"`), 1 = failure. JSON on stdout either way.
 
 **Options JSON fields:** `max_findings`, `context`, `focus_areas`, `assumptions`, `timeout_seconds`, `model`, `profile`, `cwd`, `include_raw`, `provider`
 

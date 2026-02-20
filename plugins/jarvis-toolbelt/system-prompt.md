@@ -13,12 +13,35 @@ Adversarial security reviewer with 4 explicit modes:
 
 Invoked via `/jarvis-toolbelt:jarvis-security-review` or by asking for a security review.
 
+### Adversarial Agent (`jarvis-adversarial-agent`)
+Devil's advocate plan reviewer with 4 modes:
+- **PLAN-REVIEW**: Logical gaps, unstated assumptions, missing error paths in implementation plans
+- **POLICY-REVIEW**: Unintended consequences, enforcement gaps in process documents
+- **DECISION-REVIEW**: Confirmation bias, unconsidered alternatives in decisions
+- **GENERAL**: Broad critical analysis of any text
+
+Invoked via `/jarvis-toolbelt:jarvis-adversarial-review` or by asking for a devil's advocate review.
+
 ## Available Skills
 
 ### Security Review (`/jarvis-toolbelt:jarvis-security-review`)
 Delegates to the security agent for structured adversarial review.
 - Trigger: "security review", "threat model", "review for vulnerabilities", "security audit"
 - Output: Structured report with findings table, severity ratings, and must-fix checklist
+
+### Adversarial Review (`/jarvis-toolbelt:jarvis-adversarial-review`)
+Delegates to the adversarial agent for devil's advocate plan review.
+- Trigger: "adversarially review", "stress test this plan", "devil's advocate", "challenge this design"
+- Output: Structured review with findings, counter-proposals, and acknowledged strengths
+
+## Agent Routing
+
+| User says | Agent |
+|-----------|-------|
+| "security review", "threat model", "find vulnerabilities" | `jarvis-security-agent` |
+| "adversarial review", "devil's advocate", "stress test plan" | `jarvis-adversarial-agent` |
+
+**Key distinction**: Security agent = vulnerabilities in code/config. Adversarial agent = flaws in thinking/plans.
 
 ---
 

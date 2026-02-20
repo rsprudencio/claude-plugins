@@ -6,7 +6,7 @@ identifying risks, gaps, and assumptions the author may have missed.
 
 Architecture:
     Generic layer (~300 LOC): prompt building, JSON extraction, normalization
-    Provider layer (~30 LOC each): CLI-specific command construction
+    Provider layer (providers/): adapter pattern for CLI-specific mechanics
 
 Safety:
     - --sandbox read-only (no filesystem writes)
@@ -26,88 +26,79 @@ Exit codes:
 
 import json
 import os
-import platform
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+
+from providers import resolve_provider, REGISTRY
+from providers.base import which as _providers_which
+from providers.base import get_vault_path as _providers_get_vault_path
+from providers.base import resolve_working_directory as _providers_resolve_working_directory
+from providers.codex import CodexProvider
 
 # ---------------------------------------------------------------------------
-# Inlined platform utilities (from tools/platform_utils.py)
+# Backward-compatible aliases — existing tests mock these at module scope
+# (e.g. patch("adversarial_review._which", ...) )
 # ---------------------------------------------------------------------------
 
-
-def _which(cmd: str) -> Optional[str]:
-    """Find command in PATH with enriched fallback locations."""
-    result = shutil.which(cmd)
-    if result:
-        return result
-
-    home = Path.home()
-    extra_dirs: list[Path] = [home / ".local" / "bin", home / ".cargo" / "bin"]
-    system = platform.system()
-
-    if system == "Darwin":
-        extra_dirs += [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
-    elif system == "Windows":
-        local_appdata = os.environ.get("LOCALAPPDATA")
-        program_files = os.environ.get("PROGRAMFILES")
-        if local_appdata:
-            extra_dirs += [
-                Path(local_appdata) / "Programs" / "Python",
-                Path(local_appdata) / "Microsoft" / "WindowsApps",
-            ]
-        if program_files:
-            extra_dirs += [
-                Path(program_files) / "Git" / "cmd",
-                Path(program_files) / "Python",
-            ]
-
-    for d in extra_dirs:
-        if not d.exists() or not d.is_dir():
-            continue
-        candidate = d / cmd
-        if system == "Windows" and not candidate.suffix:
-            candidate = candidate.with_suffix(".exe")
-        if candidate.exists() and candidate.is_file():
-            return str(candidate)
-
-    return None
+_codex_adapter = CodexProvider()
 
 
-# ---------------------------------------------------------------------------
-# Inlined config resolution (from tools/config.py)
-# ---------------------------------------------------------------------------
+def _which(cmd: str):
+    """Find command in PATH (delegates to providers.base.which)."""
+    return _providers_which(cmd)
 
 
 def _get_vault_path() -> str:
-    """Resolve vault path: JARVIS_VAULT_PATH env -> config.json -> cwd."""
-    env_vault = os.environ.get("JARVIS_VAULT_PATH")
-    if env_vault and os.path.isdir(env_vault):
-        return env_vault
+    """Resolve vault path (delegates to providers.base.get_vault_path)."""
+    return _providers_get_vault_path()
 
-    jarvis_home = os.environ.get("JARVIS_HOME")
-    config_path = (
-        Path(jarvis_home) / "config.json"
-        if jarvis_home
-        else Path.home() / ".jarvis" / "config.json"
-    )
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                vault_path = json.load(f).get("vault_path")
-            if vault_path:
-                expanded = os.path.expanduser(vault_path)
-                if os.path.isdir(expanded):
-                    return expanded
-        except (json.JSONDecodeError, OSError):
-            pass
 
-    return os.getcwd()
+def _resolve_working_directory(cwd) -> str:
+    """Resolve and validate the working directory.
 
+    Falls back to vault path if cwd is None, missing, or outside the vault.
+    Uses the local _get_vault_path() to preserve mock surface for tests.
+    """
+    vault = _get_vault_path()
+
+    if not cwd:
+        return vault
+
+    expanded = os.path.realpath(os.path.expanduser(cwd))
+
+    if not os.path.isdir(expanded):
+        return vault
+
+    vault_real = os.path.realpath(vault)
+    if not expanded.startswith(vault_real + os.sep) and expanded != vault_real:
+        return vault
+
+    return expanded
+
+
+def _codex_build_command(binary, output_path, schema_path, working_dir, model=None, profile=None):
+    """Build codex command (delegates to CodexProvider.build_command)."""
+    return _codex_adapter.build_command(binary, output_path, schema_path, working_dir, model, profile)
+
+
+def _codex_read_response(output_path, stdout):
+    """Read codex response (delegates to CodexProvider.read_response)."""
+    return _codex_adapter.read_response(output_path, stdout)
+
+
+# Backward-compatible PROVIDERS dict — wraps adapter methods in the old format.
+# Contract tests and existing tests check PROVIDERS["codex"]["binary"] etc.
+PROVIDERS: dict[str, dict[str, Any]] = {
+    name: {
+        "binary": adapter.name if hasattr(adapter, "name") else name,
+        "build_command": adapter.build_command,
+        "read_response": adapter.read_response,
+    }
+    for name, adapter in REGISTRY.items()
+}
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -200,30 +191,6 @@ def _normalize_max_findings(value: Any) -> int:
     except (TypeError, ValueError):
         return DEFAULT_MAX_FINDINGS
     return max(1, min(v, MAX_ALLOWED_FINDINGS))
-
-
-def _resolve_working_directory(cwd: Optional[str]) -> str:
-    """Resolve and validate the working directory.
-
-    Falls back to vault path if cwd is None, missing, or outside the vault.
-    """
-    vault = _get_vault_path()
-
-    if not cwd:
-        return vault
-
-    expanded = os.path.realpath(os.path.expanduser(cwd))
-
-    # Must exist
-    if not os.path.isdir(expanded):
-        return vault
-
-    # Must be within vault boundary
-    vault_real = os.path.realpath(vault)
-    if not expanded.startswith(vault_real + os.sep) and expanded != vault_real:
-        return vault
-
-    return expanded
 
 
 # ---------------------------------------------------------------------------
@@ -399,68 +366,6 @@ def _normalize_review_payload(raw: dict, max_findings: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Codex provider
-# ---------------------------------------------------------------------------
-
-
-def _codex_build_command(
-    binary: str,
-    output_path: str,
-    schema_path: str,
-    working_dir: str,
-    model: Optional[str] = None,
-    profile: Optional[str] = None,
-) -> list[str]:
-    """Build the codex exec command line."""
-    cmd = [
-        binary,
-        "exec",
-        "--color", "never",
-        "--output-last-message", output_path,
-        "--output-schema", schema_path,
-        "--sandbox", "read-only",
-        "--ephemeral",
-        "--skip-git-repo-check",
-        "--cd", working_dir,
-    ]
-    # Best-effort MCP disable — only covers servers known at build time.
-    # If user has other MCP servers in ~/.codex/config.toml or --profile
-    # loads additional ones, those still run (no wildcard disable in Codex).
-    for override in [
-        "mcp_servers.plugin_jarvis_core.enabled=false",
-        "mcp_servers.plugin_jarvis-todoist_api.enabled=false",
-    ]:
-        cmd.extend(["-c", override])
-
-    if model:
-        cmd.extend(["--model", model])
-    if profile:
-        cmd.extend(["--profile", profile])
-
-    cmd.append("-")  # read prompt from stdin
-    return cmd
-
-
-def _codex_read_response(output_path: str, stdout: str) -> str:
-    """Read the Codex response, preferring --output-last-message file."""
-    if os.path.isfile(output_path):
-        with open(output_path, "r", encoding="utf-8") as f:
-            text = f.read().strip()
-            if text:
-                return text
-    return stdout.strip()
-
-
-PROVIDERS: dict[str, dict[str, Any]] = {
-    "codex": {
-        "binary": "codex",
-        "build_command": _codex_build_command,
-        "read_response": _codex_read_response,
-    },
-}
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -503,24 +408,20 @@ def adversarial_review(
     if not plan or not plan.strip():
         return {"success": False, "error": "Plan text is required and cannot be empty"}
 
-    # Validate provider
-    if provider not in PROVIDERS:
+    # Resolve provider adapter
+    adapter = resolve_provider(provider)
+    if adapter is None:
         return {
             "success": False,
-            "error": f"Unknown provider '{provider}'. Available: {', '.join(sorted(PROVIDERS))}",
+            "error": f"Unknown provider '{provider}'. Available: {', '.join(sorted(REGISTRY))}",
         }
 
-    prov = PROVIDERS[provider]
-    binary_name: str = prov["binary"]
-    build_command: Callable = prov["build_command"]
-    read_response: Callable = prov["read_response"]
-
     # Check binary availability
-    binary_path = _which(binary_name)
+    binary_path = _which(adapter.name)
     if not binary_path:
         return {
             "success": False,
-            "error": f"'{binary_name}' not found in PATH. Install it to use the '{provider}' provider.",
+            "error": adapter.availability_error(),
         }
 
     # Normalize parameters
@@ -546,8 +447,8 @@ def adversarial_review(
         with open(schema_path, "w", encoding="utf-8") as f:
             json.dump(_REVIEW_SCHEMA, f)
 
-        # Build command
-        cmd = build_command(
+        # Build command via adapter
+        cmd = adapter.build_command(
             binary=binary_path,
             output_path=output_path,
             schema_path=schema_path,
@@ -572,8 +473,8 @@ def adversarial_review(
                 "provider": provider,
             }
 
-        # Read response
-        raw_text = read_response(output_path, result.stdout)
+        # Read response via adapter
+        raw_text = adapter.read_response(output_path, result.stdout)
 
         if result.returncode != 0 and not raw_text:
             stderr_snippet = (result.stderr or "")[:500]

@@ -35,9 +35,9 @@
       "requires": ["jarvis"]
     },
     "jarvis-toolbelt": {
-      "version": "1.1.0",
-      "description": "Professional engineering skills and agents — security review, TDD workflows",
-      "provides": ["agents/security", "skills/security-review"],
+      "version": "1.2.0",
+      "description": "Professional engineering skills and agents — security review, adversarial plan review, TDD workflows",
+      "provides": ["agents/security", "agents/adversarial", "skills/security-review", "skills/adversarial-review"],
       "requires": ["jarvis"]
     }
   },
@@ -208,6 +208,16 @@
       "what_it_does": "Delegates to jarvis-security-agent with 4 modes: THREAT-MODEL (design-level), CODE-REVIEW (implementation-level), CONFIG-AUDIT (infrastructure/secrets), CHANGE-REVIEW (PR/diff delta). Auto-detects mode from target type or asks for clarification. Produces structured report with severity-rated findings, evidence, and must-fix checklist.",
       "modes": ["THREAT-MODEL", "CODE-REVIEW", "CONFIG-AUDIT", "CHANGE-REVIEW"],
       "plugin": "jarvis-toolbelt"
+    },
+
+    "jarvis-adversarial-review": {
+      "command": "/jarvis-toolbelt:jarvis-adversarial-review",
+      "triggers": ["adversarially review", "stress test this plan", "devil's advocate", "challenge this design", "poke holes in this"],
+      "description": "Devil's advocate plan review via external AI CLI in read-only sandbox",
+      "what_it_does": "Delegates to jarvis-adversarial-agent which invokes an external AI CLI (Codex, Gemini) to stress-test a plan. Produces structured review with findings (severity-rated), counter-proposals, and acknowledged strengths. The external CLI runs in --sandbox read-only mode for safety.",
+      "modes": ["PLAN-REVIEW", "POLICY-REVIEW", "DECISION-REVIEW", "GENERAL"],
+      "providers": ["codex", "gemini"],
+      "plugin": "jarvis-toolbelt"
     }
   },
 
@@ -281,6 +291,21 @@
         "Structured findings with severity, exploit scenarios, and fixes"
       ],
       "tools": ["Read", "Grep", "Glob"],
+      "plugin": "jarvis-toolbelt"
+    },
+
+    "jarvis-adversarial-agent": {
+      "model": "sonnet",
+      "purpose": "Devil's advocate plan reviewer via external AI CLI",
+      "operating_modes": ["PLAN-REVIEW", "POLICY-REVIEW", "DECISION-REVIEW", "GENERAL"],
+      "capabilities": [
+        "Invokes external AI CLI (Codex, Gemini) in read-only sandbox",
+        "Structured findings with severity ratings and fixes",
+        "Counter-proposal generation with trade-off analysis",
+        "Strength acknowledgment for balanced review",
+        "Multi-provider support with automatic binary discovery"
+      ],
+      "tools": ["Bash", "Read"],
       "plugin": "jarvis-toolbelt"
     }
   },
@@ -431,7 +456,7 @@
           "Best-effort MCP server isolation",
           "Working directory confined to vault boundary"
         ],
-        "providers": ["codex"],
+        "providers": ["codex", "gemini"],
         "latency": "1-4 minutes typical"
       }
     }
