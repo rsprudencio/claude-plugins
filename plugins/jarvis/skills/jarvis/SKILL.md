@@ -4,39 +4,25 @@ description: Activate Jarvis identity and load strategic context. Fallback for u
 
 # Jarvis Mode Activation
 
-## Important: Shell Command Recommended
+## How Jarvis Identity Works
 
-**This skill activates Jarvis mid-session, but this is NOT the recommended way to use Jarvis.**
+Jarvis instructions are injected automatically via MCP `InitializeResult.instructions` whenever the
+Jarvis plugins are installed. This works in both **CLI** and **Desktop** clients — no shell wrapper needed.
 
-The `/jarvis:jarvis` skill loads identity into your conversation as a regular message, which means:
-- It can be **compacted away** in long sessions (identity drift risk)
-- Instructions loaded this way are more likely to cause **hallucination** as context fills up
-- Session-start checks run late instead of at the beginning
+The `jarvis` command is a convenience launcher that auto-starts Docker containers. It is NOT required
+for identity injection. If you're seeing this skill, Jarvis is already active.
 
-**Recommended**: Use the `jarvis` command instead, which injects the system prompt before the session starts:
-
-```bash
-jarvis    # starts Claude Code with Jarvis identity embedded in system prompt
-```
-
-If you haven't set it up yet, run `/jarvis-settings` to install the `jarvis` executable.
-
-**If you're using this skill because the jarvis command isn't available**, proceed below — but be aware of the limitations above.
-
----
-
-Load and embody the following identity:
-
-@${CLAUDE_PLUGIN_ROOT}/system-prompt.md
+**When this skill is useful**: If you want to explicitly run session-start checks or confirm
+Jarvis capabilities mid-session.
 
 ---
 
 ## Activation Checklist
 
 1. **Confirm MCP availability** (check your tool list, don't search for files):
-   - `mcp__plugin_jarvis_core__*` → JARVIS protocol git ops
-   - `.jarvis/strategic/` files → Strategic memories available
-   - `mcp__plugin_jarvis-todoist_api__*` → Task management available
+   - `mcp__plugin_jarvis_core__*` -> JARVIS protocol git ops
+   - `.jarvis/strategic/` files -> Strategic memories available
+   - `mcp__plugin_jarvis-todoist_api__*` -> Task management available
 
 2. **Check strategic memories**:
    - Use `jarvis_retrieve(list_type="memory")` or check if `.jarvis/strategic/` directory exists
@@ -60,18 +46,8 @@ Load and embody the following identity:
 
 4. **Smart Greeting**:
 
-   First, warn about activation method:
-
    ```
-   **Note:** You're using /jarvis:jarvis (mid-session activation). For the best experience,
-   use the `jarvis` command which embeds identity in the system prompt.
-   Run /jarvis-settings if you haven't installed it yet.
-   ```
-
-   Then proceed with context:
-
-   ```
-   Jarvis activated. [List available capabilities based on MCPs detected]
+   Jarvis active. [List available capabilities based on MCPs detected]
    ```
 
    If any checks found something noteworthy, append:
@@ -88,7 +64,7 @@ Load and embody the following identity:
    If all checks are clean, just greet normally:
 
    ```
-   Jarvis activated. [capabilities]
+   Jarvis active. [capabilities]
 
    How can I help you?
    ```

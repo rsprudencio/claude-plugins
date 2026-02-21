@@ -1,0 +1,6 @@
+#!/bin/bash
+# dar-review — DAR adversarial review runner
+# Usage: dar-review <version> <options_json> [--plan-file <path>]
+VERSION="$1"; shift
+SCRIPT="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache/jarvis-plugins/jarvis/$VERSION/hooks-handlers/adversarial_review.py"
+exec python3 "$SCRIPT" "$@"

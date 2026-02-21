@@ -53,18 +53,14 @@ COPY --from=model-fetch /models /app/models
 ENV JARVIS_MODEL_DIR=/app/models/cross-encoder
 
 # ---- Copy jarvis-core source ----
+# Uses directory COPY so new .py files are included automatically.
+# Tests, __pycache__, pyproject.toml etc. are excluded via .dockerignore.
 WORKDIR /app/jarvis-core
-COPY plugins/jarvis/mcp-server/server.py .
-COPY plugins/jarvis/mcp-server/protocol.py .
-COPY plugins/jarvis/mcp-server/http_app.py .
-COPY plugins/jarvis/mcp-server/tools/ ./tools/
-COPY plugins/jarvis/mcp-server/defaults/ ./defaults/
+COPY plugins/jarvis/mcp-server/ .
 
 # ---- Copy jarvis-todoist source ----
 WORKDIR /app/jarvis-todoist
-COPY plugins/jarvis-todoist/mcp-server/server.py .
-COPY plugins/jarvis-todoist/mcp-server/todoist_api.py .
-COPY plugins/jarvis-todoist/mcp-server/http_app.py .
+COPY plugins/jarvis-todoist/mcp-server/ .
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /app/entrypoint.sh

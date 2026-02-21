@@ -33,8 +33,8 @@ Default: last 7 days if unspecified
 ### Step 2: Load Context
 
 Load strategic memories for comparison:
-- `jarvis-patterns` - Previous patterns to compare against
-- `jarvis-focus-areas` - Goals to track progress
+- `jarvis-insights` - Previous patterns to compare against
+- `jarvis-priorities` - Goals to track progress
 
 Use `jarvis_retrieve(name=...)` for each.
 

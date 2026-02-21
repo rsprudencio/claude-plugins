@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Auto-Extract background worker: analyzes conversation turns and extracts observations.
 
-Usage: python3 extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id]
+Usage: python3 extract_observation.py <mode> <transcript_path> [session_id]
 
 The Stop hook fires after every conversation round. This script uses a
 per-session line watermark (similar to Filebeat/Kafka consumer offsets)
@@ -20,12 +20,15 @@ Pipeline:
 """
 import json
 import os
+import hashlib
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+from hook_http_client import post_json
 
 # Import anthropic at module level for easier testing (imported conditionally in function)
 try:
@@ -39,6 +42,10 @@ HAIKU_MODEL = "claude-haiku-4-5-20251001"
 # Per-session watermark directory
 WATERMARK_DIR = Path.home() / ".jarvis" / "state" / "sessions"
 WATERMARK_MAX_AGE = 2592000  # 30 days in seconds
+
+# Stop-hook ingest queue (JSONL, oldest-first replay)
+INGEST_QUEUE_FILE = Path.home() / ".jarvis" / "state" / "auto_extract_ingest_queue.jsonl"
+INGEST_REPLAY_BATCH = 20
 
 # Token usage log for cost tracking (debug mode)
 TOKEN_LOG_FILE = Path.home() / ".jarvis" / "debug.auto-extraction.log"
@@ -1142,65 +1149,181 @@ def call_haiku(
     return (*result, "CLI") if result else None
 
 
-def store_observation(
-    content: str,
-    importance_score: float,
-    tags: list,
-    source_label: str,
-    project_path: str = "",
-    git_branch: str = "",
-    relevant_files: list | None = None,
-    scope: str = "",
-    session_id: str = "",
-    transcript_line: int = -1,
-) -> dict:
-    """Store an observation via tier2_write (all modes use HttpClient → ChromaDB server).
+def _safe_int(value, default: int) -> int:
+    """Best-effort integer parse with fallback."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
-    Args:
-        content: Observation text
-        importance_score: 0.0-1.0
-        tags: List of tags
-        source_label: Source identifier (e.g., "auto-extract:stop-hook")
-        project_path: Full path to project directory
-        git_branch: Current git branch name
-        relevant_files: List of file paths referenced in the turn
-        scope: "project" or "global" classification from Haiku
-        session_id: Claude Code session ID for tracing
-        transcript_line: Absolute line index in transcript JSONL (-1 = unknown)
+
+def _safe_float(value, default: float) -> float:
+    """Best-effort float parse with fallback."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp_importance(value, default: float = 0.5) -> float:
+    """Clamp importance score into [0, 1]."""
+    parsed = _safe_float(value, default)
+    return max(0.0, min(1.0, parsed))
+
+
+def _normalize_tags(tags) -> list[str]:
+    """Normalize tags into a list of non-empty strings."""
+    if not isinstance(tags, list):
+        return []
+    return [str(tag).strip() for tag in tags if str(tag).strip()]
+
+
+def _normalize_for_hash(text: str) -> str:
+    """Normalize free text for deterministic ingest event hashing."""
+    return " ".join(text.strip().lower().split())
+
+
+def build_ingest_event_id(
+    session_id: str,
+    transcript_line: int,
+    item_type: str,
+    content: str,
+) -> str:
+    """Create deterministic event IDs for idempotent tier2 writes."""
+    normalized = _normalize_for_hash(content)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    sid = session_id or "unknown"
+    return f"{item_type}:{sid}:{transcript_line}:{digest}"
+
+
+def _record_file_mtimes(file_paths: list[str]) -> dict[str, float]:
+    """Record filesystem mtime for each path (0.0 when unavailable)."""
+    mtimes: dict[str, float] = {}
+    for path in file_paths:
+        try:
+            mtimes[path] = os.stat(path).st_mtime
+        except (OSError, TypeError):
+            mtimes[path] = 0.0
+    return mtimes
+
+
+def _serialize_mtimes(mtimes: dict[str, float]) -> str:
+    """Serialize mtimes map to stable JSON string."""
+    return json.dumps(mtimes, sort_keys=True)
+
+
+def _jarvis_state_dir() -> Path:
+    """Resolve Jarvis state directory with JARVIS_HOME override."""
+    jarvis_home = os.environ.get("JARVIS_HOME")
+    if jarvis_home:
+        return Path(jarvis_home) / "state"
+    return Path.home() / ".jarvis" / "state"
+
+
+def _queue_file_path() -> Path:
+    """Resolve queue file path."""
+    return _jarvis_state_dir() / INGEST_QUEUE_FILE.name
+
+
+def _load_queue_entries() -> list[dict]:
+    """Load queue entries from JSONL, skipping malformed lines."""
+    path = _queue_file_path()
+    if not path.exists():
+        return []
+
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(parsed, dict) and isinstance(parsed.get("payload"), dict):
+                    entries.append(parsed)
+    except OSError:
+        return []
+    return entries
+
+
+def _write_queue_entries(entries: list[dict]) -> None:
+    """Atomically rewrite queue JSONL file."""
+    path = _queue_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent,
+        suffix=".tmp",
+        prefix="auto_extract_ingest_queue.",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for entry in entries:
+                handle.write(json.dumps(entry) + "\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def enqueue_ingest_payload(payload: dict) -> None:
+    """Append one ingest payload to queue JSONL."""
+    path = _queue_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "enqueued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "payload": payload,
+    }
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def replay_ingest_queue(batch_limit: int = INGEST_REPLAY_BATCH) -> tuple[int, bool]:
+    """Replay queued ingestion payloads oldest-first.
 
     Returns:
-        Result dict from tier2_write
+        (replayed_count, stopped_on_failure)
     """
-    extra = {}
-    if project_path:
-        extra["project_path"] = project_path
-    if git_branch:
-        extra["git_branch"] = git_branch
-    if relevant_files:
-        extra["relevant_files"] = ",".join(relevant_files)
-        from tools.staleness import record_file_mtimes, serialize_mtimes
+    entries = _load_queue_entries()
+    if not entries:
+        return 0, False
 
-        mtimes = record_file_mtimes(relevant_files)
-        if mtimes:
-            extra["file_mtimes"] = serialize_mtimes(mtimes)
-    if scope:
-        extra["scope"] = scope
-    if session_id:
-        extra["session_id"] = session_id
-    if transcript_line >= 0:
-        extra["transcript_line"] = str(transcript_line)
+    replayed = 0
+    remaining: list[dict] = []
+    stopped = False
 
-    from tools.tier2 import tier2_write
+    for idx, entry in enumerate(entries):
+        if replayed >= batch_limit:
+            remaining.extend(entries[idx:])
+            break
 
-    return tier2_write(
-        content=content,
-        content_type="observation",
-        importance_score=importance_score,
-        source=source_label,
-        tags=tags,
-        extra_metadata=extra or None,
-        skip_secret_scan=False,
-    )
+        payload = entry.get("payload")
+        if not isinstance(payload, dict):
+            replayed += 1
+            continue
+
+        response = post_json(
+            "/hook/auto-extract/ingest",
+            payload,
+            timeout_seconds=2.5,
+        )
+        if response.get("success"):
+            replayed += 1
+            continue
+
+        remaining.extend(entries[idx:])
+        stopped = True
+        break
+
+    if replayed > 0 or (entries and not stopped):
+        _write_queue_entries(remaining)
+    return replayed, stopped
 
 
 def normalize_extraction_response(parsed: dict | None) -> list[dict]:
@@ -1395,43 +1518,8 @@ def _has_jaccard_duplicate(
 def is_duplicate_observation(
     content: str, threshold: float = _DEDUP_RELEVANCE_THRESHOLD, debug: bool = False
 ) -> bool:
-    """Check if a semantically similar observation already exists globally.
-
-    Uses ChromaDB embedding relevance score directly. If the top result's
-    relevance >= threshold, the observation is considered a duplicate.
-    Zero additional API calls (embeddings computed on store).
-
-    Args:
-        content: Observation text to check for duplicates
-        threshold: Minimum relevance to consider duplicate (default 0.95).
-            Higher = stricter (fewer false positives). Lower = more aggressive.
-            Scale: 0.0 = unrelated, 1.0 = identical meaning.
-        debug: Whether to log dedup events to debug file
-    """
-    from tools.query import query_vault
-
-    result = query_vault(
-        query=content,
-        n_results=1,
-        filter={"type": "observation"},
-    )
-    if not result.get("success") or not result.get("results"):
-        return False
-
-    top = result["results"][0]
-    relevance = top.get("relevance", 0.0)
-
-    if relevance >= threshold:
-        _log_dedup(
-            "observation",
-            content,
-            top.get("preview", ""),
-            relevance,
-            threshold,
-            metric="relevance",
-            debug=debug,
-        )
-        return True
+    """Compatibility stub: dedup now runs server-side in ingest endpoint."""
+    _ = (content, threshold, debug)
     return False
 
 
@@ -1441,57 +1529,25 @@ def is_duplicate_worklog(
     threshold: float = _DEDUP_JACCARD_THRESHOLD,
     debug: bool = False,
 ) -> bool:
-    """Check if a similar worklog already exists for this session.
-
-    Session-scoped: queries only worklogs from the same session, then
-    Jaccard confirms word-level overlap.
-    """
-    from tools.tier2 import tier2_list
-
-    result = tier2_list(
-        content_type="worklog",
-        session_id=session_id,
-        sort_by="created_at_desc",
-    )
-    if not result.get("success") or not result.get("documents"):
-        return False
-
-    candidates = [d.get("content", "") for d in result["documents"]]
-    return _has_jaccard_duplicate(
-        task_summary, candidates, threshold, content_type="worklog", debug=debug
-    )
+    """Compatibility stub: dedup now runs server-side in ingest endpoint."""
+    _ = (task_summary, session_id, threshold, debug)
+    return False
 
 
 def discover_workstreams(limit: int = 30) -> list[str]:
-    """Discover known workstream names from recent worklog entries.
-
-    Queries ChromaDB for recent worklogs and extracts unique workstream
-    values from metadata.
-
-    Args:
-        limit: Maximum number of recent worklogs to scan (default 30)
-
-    Returns:
-        Sorted list of unique workstream names
-    """
-    from tools.tier2 import tier2_list
-
-    result = tier2_list(
-        content_type="worklog",
-        limit=limit,
-        sort_by="created_at_desc",
+    """Load known workstreams through the HTTP hook context endpoint."""
+    response = post_json(
+        "/hook/auto-extract/context",
+        {"workstream_limit": limit},
+        timeout_seconds=2.5,
     )
-
-    if not result.get("success") or not result.get("documents"):
+    if not response.get("success"):
         return []
-
-    workstreams = set()
-    for doc in result["documents"]:
-        ws = doc.get("metadata", {}).get("workstream", "")
-        if ws and ws != "misc":
-            workstreams.add(ws)
-
-    return sorted(workstreams)
+    data = response.get("data") or {}
+    workstreams = data.get("known_workstreams", [])
+    if not isinstance(workstreams, list):
+        return []
+    return [str(ws) for ws in workstreams if str(ws).strip()]
 
 
 def store_worklog(
@@ -1506,48 +1562,111 @@ def store_worklog(
     session_id: str = "",
     transcript_line: int = -1,
 ) -> dict:
-    """Store a worklog entry via tier2_write (all modes use HttpClient → ChromaDB server).
+    """Compatibility helper: write one worklog via ingest endpoint."""
+    _ = source_label
+    safe_files = [
+        str(path).strip() for path in (relevant_files or []) if str(path).strip()
+    ]
+    context = {
+        "project_path": project_path,
+        "git_branch": git_branch,
+        "relevant_files": safe_files,
+        "file_mtimes": _serialize_mtimes(_record_file_mtimes(safe_files))
+        if safe_files
+        else "",
+        "session_id": session_id,
+        "transcript_line": transcript_line,
+    }
+    payload = {
+        "observations": [],
+        "worklog": {
+            "task_summary": task_summary,
+            "workstream": workstream,
+            "activity_type": activity_type,
+            "tags": _normalize_tags(tags),
+            "ingest_event_id": build_ingest_event_id(
+                session_id,
+                transcript_line,
+                "worklog",
+                f"{task_summary}|{workstream}|{activity_type}",
+            ),
+        },
+        "context": context,
+        "dedup": {
+            "observation_threshold": _DEDUP_RELEVANCE_THRESHOLD,
+            "worklog_threshold": _DEDUP_JACCARD_THRESHOLD,
+        },
+    }
+    response = post_json("/hook/auto-extract/ingest", payload, timeout_seconds=2.5)
+    if not response.get("success"):
+        return {"success": False, "error": response.get("error", "ingest_failed")}
+    worklog_result = (response.get("data") or {}).get("worklog", {})
+    status = worklog_result.get("status", "")
+    if status in ("stored", "duplicate"):
+        return {"success": True, "id": worklog_result.get("id", "")}
+    return {"success": False, "error": worklog_result.get("error", "write_failed")}
 
-    Args:
-        task_summary: What the user was working on (intent-focused)
-        workstream: Workstream category (e.g., "VMPulse", "misc")
-        activity_type: Type of activity (coding, debugging, etc.)
-        tags: List of tags
-        source_label: Source identifier
-        project_path: Full path to project directory
-        git_branch: Current git branch name
-        relevant_files: List of file paths referenced
-        session_id: Claude Code session ID
-        transcript_line: Absolute line index in transcript JSONL
 
-    Returns:
-        Result dict from tier2_write
-    """
-    extra = {"workstream": workstream, "activity_type": activity_type}
-    if project_path:
-        project_dir = os.path.basename(project_path)
-        extra["project_path"] = project_path
-        extra["project_dir"] = project_dir
-    if git_branch:
-        extra["git_branch"] = git_branch
-    if relevant_files:
-        extra["relevant_files"] = ",".join(relevant_files)
-    if session_id:
-        extra["session_id"] = session_id
-    if transcript_line >= 0:
-        extra["transcript_line"] = str(transcript_line)
-
-    from tools.tier2 import tier2_write
-
-    return tier2_write(
-        content=task_summary,
-        content_type="worklog",
-        importance_score=0.5,
-        source=source_label,
-        tags=tags,
-        extra_metadata=extra,
-        skip_secret_scan=False,
-    )
+def store_observation(
+    content: str,
+    importance_score: float,
+    tags: list,
+    source_label: str,
+    project_path: str = "",
+    git_branch: str = "",
+    relevant_files: list | None = None,
+    scope: str = "",
+    session_id: str = "",
+    transcript_line: int = -1,
+) -> dict:
+    """Compatibility helper: write one observation via ingest endpoint."""
+    _ = source_label
+    safe_files = [
+        str(path).strip() for path in (relevant_files or []) if str(path).strip()
+    ]
+    context = {
+        "project_path": project_path,
+        "git_branch": git_branch,
+        "relevant_files": safe_files,
+        "file_mtimes": _serialize_mtimes(_record_file_mtimes(safe_files))
+        if safe_files
+        else "",
+        "session_id": session_id,
+        "transcript_line": transcript_line,
+    }
+    payload = {
+        "observations": [
+            {
+                "content": content,
+                "importance_score": _clamp_importance(importance_score),
+                "tags": _normalize_tags(tags),
+                "scope": scope if scope in ("project", "global") else "",
+                "ingest_event_id": build_ingest_event_id(
+                    session_id,
+                    transcript_line,
+                    "observation",
+                    content,
+                ),
+            }
+        ],
+        "worklog": None,
+        "context": context,
+        "dedup": {
+            "observation_threshold": _DEDUP_RELEVANCE_THRESHOLD,
+            "worklog_threshold": _DEDUP_JACCARD_THRESHOLD,
+        },
+    }
+    response = post_json("/hook/auto-extract/ingest", payload, timeout_seconds=2.5)
+    if not response.get("success"):
+        return {"success": False, "error": response.get("error", "ingest_failed")}
+    obs_results = (response.get("data") or {}).get("observations", [])
+    if not obs_results:
+        return {"success": False, "error": "missing_observation_result"}
+    first = obs_results[0]
+    status = first.get("status", "")
+    if status in ("stored", "duplicate"):
+        return {"success": True, "id": first.get("id", "")}
+    return {"success": False, "error": first.get("error", "write_failed")}
 
 
 def main():
@@ -1575,40 +1694,60 @@ def main():
     - Observations stored: advance
     - Storage failure: advance (Haiku already ran, no point retrying)
     """
-    # Args: <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]
-    if len(sys.argv) < 4:
+    # Args: <mode> <transcript_path> [session_id] [project_path] [git_branch]
+    if len(sys.argv) < 3:
         print(
-            "Usage: extract_observation.py <mcp_server_dir> <mode> <transcript_path> [session_id] [project_path] [git_branch]",
+            "Usage: extract_observation.py <mode> <transcript_path> [session_id] [project_path] [git_branch]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    mcp_server_dir = sys.argv[1]
-    mode = sys.argv[2]
-    transcript_path = sys.argv[3]
-    session_id = sys.argv[4] if len(sys.argv) >= 5 else "unknown"
-    project_path = sys.argv[5] if len(sys.argv) >= 6 else ""
-    git_branch = sys.argv[6] if len(sys.argv) >= 7 else ""
+    mode = sys.argv[1]
+    transcript_path = sys.argv[2]
+    session_id = sys.argv[3] if len(sys.argv) >= 4 else "unknown"
+    project_path = sys.argv[4] if len(sys.argv) >= 5 else ""
+    git_branch = sys.argv[5] if len(sys.argv) >= 6 else ""
     hook_input = os.environ.get("JARVIS_HOOK_INPUT", "")
-    sys.path.insert(0, mcp_server_dir)
 
-    # Load config for thresholds
-    from tools.config import get_auto_extract_config, get_worklog_config
+    # Replay queued payloads first (oldest-first, bounded batch).
+    replayed, replay_stopped = replay_ingest_queue()
+    if replayed:
+        print(f"Replayed {replayed} queued ingest payload(s)", file=sys.stderr)
+    if replay_stopped:
+        print("Queue replay stopped on first ingest failure", file=sys.stderr)
 
-    config = get_auto_extract_config()
-    debug = config.get("debug", False)
-    min_chars = config.get("min_turn_chars", 200)
-    max_lines = config.get("max_transcript_lines", 500)
-    max_observations = config.get("max_observations", _MAX_OBSERVATIONS)
+    # Load extraction/worklog config and known workstreams via HTTP endpoint.
+    ctx_response = post_json(
+        "/hook/auto-extract/context",
+        {"workstream_limit": 30},
+        timeout_seconds=2.5,
+    )
+    if ctx_response.get("success"):
+        ctx_data = ctx_response.get("data") or {}
+        config = ctx_data.get("auto_extract", {})
+        worklog_config = ctx_data.get("worklog", {})
+        known_workstreams = ctx_data.get("known_workstreams", [])
+    else:
+        # Degrade safely: continue extraction with defaults. Persistence path
+        # will queue on ingest failure if MCP remains unavailable.
+        config = {}
+        worklog_config = {}
+        known_workstreams = []
+        print(
+            f"Auto-extract context unavailable: {ctx_response.get('error', 'unknown')}",
+            file=sys.stderr,
+        )
 
-    # Dedup thresholds (observations use embedding relevance, worklogs use Jaccard)
-    obs_dedup_threshold = config.get("dedup_threshold", _DEDUP_RELEVANCE_THRESHOLD)
-
-    # Worklog config
-    worklog_config = get_worklog_config()
-    worklog_enabled = worklog_config.get("enabled", True)
-    worklog_dedup_threshold = worklog_config.get(
-        "dedup_threshold", _DEDUP_JACCARD_THRESHOLD
+    debug = bool(config.get("debug", False))
+    min_chars = _safe_int(config.get("min_turn_chars"), 200)
+    max_lines = _safe_int(config.get("max_transcript_lines"), 500)
+    max_observations = _safe_int(config.get("max_observations"), _MAX_OBSERVATIONS)
+    obs_dedup_threshold = _safe_float(
+        config.get("dedup_threshold"), _DEDUP_RELEVANCE_THRESHOLD
+    )
+    worklog_enabled = bool(worklog_config.get("enabled", True))
+    worklog_dedup_threshold = _safe_float(
+        worklog_config.get("dedup_threshold"), _DEDUP_JACCARD_THRESHOLD
     )
 
     # Step 1: Read watermark
@@ -1653,13 +1792,8 @@ def main():
     # Step 6: Compute content budget from ALL turns
     budget = compute_content_budget(turns)
 
-    # Step 6b: Discover known workstreams for categorization
-    workstreams = []
-    if worklog_enabled:
-        try:
-            workstreams = discover_workstreams()
-        except Exception:
-            pass  # Non-critical — prompt will say "None yet"
+    # Step 6b: Known workstreams for categorization
+    workstreams = known_workstreams if worklog_enabled else []
 
     # Step 7: Build session prompt with ALL turns
     project_name = os.path.basename(project_path) if project_path else ""
@@ -1706,150 +1840,160 @@ def main():
         write_watermark(session_id, last_line_read)
         sys.exit(0)
 
-    # Step 10: Store each observation (capped at max_observations)
-    # Use relevant_files from last turn (already accumulated by parse_all_turns)
+    # Step 10: Build a single ingest payload for server-side dedup + persistence.
     relevant_files = turns[-1].get("relevant_files", []) if turns else []
-    # Use end_line_idx from last turn for tracing
+    safe_relevant_files = [
+        str(path).strip() for path in relevant_files if str(path).strip()
+    ]
     absolute_line = turns[-1].get("end_line_idx", -1) if turns else -1
+    file_mtimes_json = (
+        _serialize_mtimes(_record_file_mtimes(safe_relevant_files))
+        if safe_relevant_files
+        else ""
+    )
 
-    stored_count = 0
-    queued_count = 0
-    for i, obs in enumerate(observations[:max_observations]):
-        content = obs.get("content", "").strip()
+    payload_observations = []
+    for obs in observations[:max_observations]:
+        content = str(obs.get("content", "")).strip()
         if not content:
             continue
-
-        importance = float(obs.get("importance_score", 0.5))
-        importance = max(0.0, min(1.0, importance))  # Clamp to valid range
-
-        tags = obs.get("tags", [])
-        if not isinstance(tags, list):
-            tags = []
-
-        scope = obs.get("scope", "")
+        scope = str(obs.get("scope", "")).strip()
         if scope not in ("project", "global"):
             scope = ""
-
-        if is_duplicate_observation(
-            content, threshold=obs_dedup_threshold, debug=debug
-        ):
-            print(f"Skipping duplicate observation {i + 1}", file=sys.stderr)
-            continue
-
-        result = store_observation(
-            content,
-            importance,
-            tags,
-            "auto-extract:stop-hook",
-            project_path=project_path,
-            git_branch=git_branch,
-            relevant_files=relevant_files,
-            scope=scope,
-            session_id=session_id,
-            transcript_line=absolute_line,
+        payload_observations.append(
+            {
+                "content": content,
+                "importance_score": _clamp_importance(obs.get("importance_score", 0.5)),
+                "tags": _normalize_tags(obs.get("tags", [])),
+                "scope": scope,
+                "ingest_event_id": build_ingest_event_id(
+                    session_id,
+                    absolute_line,
+                    "observation",
+                    content,
+                ),
+            }
         )
 
-        if result.get("success"):
-            if result.get("queued"):
-                queued_count += 1
-                event_id = result.get("event_id", "unknown")
-                print(
-                    f"Queued observation {queued_count}: {event_id}",
-                    file=sys.stderr,
-                )
-                _log_extraction(
-                    backend,
-                    input_tokens,
-                    output_tokens,
-                    observation_stored=False,
-                    obs_id=f"queued:{event_id}",
-                    importance=importance,
-                    tags=tags,
-                    prompt=prompt if i == 0 else "",
-                    observation_content=content,
-                    scope=scope,
-                    hook_input=hook_input if i == 0 else "",
-                    debug=debug,
-                )
-            else:
-                obs_id = result.get("id", "unknown")
-                stored_count += 1
-                print(f"Stored observation {stored_count}: {obs_id}", file=sys.stderr)
-                # Log prompt + hook_input only for first observation to avoid debug log bloat
-                _log_extraction(
-                    backend,
-                    input_tokens,
-                    output_tokens,
-                    observation_stored=True,
-                    obs_id=obs_id,
-                    importance=importance,
-                    tags=tags,
-                    prompt=prompt if i == 0 else "",
-                    observation_content=content,
-                    scope=scope,
-                    hook_input=hook_input if i == 0 else "",
-                    debug=debug,
-                )
-        else:
-            print(
-                f"Failed to store observation: {result.get('error')}", file=sys.stderr
-            )
-            _log_extraction(
-                backend,
-                input_tokens,
-                output_tokens,
-                observation_stored=False,
-                prompt=prompt if i == 0 else "",
-                observation_content=content,
-                hook_input=hook_input if i == 0 else "",
-                debug=debug,
-            )
+    payload_worklog = None
+    if worklog_enabled and worklogs:
+        wl = worklogs[0]
+        payload_worklog = {
+            "task_summary": wl["task_summary"],
+            "workstream": wl["workstream"],
+            "activity_type": wl["activity_type"],
+            "tags": _normalize_tags(wl.get("tags", [])),
+            "ingest_event_id": build_ingest_event_id(
+                session_id,
+                absolute_line,
+                "worklog",
+                f"{wl['task_summary']}|{wl['workstream']}|{wl['activity_type']}",
+            ),
+        }
 
-    if queued_count > 0:
-        print(f"Queued {queued_count} observation(s) for retry", file=sys.stderr)
+    ingest_payload = {
+        "observations": payload_observations,
+        "worklog": payload_worklog,
+        "context": {
+            "project_path": project_path,
+            "git_branch": git_branch,
+            "relevant_files": safe_relevant_files,
+            "file_mtimes": file_mtimes_json,
+            "session_id": session_id,
+            "transcript_line": absolute_line,
+        },
+        "dedup": {
+            "observation_threshold": obs_dedup_threshold,
+            "worklog_threshold": worklog_dedup_threshold,
+        },
+    }
 
-    if stored_count == 0 and queued_count == 0 and observations:
-        print("No observations stored (all empty or failed)", file=sys.stderr)
-
-    # Step 10b: Store worklog entry (if not a duplicate)
-    if worklogs:
-        wl = worklogs[0]  # Max 1 worklog per extraction
-        if not is_duplicate_worklog(
-            wl["task_summary"],
-            session_id,
-            threshold=worklog_dedup_threshold,
+    ingest_response = post_json(
+        "/hook/auto-extract/ingest",
+        ingest_payload,
+        timeout_seconds=2.5,
+    )
+    if not ingest_response.get("success"):
+        enqueue_ingest_payload(ingest_payload)
+        print(
+            f"Ingest unavailable, queued payload for replay: {ingest_response.get('error', 'unknown')}",
+            file=sys.stderr,
+        )
+        _log_extraction(
+            backend,
+            input_tokens,
+            output_tokens,
+            observation_stored=False,
+            prompt=prompt,
+            observation_content=payload_observations[0]["content"]
+            if payload_observations
+            else "",
+            hook_input=hook_input,
             debug=debug,
-        ):
-            wl_result = store_worklog(
-                task_summary=wl["task_summary"],
-                workstream=wl["workstream"],
-                activity_type=wl["activity_type"],
-                tags=wl.get("tags", []),
-                source_label="auto-extract:stop-hook:worklog",
-                project_path=project_path,
-                git_branch=git_branch,
-                relevant_files=relevant_files,
-                session_id=session_id,
-                transcript_line=absolute_line,
-            )
-            if wl_result.get("success"):
-                if wl_result.get("queued"):
-                    print(
-                        f"Queued worklog for retry [{wl['workstream']}]",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        f"Stored worklog: {wl_result.get('id')} [{wl['workstream']}]",
-                        file=sys.stderr,
-                    )
+        )
+        # Post-Haiku persistence failure still advances watermark.
+        write_watermark(session_id, last_line_read)
+        sys.exit(0)
+
+    ingest_data = ingest_response.get("data") or {}
+    obs_results = ingest_data.get("observations", [])
+    if isinstance(obs_results, list):
+        for idx, result in enumerate(obs_results):
+            status = str(result.get("status", "error"))
+            obs_id = result.get("id", "")
+            if status == "stored":
+                print(f"Stored observation {idx + 1}: {obs_id}", file=sys.stderr)
+            elif status == "duplicate":
+                print(f"Observation {idx + 1} skipped (duplicate)", file=sys.stderr)
             else:
                 print(
-                    f"Failed to store worklog: {wl_result.get('error')}",
+                    f"Observation {idx + 1} failed: {result.get('error', 'unknown')}",
                     file=sys.stderr,
                 )
-        else:
+
+    worklog_result = ingest_data.get("worklog", {})
+    if isinstance(worklog_result, dict):
+        wl_status = str(worklog_result.get("status", ""))
+        if wl_status == "stored":
+            print(
+                f"Stored worklog: {worklog_result.get('id', '')}",
+                file=sys.stderr,
+            )
+        elif wl_status == "duplicate":
             print("Worklog skipped (duplicate in session)", file=sys.stderr)
+        elif worklog_result:
+            print(
+                f"Worklog failed: {worklog_result.get('error', 'unknown')}",
+                file=sys.stderr,
+            )
+
+    _log_extraction(
+        backend,
+        input_tokens,
+        output_tokens,
+        observation_stored=any(
+            isinstance(r, dict) and r.get("status") == "stored" for r in obs_results
+        ),
+        obs_id=next(
+            (
+                r.get("id")
+                for r in obs_results
+                if isinstance(r, dict) and r.get("status") == "stored"
+            ),
+            None,
+        ),
+        importance=payload_observations[0]["importance_score"]
+        if payload_observations
+        else 0.0,
+        tags=payload_observations[0]["tags"] if payload_observations else [],
+        prompt=prompt,
+        observation_content=payload_observations[0]["content"]
+        if payload_observations
+        else "",
+        scope=payload_observations[0].get("scope", "") if payload_observations else "",
+        hook_input=hook_input,
+        debug=debug,
+    )
 
     # Step 11: Advance watermark (even on storage failure — Haiku already ran)
     write_watermark(session_id, last_line_read)

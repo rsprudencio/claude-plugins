@@ -2,8 +2,8 @@
 """Per-prompt semantic search: queries vault memories relevant to user's prompt.
 
 Usage:
-  Hook mode:  echo '{"prompt":"..."}' | python3 prompt_search.py <mcp_server_dir> --hook
-  Direct:     python3 prompt_search.py <mcp_server_dir> "query text here"
+  Hook mode:  echo '{"prompt":"..."}' | python3 prompt_search.py --hook
+  Direct:     python3 prompt_search.py "query text here"
 
 Called by the UserPromptSubmit hook. Outputs XML-formatted vault memories
 to stdout for injection into Claude's context. Silent on errors (exit 0,
@@ -16,6 +16,8 @@ import time
 import xml.sax.saxutils as saxutils
 from pathlib import Path
 from typing import Tuple
+
+from hook_http_client import post_json
 
 
 # --- Debug Logging ---
@@ -213,115 +215,85 @@ def _format_memories(matches: list, query_ms: float) -> str:
 # --- Main Entry Point ---
 
 
-def _post_bump_retrieval(surfaced_ids: list, config: dict):
-    """Bump retrieval counts for surfaced documents inline.
-
-    Args:
-        surfaced_ids: List of document IDs to bump
-        config: Per-prompt config dict (for passive_retrieval_increment)
-    """
-    if not surfaced_ids:
-        return
-
-    try:
-        from tools.query import _increment_retrieval_counts
-        from tools.memory import _get_collection
-
-        collection = _get_collection()
-        increment = config.get("passive_retrieval_increment", 0.01)
-        _increment_retrieval_counts(collection, surfaced_ids, increment=increment)
-    except Exception:
-        pass  # Fire-and-forget — never fail the hook
+def _format_memory_unavailable_warning(error_text: str = "") -> str:
+    """Return warning block for MCP outage / endpoint failures."""
+    detail = "Jarvis memory context is temporarily unavailable. Continuing without memory injection."
+    if error_text:
+        safe_error = saxutils.escape(error_text[:180])
+        detail += f" ({safe_error})"
+    return (
+        '<jarvis-warning type="memory-unavailable">'
+        f"{detail}"
+        "</jarvis-warning>"
+    )
 
 
 def main():
-    """Run per-prompt semantic search and output results to stdout.
-
-    Read-only: uses skip_retrieval_increment=True to avoid direct ChromaDB writes.
-    Retrieval bumps are deferred to the MCP server via HTTP POST.
-    """
-    if len(sys.argv) < 2:
-        sys.exit(0)
-
-    mcp_server_dir = sys.argv[1]
-
+    """Run per-prompt semantic search and output results to stdout."""
     # Determine prompt text source
-    if len(sys.argv) >= 3 and sys.argv[2] == "--hook":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--hook":
         # Hook mode: read JSON from stdin
         try:
             hook_input = sys.stdin.read()
         except Exception:
             sys.exit(0)
         prompt_text = _extract_prompt(hook_input)
-    elif len(sys.argv) >= 3:
+    elif len(sys.argv) >= 2:
         # Direct mode: prompt text as argument
-        prompt_text = sys.argv[2]
+        prompt_text = sys.argv[1]
     else:
         sys.exit(0)
 
     if not prompt_text:
         sys.exit(0)
 
-    # Skip trivial prompts before importing heavy modules
-    skip, reason = _should_skip_prompt(prompt_text)
+    # Skip trivial prompts quickly
+    skip, _ = _should_skip_prompt(prompt_text)
 
-    # Add MCP server to path for tool imports (needed for config check even if skipped)
-    sys.path.insert(0, mcp_server_dir)
+    if skip:
+        sys.exit(0)
 
-    # Load config to check debug flag
-    debug = False
-    try:
-        from tools.config import get_per_prompt_config
+    # Fetch semantic context + per-prompt flags from local hook endpoint.
+    # This keeps retrieval bump and config resolution server-side.
+    ctx_resp = post_json(
+        "/hook/prompt-context",
+        {"prompt": prompt_text},
+        timeout_seconds=2.5,
+    )
 
-        config = get_per_prompt_config()
-        debug = config.get("debug", False)
-    except Exception:
-        if skip:
-            sys.exit(0)
-        # If config fails but prompt wasn't skipped, continue with defaults
-        config = {"enabled": True, "threshold": 0.5, "budget": 8000}
+    output_parts = []
+    config = {
+        "enabled": True,
+        "debug": False,
+        "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
+    }
+    result = {"matches": [], "query_ms": 0, "budget_used": {"tier2": 0, "vault": 0}}
+    query_ms = 0
+
+    if ctx_resp.get("success"):
+        data = ctx_resp.get("data") or {}
+        config["enabled"] = bool(data.get("enabled", True))
+        config["debug"] = bool(data.get("debug", False))
+        config["todoist_prompt_alerts"] = data.get(
+            "todoist_prompt_alerts", config["todoist_prompt_alerts"]
+        )
+        result = data
+        query_ms = result.get("query_ms", 0)
+    else:
+        output_parts.append(_format_memory_unavailable_warning(ctx_resp.get("error", "")))
+
+    debug = bool(config.get("debug", False))
 
     if not config.get("enabled", True):
         if debug:
             _debug_log("SKIP", "disabled")
         sys.exit(0)
 
-    if skip:
-        if debug:
-            _debug_log("SKIP", reason, prompt_text)
-        sys.exit(0)
-
-    try:
-        from tools.query import semantic_context
-    except ImportError:
-        sys.exit(0)
-
-    # Run search (read-only — no direct ChromaDB writes)
-    try:
-        search_start = time.time()
-        result = semantic_context(
-            query=prompt_text,
-            threshold=config.get("threshold", 0.5),
-            budget=config.get("budget", 8000),
-            skip_retrieval_increment=True,
-        )
-        query_ms = round((time.time() - search_start) * 1000)
-    except Exception as e:
-        if debug:
-            _debug_log("ERROR", str(e), prompt_text)
-        sys.exit(0)
-
     matches = result.get("matches", [])
-    output_parts = []
 
     if matches:
         # Format vault/tier2 memories
         output_parts.append(_format_memories(matches, result.get("query_ms", 0)))
-
-        # Deferred retrieval bump: POST surfaced IDs to MCP server (fire-and-forget)
-        surfaced_ids = result.get("surfaced_ids", [])
-        if surfaced_ids:
-            _post_bump_retrieval(surfaced_ids, config)
 
         # JSONL telemetry (always on, lightweight)
         _write_telemetry(prompt_text, query_ms, matches, result)
@@ -347,14 +319,6 @@ def main():
         from todoist_check import get_todoist_alerts as _get_todoist_alerts
 
         todoist_cfg = config.get("todoist_prompt_alerts", {})
-        if not todoist_cfg:
-            # Fall back to reading from full config
-            try:
-                from tools.config import get_config as _get_config
-
-                todoist_cfg = _get_config().get("todoist", {}).get("prompt_alerts", {})
-            except Exception:
-                todoist_cfg = {}
 
         if todoist_cfg.get("enabled", False):
             cache_path = str(Path.home() / ".jarvis" / "state" / "todoist_cache.json")

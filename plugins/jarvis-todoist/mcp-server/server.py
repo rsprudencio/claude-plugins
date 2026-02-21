@@ -26,6 +26,7 @@ from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
 import todoist_api
+import system_prompt
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +35,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis-todoist-api")
 
-server = Server("api")
+server = Server("api", instructions=system_prompt.instructions)
 
 TOOLS = [
     Tool(

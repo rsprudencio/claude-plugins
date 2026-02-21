@@ -45,6 +45,8 @@ AskUserQuestion:
           description: "Choose Markdown (.md) or Org-mode (.org) for new files"
         - label: "Auto-Extract"
           description: "Configure observation capture from conversations"
+        - label: "Statusline"
+          description: "Install or update the Claude Code statusline"
         - label: "Advanced settings"
           description: "Promotion thresholds, vault paths, memory tuning"
       multiSelect: false
@@ -328,6 +330,28 @@ If not installed or outdated, find the shell script in the plugin distribution a
 4. If directory not in PATH, tell user to add it: `export PATH="~/.local/bin:$PATH"`
 
 If old shell function markers exist in RC files (`# Jarvis AI Assistant START` in `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`), offer to clean them up by removing the START/END block.
+
+### 3g. Statusline
+
+Install or update the Jarvis statusline for Claude Code. The statusline shows model, MCP servers, cost, duration, context usage, and Jarvis server health.
+
+**Check current state:**
+1. Look for `statusLine` in the user's `settings.json` (at `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`)
+2. Check if `~/.jarvis/statusline.py` exists
+
+**If not installed:**
+1. Locate `statusline.py` in the plugin's `statusline/` directory (use the skill's base directory, two levels up from `skills/<name>/`)
+2. Copy to `~/.jarvis/statusline.py` and `chmod +x`
+3. Merge `statusLine` config into the user's `settings.json`:
+   ```json
+   {"statusLine": {"type": "command", "command": "~/.jarvis/statusline.py"}}
+   ```
+4. Tell user: "Restart Claude Code for the statusline to appear."
+
+**If already installed:**
+Offer to update from the plugin distribution (in case a new version shipped).
+
+**Important:** The user's `settings.json` path depends on their `CLAUDE_CONFIG_DIR`. If the user runs multiple Claude configs, ask which settings.json to update.
 
 ### 4. Write config
 

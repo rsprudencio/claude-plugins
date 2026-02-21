@@ -35,10 +35,10 @@ Parse natural language:
 ### Step 2: Load Strategic Context
 
 Load ALL strategic memories for full context:
-- `jarvis-trajectory` - Goals and direction
-- `jarvis-values` - Principles for prioritization
-- `jarvis-focus-areas` - What was important before leaving
-- `jarvis-patterns` - Known patterns and alerts
+- `jarvis-goals` - Goals and direction
+- `jarvis-principles` - Principles for prioritization
+- `jarvis-priorities` - What was important before leaving
+- `jarvis-insights` - Known patterns and alerts
 
 Use `jarvis_retrieve(name=...)` for each.
 

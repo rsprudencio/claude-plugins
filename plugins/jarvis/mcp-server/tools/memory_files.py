@@ -38,7 +38,7 @@ def validate_name(name: str) -> Optional[str]:
     if not NAME_PATTERN.match(name):
         return (
             f"Invalid name: '{name}'. "
-            "Use lowercase alphanumeric with hyphens (e.g., 'jarvis-trajectory')"
+            "Use lowercase alphanumeric with hyphens (e.g., 'jarvis-goals')"
         )
     return None
 

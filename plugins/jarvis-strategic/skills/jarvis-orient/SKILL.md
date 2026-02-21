@@ -21,9 +21,9 @@ This workflow provides a quick strategic orientation by:
 ### Step 1: Load Strategic Context
 
 Load these strategic memories from `.jarvis/strategic/`:
-- `jarvis-trajectory` - Current goals and direction
-- `jarvis-focus-areas` - Active priorities and metrics
-- `jarvis-patterns` - Known patterns and alerts
+- `jarvis-goals` - Current goals and direction
+- `jarvis-priorities` - Active priorities and metrics
+- `jarvis-insights` - Known patterns and alerts
 
 Use `jarvis_retrieve(name=...)` for each.
 
@@ -76,7 +76,7 @@ ai_generated: true
 *[Date range covered]*
 
 ## Current Focus Reminder
-[From jarvis-focus-areas: primary work and personal focus]
+[From jarvis-priorities: primary work and personal focus]
 
 ## This Week's Activity
 - **[N] entries** logged

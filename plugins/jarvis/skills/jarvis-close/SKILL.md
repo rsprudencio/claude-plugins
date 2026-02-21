@@ -33,7 +33,7 @@ Using results from step 1, run these additional checks:
 | Check | How | Status Logic |
 |-------|-----|-------------|
 | Version bump | If `git status` shows modified files under `plugins/`, compare the version in `plugins/jarvis/.claude-plugin/plugin.json` against `git show HEAD:plugins/jarvis/.claude-plugin/plugin.json` | CLEAR if no plugin changes or version already bumped; ACTION NEEDED if plugin files changed without bump |
-| Doc staleness | If plugin changes detected, check whether `system-prompt.md`, `capabilities.json`, or relevant `SKILL.md` files were also modified | CLEAR if no plugin changes or docs were updated; ACTION NEEDED if plugin behavior changed without doc updates |
+| Doc staleness | If plugin changes detected, check whether `system_prompt.py`, `capabilities.json`, or relevant `SKILL.md` files were also modified | CLEAR if no plugin changes or docs were updated; ACTION NEEDED if plugin behavior changed without doc updates |
 | Tests current | Review conversation for the most recent test run (pytest output). Check if any code files were modified after that test run. | CLEAR if tests ran after last code change; ACTION NEEDED if code changed since last test run or no tests were run |
 
 ### 3. Context review (reflective)

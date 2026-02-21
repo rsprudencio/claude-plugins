@@ -729,10 +729,10 @@
       "purpose": "Persistent strategic context — file-backed at .jarvis/strategic/ in the vault",
       "storage": "Markdown files managed via jarvis_store/jarvis_retrieve",
       "memories": {
-        "jarvis-trajectory": "Life goals, active projects, quarterly focus",
-        "jarvis-values": "Core principles, decision heuristics",
-        "jarvis-focus-areas": "Current attention zones and priorities",
-        "jarvis-patterns": "Behavioral insights and trends",
+        "jarvis-goals": "Life goals, active projects, current focus",
+        "jarvis-principles": "Core principles, decision heuristics",
+        "jarvis-priorities": "Current attention zones and priorities",
+        "jarvis-insights": "Behavioral insights and trends",
         "todoist-routing-rules": "Custom task classification rules (YAML)"
       }
     },
@@ -813,7 +813,7 @@
       },
       "env_vars": ["JARVIS_HOME", "JARVIS_VAULT_PATH", "TODOIST_API_TOKEN", "JARVIS_AUTOCRLF"],
       "management": "~/.jarvis/jarvis-docker.sh {start|stop|restart|logs|status|update}",
-      "note": "Plugin install still required for skills, agents, and system prompt. Docker is the standard deployment method."
+      "note": "Plugin install still required for skills, agents, and MCP instructions. Docker is the standard deployment method."
     }
   },
 

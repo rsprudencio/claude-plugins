@@ -1,6 +1,6 @@
 ---
 name: jarvis-security-agent
-description: Adversarial security reviewer. Explicit invocation only — use when user asks to spawn the security agent or review something for security.
+description: Adversarial security reviewer for code/config vulnerabilities (NOT plans, decisions, or general critique — use adversarial agent for that). Explicit invocation only — use when user asks to spawn the security agent or review something for security.
 tools: Read, Grep, Glob
 model: sonnet
 permissionMode: default

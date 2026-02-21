@@ -29,7 +29,7 @@ Or use the installer: `bash install.sh` and choose **[2] Docker**.
 ```
 Host Machine
 ├── Claude Code
-│   ├── Plugin (skills, agents, system-prompt) ← installed via marketplace
+│   ├── Plugin (skills, agents, MCP instructions) ← installed via marketplace
 │   ├── MCP config → http://localhost:8741/mcp, http://localhost:8742/mcp
 │   └── Hooks (prompt_search, extract_observation) → ChromaDB :8743
 │

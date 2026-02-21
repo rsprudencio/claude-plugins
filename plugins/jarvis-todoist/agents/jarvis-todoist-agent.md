@@ -438,7 +438,7 @@ Context: feeling_overwhelmed | new_week_planning | focus_mode
 
 **Recommendations for Jarvis**:
 - Proposal 1: Check if any hidden tasks relate to user's core values (health, family)
-- Proposal 2: Verify against jarvis-trajectory Q1 focus
+- Proposal 2: Verify against jarvis-goals Q1 focus
 
 **Awaiting approval.**
 ```

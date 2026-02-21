@@ -12,27 +12,16 @@ import json
 import logging
 import os
 import sys
+from typing import Any
 
 # Mirror the sys.path setup from server.py so all tool imports resolve
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from server import server
+from system_prompt import _version as _VERSION
 
 logger = logging.getLogger("jarvis-core")
-
-
-def _get_version():
-    """Get plugin version from package metadata or JARVIS_VERSION env var."""
-    try:
-        from importlib.metadata import version
-
-        return version("jarvis-core")
-    except Exception:
-        return os.environ.get("JARVIS_VERSION", "unknown")
-
-
-_VERSION = _get_version()
 
 session_manager = StreamableHTTPSessionManager(
     app=server,
@@ -55,6 +44,39 @@ async def _json_response(send, data: dict, status: int = 200):
         }
     )
     await send({"type": "http.response.body", "body": body})
+
+
+async def _read_request_body(receive) -> bytes:
+    """Read full HTTP request body from ASGI receive channel."""
+    chunks = []
+    while True:
+        message = await receive()
+        if message["type"] != "http.request":
+            continue
+        body = message.get("body", b"")
+        if body:
+            chunks.append(body)
+        if not message.get("more_body", False):
+            break
+    return b"".join(chunks)
+
+
+async def _read_json_body(receive) -> tuple[dict[str, Any] | None, str]:
+    """Read and decode JSON body from request.
+
+    Returns:
+        (data, error_message). Exactly one is non-empty.
+    """
+    raw = await _read_request_body(receive)
+    if not raw:
+        return None, "Request body is required"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, "Malformed JSON body"
+    if not isinstance(data, dict):
+        return None, "JSON body must be an object"
+    return data, ""
 
 
 # --- Endpoint handlers ---
@@ -86,6 +108,112 @@ async def not_found(scope, receive, send):
     await _json_response(send, {"error": "Not found"}, status=404)
 
 
+async def hook_prompt_context_response(scope, receive, send):
+    """POST /hook/prompt-context."""
+    body, err = await _read_json_body(receive)
+    if err:
+        await _json_response(send, {"success": False, "error": err}, status=400)
+        return
+
+    prompt = body.get("prompt", "")
+    if not isinstance(prompt, str):
+        await _json_response(
+            send,
+            {"success": False, "error": "'prompt' must be a string"},
+            status=400,
+        )
+        return
+
+    try:
+        from tools.hook_endpoints import get_prompt_context
+
+        response = get_prompt_context(prompt)
+    except Exception as e:
+        await _json_response(send, {"success": False, "error": str(e)}, status=500)
+        return
+
+    await _json_response(send, response)
+
+
+async def hook_auto_extract_context_response(scope, receive, send):
+    """POST /hook/auto-extract/context."""
+    body, err = await _read_json_body(receive)
+    if err:
+        await _json_response(send, {"success": False, "error": err}, status=400)
+        return
+
+    workstream_limit = body.get("workstream_limit", 30)
+    try:
+        workstream_limit = int(workstream_limit)
+    except (TypeError, ValueError):
+        await _json_response(
+            send,
+            {"success": False, "error": "'workstream_limit' must be an integer"},
+            status=400,
+        )
+        return
+
+    try:
+        from tools.hook_endpoints import get_auto_extract_context
+
+        response = get_auto_extract_context(workstream_limit=workstream_limit)
+    except Exception as e:
+        await _json_response(send, {"success": False, "error": str(e)}, status=500)
+        return
+
+    await _json_response(send, response)
+
+
+async def hook_auto_extract_ingest_response(scope, receive, send):
+    """POST /hook/auto-extract/ingest."""
+    body, err = await _read_json_body(receive)
+    if err:
+        await _json_response(send, {"success": False, "error": err}, status=400)
+        return
+
+    # Keep required shape explicit for easier client-side debugging.
+    if "observations" in body and not isinstance(body.get("observations"), list):
+        await _json_response(
+            send,
+            {"success": False, "error": "'observations' must be a list"},
+            status=400,
+        )
+        return
+    if "worklog" in body and body.get("worklog") is not None and not isinstance(
+        body.get("worklog"), dict
+    ):
+        await _json_response(
+            send,
+            {"success": False, "error": "'worklog' must be an object or null"},
+            status=400,
+        )
+        return
+    if "context" in body and not isinstance(body.get("context"), dict):
+        await _json_response(
+            send,
+            {"success": False, "error": "'context' must be an object"},
+            status=400,
+        )
+        return
+    if "dedup" in body and not isinstance(body.get("dedup"), dict):
+        await _json_response(
+            send,
+            {"success": False, "error": "'dedup' must be an object"},
+            status=400,
+        )
+        return
+
+    try:
+        from tools.hook_endpoints import ingest_auto_extract
+
+        response = ingest_auto_extract(body)
+    except Exception as e:
+        await _json_response(send, {"success": False, "error": str(e)}, status=500)
+        return
+
+    await _json_response(send, response)
+
+
 # --- ASGI app ---
 
 
@@ -105,6 +233,12 @@ async def app(scope, receive, send):
 
     if path == "/health" and method == "GET":
         await health_response(scope, receive, send)
+    elif path == "/hook/prompt-context" and method == "POST":
+        await hook_prompt_context_response(scope, receive, send)
+    elif path == "/hook/auto-extract/context" and method == "POST":
+        await hook_auto_extract_context_response(scope, receive, send)
+    elif path == "/hook/auto-extract/ingest" and method == "POST":
+        await hook_auto_extract_ingest_response(scope, receive, send)
     elif path == "/mcp" or path.startswith("/mcp/"):
         await session_manager.handle_request(scope, receive, send)
     else:

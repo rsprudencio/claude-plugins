@@ -1,36 +1,17 @@
 #!/bin/bash
 # Jarvis AI Assistant launcher
-# Discovers installed plugins, concatenates system prompts, and launches Claude.
+# Auto-starts Docker container and launches Claude with Jarvis plugins.
 # Install to a PATH directory (e.g. ~/.local/bin/jarvis) and chmod +x.
 # Source: https://github.com/rsprudencio/jarvis
 set -e
 
-system_prompt=""
-settings_file=""
-found_core=false
-
-# Get installed plugin paths from Claude's plugin system (canonical source of truth)
-plugin_paths=$(claude plugin list --json 2>/dev/null | python3 -c "
+# Verify core plugin is installed
+if ! claude plugin list --json 2>/dev/null | python3 -c "
 import sys, json
-for p in json.load(sys.stdin):
-    pid = p.get('id', '')
-    if pid.startswith('jarvis'):
-        print(f\"{pid.split('@')[0]}|{p['installPath']}\")
-" 2>/dev/null) || true
-
-while IFS='|' read -r name plugin_path; do
-    [ -z "$name" ] && continue
-    if [ -f "$plugin_path/system-prompt.md" ]; then
-        system_prompt="${system_prompt}$(command cat "$plugin_path/system-prompt.md")"$'\n\n---\n\n'
-        if [ "$name" = "jarvis" ]; then
-            found_core=true
-            settings_file="$plugin_path/settings.json"
-        fi
-    fi
-done <<< "$plugin_paths"
-
-# Require core plugin
-if [ "$found_core" = false ]; then
+plugins = json.load(sys.stdin)
+if not any(p.get('id', '').startswith('jarvis@') for p in plugins):
+    sys.exit(1)
+" 2>/dev/null; then
     echo "Error: Jarvis core plugin not installed."
     echo "Install with: claude plugin install jarvis@jarvis-plugins"
     exit 1
@@ -42,7 +23,6 @@ compose_file="$JARVIS_HOME/docker-compose.yml"
 if [ -f "$compose_file" ] && ! curl -sf http://localhost:8741/health > /dev/null 2>&1; then
     echo "Starting Jarvis container..."
     docker compose -f "$compose_file" up -d 2>&1
-    # Wait for health (up to 15s)
     for i in $(seq 1 15); do
         if curl -sf http://localhost:8741/health > /dev/null 2>&1; then
             echo "Container is healthy."
@@ -56,14 +36,5 @@ if [ -f "$compose_file" ] && ! curl -sf http://localhost:8741/health > /dev/null
     fi
 fi
 
-# Build extra args
-extra_args=()
-if [ -f "$settings_file" ]; then
-    extra_args+=(--settings "$settings_file")
-fi
-
-# Launch Claude with concatenated prompts and settings
-exec env __JARVIS_CLAUDE_STATUSLINE__=1 claude \
-    --append-system-prompt "$system_prompt" \
-    "${extra_args[@]}" \
-    "$@"
+# Launch Claude — MCP servers inject instructions automatically
+exec claude "$@"

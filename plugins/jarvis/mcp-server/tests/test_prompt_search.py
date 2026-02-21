@@ -19,6 +19,7 @@ HOOKS_DIR = os.path.join(
 )
 sys.path.insert(0, HOOKS_DIR)
 
+import prompt_search as prompt_search_module
 from prompt_search import _should_skip_prompt, _extract_prompt, _format_memories
 
 
@@ -268,6 +269,34 @@ class TestOutputFormatting:
         output = _format_memories(matches, 10.0)
         assert "&lt;b&gt;bold&lt;/b&gt;" in output
         assert "&amp;" in output
+
+
+class TestPromptSearchMain:
+    """Tests for endpoint-backed main flow."""
+
+    def test_unavailable_endpoint_emits_warning(self, monkeypatch, capsys):
+        """When /hook/prompt-context is unavailable, warning XML is emitted."""
+        monkeypatch.setattr(
+            prompt_search_module,
+            "post_json",
+            lambda *args, **kwargs: {
+                "success": False,
+                "data": None,
+                "error": "connection refused",
+            },
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["prompt_search.py", "This is a substantive prompt for testing."],
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            prompt_search_module.main()
+
+        assert exc.value.code == 0
+        output = capsys.readouterr().out
+        assert '<jarvis-warning type="memory-unavailable">' in output
 
 
 # --- Semantic Context Tests ---

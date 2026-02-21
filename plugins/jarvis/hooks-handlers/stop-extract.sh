@@ -22,29 +22,40 @@ INPUT=$(cat)
 
 # Resolve paths relative to this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MCP_SERVER_DIR="$PLUGIN_ROOT/mcp-server"
 
 # Run Python check to determine action
-# Output format: "skip:disabled" or "proceed:MODE:TRANSCRIPT_PATH:SESSION_ID"
+# Output format: "skip\tREASON" or "proceed\tMODE\tTRANSCRIPT_PATH\tSESSION_ID"
 CHECK_RESULT=$(python3 -c "
-import sys, json, os
-sys.path.insert(0, '$MCP_SERVER_DIR')
-from tools.config import get_auto_extract_config
+import json, os, sys
+
+def load_mode():
+    jarvis_home = os.environ.get('JARVIS_HOME')
+    if jarvis_home:
+        config_path = os.path.join(jarvis_home, 'config.json')
+    else:
+        config_path = os.path.expanduser('~/.jarvis/config.json')
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    memory = data.get('memory', {})
+    auto_extract = memory.get('auto_extract', {})
+    mode = auto_extract.get('mode', 'background')
+    return mode if isinstance(mode, str) and mode else 'background'
 
 try:
     hook_data = json.loads(sys.stdin.read())
-    config = get_auto_extract_config()
-    mode = config.get('mode', 'background')
+    mode = load_mode()
 
     if mode == 'disabled':
-        print('skip:disabled')
+        print('skip\tdisabled')
         sys.exit(0)
 
     # Extract transcript_path and expand ~ to home directory
     transcript_path = hook_data.get('transcript_path', '')
     if not transcript_path:
-        print('skip:no_transcript_path')
+        print('skip\tno_transcript_path')
         sys.exit(0)
 
     # Safely expand ~ using Python (not shell eval)
@@ -52,32 +63,22 @@ try:
 
     session_id = hook_data.get('session_id', 'unknown')
 
-    print(f'proceed:{mode}:{transcript_path}:{session_id}')
+    print(f'proceed\t{mode}\t{transcript_path}\t{session_id}')
 except Exception as e:
-    print(f'skip:error:{e}', file=sys.stderr)
-    print('skip:error')
-" <<< "$INPUT" 2>/dev/null || echo "skip:error")
+    print(f'skip\terror:{e}', file=sys.stderr)
+    print('skip\terror')
+" <<< "$INPUT" 2>/dev/null || printf 'skip\terror\n')
 
 # Parse result
-ACTION="${CHECK_RESULT%%:*}"
+ACTION="${CHECK_RESULT%%$'\t'*}"
 
 # If skip, exit silently
 if [ "$ACTION" = "skip" ]; then
     exit 0
 fi
 
-# Parse proceed components (MODE:TRANSCRIPT_PATH:SESSION_ID)
-# Remove "proceed:" prefix
-PARAMS="${CHECK_RESULT#proceed:}"
-
-# Extract fields by splitting on colons
-MODE="${PARAMS%%:*}"
-PARAMS="${PARAMS#*:}"
-
-TRANSCRIPT_PATH="${PARAMS%%:*}"
-PARAMS="${PARAMS#*:}"
-
-SESSION_ID="${PARAMS}"
+# Parse proceed components
+IFS=$'\t' read -r _ MODE TRANSCRIPT_PATH SESSION_ID <<< "$CHECK_RESULT"
 
 # Validate transcript file exists
 if [ ! -f "$TRANSCRIPT_PATH" ]; then
@@ -89,7 +90,7 @@ PROJECT_PATH="$PWD"
 GIT_BRANCH="$(git -C "$PWD" branch --show-current 2>/dev/null || echo "")"
 
 # Spawn extraction in background, passing raw hook JSON via env for debug logging
-JARVIS_HOOK_INPUT="$INPUT" nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MCP_SERVER_DIR" "$MODE" "$TRANSCRIPT_PATH" "$SESSION_ID" \
+JARVIS_HOOK_INPUT="$INPUT" nohup python3 "$SCRIPT_DIR/extract_observation.py" "$MODE" "$TRANSCRIPT_PATH" "$SESSION_ID" \
     "$PROJECT_PATH" "$GIT_BRANCH" \
     >/dev/null 2>&1 & disown
 

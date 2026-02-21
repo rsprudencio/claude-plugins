@@ -86,7 +86,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("jarvis-core")
 
-server = Server("core")
+import system_prompt
+
+server = Server("core", instructions=system_prompt.instructions)
 
 # Tool definitions
 TOOLS = [

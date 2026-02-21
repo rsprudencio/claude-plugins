@@ -16,7 +16,7 @@ This is the deepest analysis workflow:
 2. Cross-reference with strategic memories
 3. Identify behavioral patterns and trends
 4. Generate insights and recommendations
-5. Suggest updates to jarvis-patterns memory
+5. Suggest updates to jarvis-insights memory
 
 ## Workflow Steps
 
@@ -33,10 +33,10 @@ Default: 30 days (meaningful pattern detection requires time)
 ### Step 2: Load All Strategic Context
 
 Load ALL strategic memories from `.jarvis/strategic/`:
-- `jarvis-trajectory` - Goals to check progress against
-- `jarvis-values` - Principles to check alignment
-- `jarvis-focus-areas` - Priorities to compare activity
-- `jarvis-patterns` - Previous patterns to compare/update
+- `jarvis-goals` - Goals to check progress against
+- `jarvis-principles` - Principles to check alignment
+- `jarvis-priorities` - Priorities to compare activity
+- `jarvis-insights` - Previous patterns to compare/update
 
 Use `jarvis_retrieve(name=...)` for each.
 
@@ -148,7 +148,7 @@ ai_generated: true
 
 ## Goal Progress Analysis
 
-### Active Goals (from jarvis-trajectory)
+### Active Goals (from jarvis-goals)
 
 | Goal | Evidence | Status | Recommendation |
 |------|----------|--------|----------------|
@@ -222,7 +222,7 @@ Items started but not followed up:
 
 ## Suggested Memory Updates
 
-Based on this analysis, I recommend updating `jarvis-patterns`:
+Based on this analysis, I recommend updating `jarvis-insights`:
 
 ### Add to Detected Themes
 ```
@@ -245,10 +245,10 @@ Based on this analysis, I recommend updating `jarvis-patterns`:
 
 ### Step 6: Offer Memory Updates
 
-Present the suggested updates to `jarvis-patterns` memory.
-Ask user: "Would you like me to update the patterns memory with these findings?"
+Present the suggested updates to `jarvis-insights` memory.
+Ask user: "Would you like me to update the insights memory with these findings?"
 
-If approved, read the current `jarvis-patterns` memory with `jarvis_retrieve(name="jarvis-patterns")`, merge the new findings into the content, then write back with `jarvis_store(type="memory", name="jarvis-patterns", content=updated_content, overwrite=true)`.
+If approved, read the current `jarvis-insights` memory with `jarvis_retrieve(name="jarvis-insights")`, merge the new findings into the content, then write back with `jarvis_store(type="memory", name="jarvis-insights", content=updated_content, overwrite=true)`.
 
 ### Step 7: Discuss Findings
 

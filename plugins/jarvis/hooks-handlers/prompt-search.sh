@@ -15,10 +15,8 @@ fi
 # Exit 0 always (silent on errors — never block the user's message).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MCP_SERVER_DIR="$PLUGIN_ROOT/mcp-server"
 
 # Pipe stdin (hook JSON) directly to Python — single process handles everything
-python3 "$SCRIPT_DIR/prompt_search.py" "$MCP_SERVER_DIR" --hook 2>/dev/null || true
+python3 "$SCRIPT_DIR/prompt_search.py" --hook 2>/dev/null || true
 
 exit 0

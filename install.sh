@@ -499,10 +499,65 @@ esac
 HELPEREOF
 chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
+
+# Copy toolbelt scripts to ~/.jarvis/bin/ (scoped permission targets)
+mkdir -p "$JARVIS_HOME/bin"
+MARKETPLACE_DIR="$(dirname "$(dirname "$PLUGIN_DIR")")"
+DAR_SRC=$(ls "$MARKETPLACE_DIR"/jarvis-toolbelt/*/bin/dar-review 2>/dev/null | head -1)
+if [ -n "$DAR_SRC" ] && [ -f "$DAR_SRC" ]; then
+    cp "$DAR_SRC" "$JARVIS_HOME/bin/dar-review"
+    chmod +x "$JARVIS_HOME/bin/dar-review"
+    ok "DAR wrapper: $JARVIS_HOME/bin/dar-review"
+else
+    # Toolbelt not installed yet — wrapper will be available after toolbelt install + reinstall
+    info "dar-review not found (install jarvis-toolbelt to enable)"
+fi
 echo ""
 
-echo ""
+# ═══════════════════════════════════════════════
+# 📊 Statusline Setup (optional)
+# ═══════════════════════════════════════════════
 
+echo -e "${BOLD}📊 Statusline${NC}"
+echo "  Jarvis includes a statusline showing model, MCP servers, cost, context, and server health."
+echo ""
+ask "  Install Jarvis statusline? [Y/n]: " STATUSLINE_SETUP "Y"
+
+if [ "$STATUSLINE_SETUP" = "Y" ] || [ "$STATUSLINE_SETUP" = "y" ]; then
+    SL_SRC="$PLUGIN_DIR/statusline/statusline.py"
+    SL_DST="$JARVIS_HOME/statusline.py"
+    if [ -f "$SL_SRC" ]; then
+        cp "$SL_SRC" "$SL_DST"
+        chmod +x "$SL_DST"
+        ok "Statusline installed: $SL_DST"
+
+        # Detect Claude config dir and merge statusLine into settings.json
+        CLAUDE_CFG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+        SETTINGS_FILE="$CLAUDE_CFG_DIR/settings.json"
+
+        if [ -f "$SETTINGS_FILE" ]; then
+            $PYTHON_CMD -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    settings = json.load(f)
+settings['statusLine'] = {'type': 'command', 'command': sys.argv[2]}
+with open(sys.argv[1], 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$SETTINGS_FILE" "$SL_DST"
+            ok "settings.json updated with statusLine"
+        else
+            mkdir -p "$CLAUDE_CFG_DIR"
+            echo "{\"statusLine\": {\"type\": \"command\", \"command\": \"$SL_DST\"}}" | $PYTHON_CMD -m json.tool > "$SETTINGS_FILE"
+            ok "Created $SETTINGS_FILE with statusLine"
+        fi
+    else
+        warn "statusline.py not found in plugin distribution"
+    fi
+else
+    info "Skipping statusline"
+fi
+echo ""
 
 # ═══════════════════════════════════════════════
 # Complete!
@@ -519,6 +574,9 @@ echo -e "  MCP Todoist: ${CYAN}http://localhost:8742/mcp${NC}"
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     echo -e "  Shell:       ${CYAN}jarvis${NC} installed to ${INSTALL_DIR:-PATH}"
+fi
+if [ "$STATUSLINE_SETUP" = "Y" ] || [ "$STATUSLINE_SETUP" = "y" ]; then
+    echo -e "  Statusline:  ${CYAN}$JARVIS_HOME/statusline.py${NC}"
 fi
 
 echo -e "  Config:      ${CYAN}$JARVIS_HOME/config.json${NC}"

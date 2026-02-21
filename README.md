@@ -309,7 +309,7 @@ If `/recall` returns no results or indexing fails:
 │   │   ├── skills/               # 9 core skills
 │   │   ├── mcp-server/           # Python MCP server (22 tools, 1398 tests)
 │   │   ├── hooks/                # Auto-extract Stop hook
-│   │   └── system-prompt.md      # Jarvis identity
+│   │   └── statusline/           # Claude Code statusline
 │   ├── jarvis-todoist/           # Todoist extension
 │   └── jarvis-strategic/         # Strategic analysis extension
 ├── CLAUDE.md                     # Development guide
