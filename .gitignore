@@ -30,4 +30,5 @@ Thumbs.db
 htmlcov/
 
 .claude/settings.local.json
+.claude/worktrees/
 .serena/

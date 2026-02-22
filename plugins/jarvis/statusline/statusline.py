@@ -155,18 +155,6 @@ def _fmt_context(data: dict) -> str:
     return f"{GREEN}{s}{RESET}"
 
 
-def _fmt_lines(added, removed, dirty) -> str:
-    parts = []
-    if added:
-        parts.append(f"{GREEN}+{added}{RESET}")
-    if removed:
-        parts.append(f"{RED}-{removed}{RESET}")
-    if parts:
-        return "/".join(parts)
-    if dirty:
-        return f"{GRAY}~{RESET}"
-    return ""
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -185,9 +173,6 @@ def generate(data: dict) -> str:
     model = data.get("model")
     cost_obj = data.get("cost", {})
     cost_usd = cost_obj.get("total_cost_usd", 0) if isinstance(cost_obj, dict) else 0
-    added = cost_obj.get("total_lines_added", 0) if isinstance(cost_obj, dict) else 0
-    removed = cost_obj.get("total_lines_removed", 0) if isinstance(cost_obj, dict) else 0
-
     cwd = data.get("cwd", "")
     dirname = os.path.basename(cwd) if cwd else "?"
 
@@ -202,6 +187,11 @@ def generate(data: dict) -> str:
     if jarvis.get("ok"):
         parts.append(f"{BOLD}{YELLOW}\u26a1{RESET} {YELLOW}JARVIS{RESET}")
 
+    # Session name (from /rename) or truncated session ID
+    session_label = data.get("session_name") or (data.get("session_id", "")[:8])
+    if session_label:
+        parts.append(session_label)
+
     # Model
     parts.append(_fmt_model(model))
 
@@ -212,11 +202,7 @@ def generate(data: dict) -> str:
     branch = git.get("branch", "")
     if branch:
         dirty_mark = "*" if git.get("dirty") else ""
-        lines = _fmt_lines(added, removed, git.get("dirty"))
-        git_display = f"{branch}{dirty_mark}"
-        if lines:
-            git_display = f"{git_display} {lines}"
-        parts.append(git_display)
+        parts.append(f"{branch}{dirty_mark}")
 
     # Cost
     if cost_usd:
@@ -238,13 +224,13 @@ def main():
         # Demo mode: --demo flag or interactive TTY with no stdin
         if "--demo" in sys.argv or sys.stdin.isatty():
             demo = {
+                "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                "session_name": "demo-session",
                 "model": {"id": "claude-opus-4-6", "display_name": "Opus 4.6"},
                 "cwd": os.getcwd(),
                 "cost": {
                     "total_cost_usd": 1.23,
                     "total_duration_ms": 95000,
-                    "total_lines_added": 42,
-                    "total_lines_removed": 7,
                 },
                 "context_window": {"used_percentage": 34.5},
             }
