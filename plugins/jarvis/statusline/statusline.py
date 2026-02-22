@@ -230,6 +230,11 @@ def generate(data: dict) -> str:
 
 def main():
     try:
+        # Windows: force UTF-8 for emoji/ANSI output
+        if sys.platform == "win32":
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+
         # Demo mode: --demo flag or interactive TTY with no stdin
         if "--demo" in sys.argv or sys.stdin.isatty():
             demo = {
