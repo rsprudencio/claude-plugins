@@ -139,9 +139,9 @@ Jarvis delegates work to specialized agents that run in isolated context windows
 - **Audit Agent** (Haiku) — JARVIS protocol git commits, history queries, rollbacks
 - **Explorer Agent** (Haiku) — Vault-wide search with regex, date filtering, semantic pre-search
 
-### 22 MCP Tools
+### MCP Tools
 
-Python-based MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json) for the full reference.
+22-tool Python MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json) for the full reference.
 
 ---
 
@@ -307,7 +307,7 @@ If `/recall` returns no results or indexing fails:
 │   ├── jarvis/                   # Core plugin
 │   │   ├── agents/               # Journal, audit, explorer agents
 │   │   ├── skills/               # 9 core skills
-│   │   ├── mcp-server/           # Python MCP server (22 tools, 1398 tests)
+│   │   ├── mcp-server/           # Python MCP server (22 tools, 1480 tests)
 │   │   ├── hooks/                # Auto-extract Stop hook
 │   │   └── statusline/           # Claude Code statusline
 │   ├── jarvis-todoist/           # Todoist extension
@@ -322,7 +322,7 @@ If `/recall` returns no results or indexing fails:
 cd plugins/jarvis/mcp-server && python3 -m pytest -v
 ```
 
-1398 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
+1480 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
 
 ### Documentation
 
@@ -339,4 +339,4 @@ See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**v1.38.0** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)
+**v2.0.3** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)

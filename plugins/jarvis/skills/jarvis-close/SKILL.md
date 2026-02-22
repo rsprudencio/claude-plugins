@@ -59,11 +59,11 @@ Format results as two tables plus action items:
 |-------|--------|
 | Uncommitted changes | CLEAR |
 | Unpushed commits | 2 commits ahead of origin |
-| Unpushed tags | v1.43.0 not pushed |
+| Unpushed tags | v2.0.3 not pushed |
 | Task list | CLEAR |
 | Version bump | CLEAR |
 | Documentation | CLEAR |
-| Container health | OK (v1.43.0) |
+| Container health | OK (v2.0.3) |
 | Tests current | CLEAR |
 
 ### Context Review
@@ -77,7 +77,7 @@ Format results as two tables plus action items:
 ### Action Items
 1. Push 2 commits and 1 tag: `git push && git push --tags`
 2. Consider storing learning: "[brief description]"
-3. Update MEMORY.md "Session State" — version is now 1.43.0
+3. Update MEMORY.md "Session State" — version is now 2.0.3
 
 ### Verdict
 > 3 items need attention. Address or acknowledge before closing.
