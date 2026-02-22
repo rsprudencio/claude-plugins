@@ -107,6 +107,10 @@ class TestFmtContext:
         result = sl._fmt_context({"model": "test"})
         assert "0%" in result
 
+    def test_null_percentage(self):
+        result = sl._fmt_context({"context_window": {"used_percentage": None}})
+        assert "0%" in result
+
 
 class TestFmtDuration:
     def test_zero(self):
@@ -176,8 +180,8 @@ class TestFmtMcp:
 
 class TestFmtJarvis:
     def test_healthy(self):
-        result = sl._fmt_jarvis({"ok": True, "version": "1.44.0"})
-        assert "J:1.44.0" in result
+        result = sl._fmt_jarvis({"ok": True, "version": "2.0.0"})
+        assert "J:2.0.0" in result
         assert sl.GREEN in result
 
     def test_healthy_no_version(self):
@@ -189,6 +193,16 @@ class TestFmtJarvis:
         result = sl._fmt_jarvis({"ok": False})
         assert "J:down" in result
         assert sl.RED in result
+
+    def test_full_healthy(self):
+        result = sl._fmt_jarvis({"ok": True, "version": "2.0.0"}, full=True)
+        assert "JARVIS" in result
+        assert "v2.0.0" in result
+        assert sl.YELLOW in result
+
+    def test_full_down_returns_empty(self):
+        result = sl._fmt_jarvis({"ok": False}, full=True)
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +243,7 @@ class TestCache:
 # ---------------------------------------------------------------------------
 
 class TestGenerate:
-    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "version": "1.44.0"})
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "version": "2.0.0"})
     @mock.patch.object(sl, "_mcp_info", return_value={"count": 2, "servers": ["core", "todoist"]})
     @mock.patch.object(sl, "_git_info", return_value={"branch": "main", "dirty": False})
     def test_full_output(self, mock_git, mock_mcp, mock_jarvis, tmp_path):
@@ -246,18 +260,15 @@ class TestGenerate:
                 "context_window": {"used_percentage": 45.0},
             }
             output = sl.generate(data)
-            lines = output.split("\n")
-            assert len(lines) == 2
-            # Line 1: model | dir | git
-            assert "Opus 4.6" in lines[0]
-            assert "project" in lines[0]
-            assert "main" in lines[0]
-            # Line 2: jarvis | mcp | cost | duration | context
-            assert "J:1.44.0" in lines[1]
-            assert "2 MCP" in lines[1]
-            assert "$0.5000" in lines[1]
-            assert "1m0s" in lines[1]
-            assert "45.0%" in lines[1]
+            # Single line with │ separators
+            assert "\n" not in output
+            assert "JARVIS" in output
+            assert "v2.0.0" in output
+            assert "Opus 4.6" in output
+            assert "project" in output
+            assert "main" in output
+            assert "$0.5000" in output
+            assert "45.0%" in output
 
     @mock.patch.object(sl, "_jarvis_health", return_value={"ok": False})
     @mock.patch.object(sl, "_mcp_info", return_value={"count": 0, "servers": []})
@@ -265,8 +276,25 @@ class TestGenerate:
     def test_minimal_data(self, mock_git, mock_mcp, mock_jarvis, tmp_path):
         with mock.patch.object(sl, "CACHE_DIR", tmp_path):
             output = sl.generate({})
-            assert "J:down" in output
-            assert "0 MCP" in output
+            # No JARVIS branding when server is down
+            assert "JARVIS" not in output
+            assert "\n" not in output
+
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "version": "2.0.0"})
+    @mock.patch.object(sl, "_mcp_info", return_value={"count": 2, "servers": ["core", "todoist"]})
+    @mock.patch.object(sl, "_git_info", return_value={"branch": "main", "dirty": False})
+    def test_zero_cost_hidden(self, mock_git, mock_mcp, mock_jarvis, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            output = sl.generate({"model": "test", "cwd": "/tmp/x"})
+            assert "$" not in output
+
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "version": "2.0.0"})
+    @mock.patch.object(sl, "_mcp_info", return_value={"count": 2, "servers": ["core", "todoist"]})
+    @mock.patch.object(sl, "_git_info", return_value={"branch": "main", "dirty": False})
+    def test_zero_context_hidden(self, mock_git, mock_mcp, mock_jarvis, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            output = sl.generate({"model": "test", "cwd": "/tmp/x"})
+            assert "ctx" not in output
 
     @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "version": "1.44.0"})
     @mock.patch.object(sl, "_mcp_info", return_value={"count": 1, "servers": ["core"]})

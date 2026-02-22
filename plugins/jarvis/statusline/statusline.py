@@ -188,7 +188,7 @@ def _fmt_context(data: dict) -> str:
     pct = 0.0
     ctx = data.get("context_window")
     if isinstance(ctx, dict):
-        pct = ctx.get("used_percentage", 0.0)
+        pct = ctx.get("used_percentage") or 0.0
     if pct == 0:
         return f"{GRAY}0%{RESET}"
     s = f"{pct:.1f}%"
@@ -238,11 +238,16 @@ def _fmt_mcp(info: dict) -> str:
     return f"{color}{n} MCP [{names}]{RESET}"
 
 
-def _fmt_jarvis(health: dict) -> str:
+def _fmt_jarvis(health: dict, full=False) -> str:
     if health.get("ok"):
         v = health.get("version", "")
+        if full:
+            label = f"\u26a1 JARVIS v{v}" if v else "\u26a1 JARVIS"
+            return f"{BOLD}{YELLOW}{label}{RESET}"
         label = f"J:{v}" if v else "J"
         return f"{GREEN}{label}{RESET}"
+    if full:
+        return ""
     return f"{RED}J:down{RESET}"
 
 
@@ -254,6 +259,8 @@ def _fmt_jarvis(health: dict) -> str:
 def generate(data: dict) -> str:
     _ensure_cache_dir()
 
+    SEP = f" {GRAY}\u2502{RESET} "
+
     git = _git_info()
     mcp = _mcp_info()
     jarvis = _jarvis_health()
@@ -261,7 +268,6 @@ def generate(data: dict) -> str:
     model = data.get("model")
     cost_obj = data.get("cost", {})
     cost_usd = cost_obj.get("total_cost_usd", 0) if isinstance(cost_obj, dict) else 0
-    duration = cost_obj.get("total_duration_ms", 0) if isinstance(cost_obj, dict) else 0
     added = cost_obj.get("total_lines_added", 0) if isinstance(cost_obj, dict) else 0
     removed = cost_obj.get("total_lines_removed", 0) if isinstance(cost_obj, dict) else 0
 
@@ -274,19 +280,27 @@ def generate(data: dict) -> str:
     lines = _fmt_lines(added, removed, git.get("dirty"))
     git_display = f"{branch} {lines}".rstrip() if lines else branch
 
-    # Line 1: model | directory | git
-    line1 = f"{_fmt_model(model)} | {CYAN}{dirname}{RESET} | {git_display}"
+    # Build segments
+    parts = []
 
-    # Line 2: jarvis health | mcp | cost | duration | context
-    line2 = " | ".join([
-        _fmt_jarvis(jarvis),
-        _fmt_mcp(mcp),
-        _fmt_cost(cost_usd),
-        _fmt_duration(duration),
-        _fmt_context(data),
-    ])
+    # Jarvis branding (only when healthy)
+    jarvis_label = _fmt_jarvis(jarvis, full=True)
+    if jarvis_label:
+        parts.append(jarvis_label)
 
-    return f"{line1}\n{line2}"
+    parts.append(_fmt_model(model))
+    parts.append(f"{CYAN}{dirname}{RESET}")
+    parts.append(git_display)
+
+    if cost_usd:
+        parts.append(_fmt_cost(cost_usd))
+
+    ctx = data.get("context_window")
+    ctx_pct = (ctx.get("used_percentage") or 0.0) if isinstance(ctx, dict) else 0.0
+    if ctx_pct > 0:
+        parts.append(f"ctx {_fmt_context(data)}")
+
+    return SEP.join(parts)
 
 
 def main():

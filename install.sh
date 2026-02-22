@@ -148,25 +148,26 @@ echo ""
 echo -e "  ${BOLD}Available extensions:${NC}"
 echo -e "    ${CYAN}[1]${NC} jarvis-todoist   — Task management via Todoist"
 echo -e "    ${CYAN}[2]${NC} jarvis-strategic — Strategic analysis & briefings"
-echo -e "    ${CYAN}[3]${NC} Both"
-echo -e "    ${CYAN}[4]${NC} Skip"
+echo -e "    ${CYAN}[3]${NC} jarvis-toolbelt  — Adversarial & security review agents"
+echo -e "    ${CYAN}[4]${NC} All"
+echo -e "    ${CYAN}[5]${NC} Skip"
 echo ""
-ask "  Choice [4]: " EXT_CHOICE "4"
+ask "  Choice [5]: " EXT_CHOICE "5"
+
+install_ext() {
+    claude plugin install "$1@$MARKETPLACE_NAME" 2>/dev/null && ok "$1 installed" || warn "$1 install failed"
+}
 
 case "$EXT_CHOICE" in
-    1)
-        claude plugin install "jarvis-todoist@$MARKETPLACE_NAME" 2>/dev/null && ok "jarvis-todoist installed" || warn "jarvis-todoist install failed"
+    1) install_ext jarvis-todoist ;;
+    2) install_ext jarvis-strategic ;;
+    3) install_ext jarvis-toolbelt ;;
+    4)
+        install_ext jarvis-todoist
+        install_ext jarvis-strategic
+        install_ext jarvis-toolbelt
         ;;
-    2)
-        claude plugin install "jarvis-strategic@$MARKETPLACE_NAME" 2>/dev/null && ok "jarvis-strategic installed" || warn "jarvis-strategic install failed"
-        ;;
-    3)
-        claude plugin install "jarvis-todoist@$MARKETPLACE_NAME" 2>/dev/null && ok "jarvis-todoist installed" || warn "jarvis-todoist install failed"
-        claude plugin install "jarvis-strategic@$MARKETPLACE_NAME" 2>/dev/null && ok "jarvis-strategic installed" || warn "jarvis-strategic install failed"
-        ;;
-    *)
-        info "Skipping extensions"
-        ;;
+    *) info "Skipping extensions" ;;
 esac
 
 echo ""
@@ -500,17 +501,18 @@ HELPEREOF
 chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
 
-# Copy toolbelt scripts to ~/.jarvis/bin/ (scoped permission targets)
-mkdir -p "$JARVIS_HOME/bin"
-MARKETPLACE_DIR="$(dirname "$(dirname "$PLUGIN_DIR")")"
-DAR_SRC=$(ls "$MARKETPLACE_DIR"/jarvis-toolbelt/*/bin/dar-review 2>/dev/null | head -1)
-if [ -n "$DAR_SRC" ] && [ -f "$DAR_SRC" ]; then
-    cp "$DAR_SRC" "$JARVIS_HOME/bin/dar-review"
-    chmod +x "$JARVIS_HOME/bin/dar-review"
-    ok "DAR wrapper: $JARVIS_HOME/bin/dar-review"
-else
-    # Toolbelt not installed yet — wrapper will be available after toolbelt install + reinstall
-    info "dar-review not found (install jarvis-toolbelt to enable)"
+# Copy toolbelt scripts to ~/.jarvis/bin/ if toolbelt was installed
+if [ "$EXT_CHOICE" = "3" ] || [ "$EXT_CHOICE" = "4" ]; then
+    mkdir -p "$JARVIS_HOME/bin"
+    MARKETPLACE_DIR="$(dirname "$(dirname "$PLUGIN_DIR")")"
+    DAR_SRC=$(ls "$MARKETPLACE_DIR"/jarvis-toolbelt/*/bin/dar-review 2>/dev/null | head -1)
+    if [ -n "$DAR_SRC" ] && [ -f "$DAR_SRC" ]; then
+        cp "$DAR_SRC" "$JARVIS_HOME/bin/dar-review"
+        chmod +x "$JARVIS_HOME/bin/dar-review"
+        ok "DAR wrapper: $JARVIS_HOME/bin/dar-review"
+    else
+        warn "dar-review binary not found in toolbelt distribution"
+    fi
 fi
 echo ""
 
