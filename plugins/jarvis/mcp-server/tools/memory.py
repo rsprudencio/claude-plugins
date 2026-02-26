@@ -18,9 +18,10 @@ from typing import Optional
 
 import chromadb
 
-from .config import get_verified_vault_path, get_chunking_config, get_scoring_config
+from .config import get_verified_vault_path, get_chunking_config, get_scoring_config, get_memory_config
 from .chunking import chunk_document
 from .scoring import compute_importance
+from .secret_scan import scan_for_secrets
 from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 from .format_support import (
@@ -344,6 +345,9 @@ def index_vault(
     batch_docs = []
     batch_meta = []
 
+    secret_detection_enabled = get_memory_config().get("secret_detection", True)
+    secrets_skipped = 0
+
     for filepath in indexable_files:
         relative = os.path.relpath(filepath, vault_path)
 
@@ -362,6 +366,19 @@ def index_vault(
             if not content.strip():
                 skipped += 1
                 continue
+
+            # Secret scan — skip file if secrets detected
+            if secret_detection_enabled:
+                detections = scan_for_secrets(content)
+                if detections:
+                    types = [d["type"] for d in detections]
+                    logger.warning(
+                        "Secret detected in %s, skipping indexing: %s",
+                        relative, types,
+                    )
+                    secrets_skipped += 1
+                    skipped += 1
+                    continue
 
             # On force re-index, clean up old chunks first
             if force:
@@ -401,7 +418,7 @@ def index_vault(
         collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
 
     duration = round(time.time() - start, 2)
-    return {
+    result = {
         "success": True,
         "files_indexed": files_indexed,
         "chunks_total": chunks_total,
@@ -410,6 +427,9 @@ def index_vault(
         "duration_seconds": duration,
         "collection_total": collection.count(),
     }
+    if secrets_skipped:
+        result["secrets_skipped"] = secrets_skipped
+    return result
 
 
 def index_file(relative_path: str) -> dict:
@@ -432,6 +452,22 @@ def index_file(relative_path: str) -> dict:
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
+
+        # Secret scan — skip entire file if secrets detected
+        if get_memory_config().get("secret_detection", True):
+            detections = scan_for_secrets(content)
+            if detections:
+                types = [d["type"] for d in detections]
+                logger.warning(
+                    "Secret detected in %s, skipping indexing: %s",
+                    relative_path, types,
+                )
+                return {
+                    "success": False,
+                    "error": "SECRET_DETECTED",
+                    "message": f"File contains potential secrets ({', '.join(types)}), skipping indexing.",
+                    "detections": detections,
+                }
 
         collection = _get_collection()
         chunking_config = get_chunking_config()

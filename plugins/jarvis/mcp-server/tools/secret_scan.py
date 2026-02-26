@@ -21,6 +21,11 @@ SECRET_PATTERNS = {
     ),
     "connection_string": r"(?i)(postgres|mysql|mongodb|redis)://[^\s]+",
     "bearer_token": r"(?i)Bearer\s+[A-Za-z0-9_.\-]{20,}",
+    "slack_webhook": (
+        r"https://hooks\.slack\.com/services/"
+        r"T[A-Z0-9]{8,}/B[A-Z0-9]{8,}/[a-zA-Z0-9]{20,}"
+    ),
+    "slack_token": r"xox[bpas]-[0-9]+-[0-9A-Za-z]+-[0-9A-Za-z]+",
 }
 
 _compiled: Optional[dict] = None

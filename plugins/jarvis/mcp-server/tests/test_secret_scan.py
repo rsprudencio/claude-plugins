@@ -120,6 +120,30 @@ class TestScanForSecrets:
         assert all("redacted_preview" in d for d in detections)
         assert all("*" in d["redacted_preview"] for d in detections)
 
+    def test_slack_webhook(self):
+        # Constructed at runtime to avoid GitHub push protection false positive
+        hook = "https://hooks.slack.com/services/" + "T0ABCDEFG/B0ABCDEFG/aB1cD2eF3gH4iJ5kL6mN7oP8"
+        content = f"SLACK_HOOK={hook}"
+        detections = scan_for_secrets(content)
+        types = [d["type"] for d in detections]
+        assert "slack_webhook" in types
+
+    def test_slack_bot_token(self):
+        # Constructed at runtime to avoid GitHub push protection false positive
+        token = "xox" + "b-123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+        content = f"SLACK_TOKEN={token}"
+        detections = scan_for_secrets(content)
+        types = [d["type"] for d in detections]
+        assert "slack_token" in types
+
+    def test_slack_user_token(self):
+        # Constructed at runtime to avoid GitHub push protection false positive
+        token = "xox" + "p-123456789012-123456789012-123456789012-abcdef1234567890abcdef1234567890"
+        content = f"token: {token}"
+        detections = scan_for_secrets(content)
+        types = [d["type"] for d in detections]
+        assert "slack_token" in types
+
     # --- False positive resistance ---
 
     def test_no_false_positive_uuid(self):
@@ -134,6 +158,11 @@ class TestScanForSecrets:
 
     def test_no_false_positive_short_values(self):
         content = "key: value\nsecret: no"
+        detections = scan_for_secrets(content)
+        assert len(detections) == 0
+
+    def test_no_false_positive_slack_text(self):
+        content = "Send xoxo kisses to the team on Slack"
         detections = scan_for_secrets(content)
         assert len(detections) == 0
 

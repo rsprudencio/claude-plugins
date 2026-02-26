@@ -35,6 +35,7 @@ from .namespaces import (
     NAMESPACE_DECISION,
     NAMESPACE_WORKLOG,
 )
+from .config import get_memory_config
 from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
@@ -116,8 +117,8 @@ def tier2_write(
             "error": f"importance_score must be between 0.0 and 1.0, got {importance_score}",
         }
 
-    # Secret scan
-    if not skip_secret_scan:
+    # Secret scan (respects both per-call skip and global config toggle)
+    if not skip_secret_scan and get_memory_config().get("secret_detection", True):
         detections = scan_for_secrets(content)
         if detections:
             return {

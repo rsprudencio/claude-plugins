@@ -28,6 +28,7 @@ from .namespaces import (
     memory_namespace,
     parse_id,
 )
+from .config import get_memory_config
 from .secret_scan import scan_for_secrets
 
 logger = logging.getLogger("jarvis-core")
@@ -158,9 +159,9 @@ def memory_write(
     if scope == "project" and not project:
         return {"success": False, "error": "Project name required for scope='project'"}
 
-    # Secret scan
+    # Secret scan (respects both per-call skip and global config toggle)
     secret_scan_result = "skipped"
-    if not skip_secret_scan:
+    if not skip_secret_scan and get_memory_config().get("secret_detection", True):
         detections = scan_for_secrets(content)
         if detections:
             return {

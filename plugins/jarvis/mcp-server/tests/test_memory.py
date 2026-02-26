@@ -284,6 +284,29 @@ class TestIndexVault:
 
         mem._chroma_client = None
 
+    def test_index_vault_skips_files_with_secrets(self, mock_config):
+        """Should skip files containing secrets during bulk indexing."""
+        import tools.memory as mem
+
+        mem._chroma_client = None
+        mock_config.set(
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_secret_vault_db")}
+        )
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "clean.md").write_text("# Clean File\n\nNo secrets here.")
+        (notes_dir / "has-secret.md").write_text(
+            "# Config\n\naws_key = AKIAIOSFODNN7EXAMPLE\n"
+        )
+
+        result = index_vault(force=True)
+        assert result["success"] is True
+        assert result["files_indexed"] >= 1  # clean.md indexed
+        assert result["secrets_skipped"] == 1  # has-secret.md skipped
+
+        mem._chroma_client = None
+
 
 class TestIndexFile:
     """Tests for single file indexing."""
@@ -317,6 +340,52 @@ class TestIndexFile:
         result = index_file("notes/does-not-exist.md")
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+
+    def test_index_file_with_secret_skips(self, mock_config):
+        """Should refuse to index a file containing secrets."""
+        import tools.memory as mem
+
+        mem._chroma_client = None
+        mock_config.set(
+            memory={"chroma_data_path": str(mock_config.vault_path / ".test_secret_db")}
+        )
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "has-secret.md").write_text(
+            "# Config\n\naws_key = AKIAIOSFODNN7EXAMPLE\n"
+        )
+
+        result = index_file("notes/has-secret.md")
+        assert result["success"] is False
+        assert result["error"] == "SECRET_DETECTED"
+        assert len(result["detections"]) >= 1
+
+        mem._chroma_client = None
+
+    def test_index_file_secret_detection_disabled(self, mock_config):
+        """Should index files with secrets when secret_detection is disabled."""
+        import tools.memory as mem
+
+        mem._chroma_client = None
+        mock_config.set(
+            memory={
+                "chroma_data_path": str(mock_config.vault_path / ".test_secret_off_db"),
+                "secret_detection": False,
+            }
+        )
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "has-secret.md").write_text(
+            "# Config\n\naws_key = AKIAIOSFODNN7EXAMPLE\n"
+        )
+
+        result = index_file("notes/has-secret.md")
+        assert result["success"] is True
+        assert result["chunks"] >= 1
+
+        mem._chroma_client = None
 
 
 class TestCollectionCreation:
