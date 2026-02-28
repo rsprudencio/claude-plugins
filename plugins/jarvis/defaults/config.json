@@ -1,4 +1,10 @@
 {
+  "server": {
+    "auth": {
+      "enabled": false,
+      "tokens": {}
+    }
+  },
   "vault_path": "__REQUIRED__",
   "file_format": "md",
   "vault_confirmed": false,

@@ -19,6 +19,7 @@ services:
       - CHROMA_PORT=${CHROMA_PORT:-8743}
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
+      - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
     stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:

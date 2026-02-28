@@ -25,6 +25,33 @@ if [ "${JARVIS_AUTOCRLF}" = "true" ]; then
     git config --global core.autocrlf true
 fi
 
+# --- TLS configuration ---
+TLS_CERT="${JARVIS_TLS_CERT:-}"
+TLS_KEY="${JARVIS_TLS_KEY:-}"
+TLS_ENABLED=false
+
+if [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ]; then
+    # Validate both files exist and are readable
+    if [ ! -r "$TLS_CERT" ]; then
+        echo "[jarvis] ERROR: TLS cert not readable: ${TLS_CERT}" >&2
+        exit 1
+    fi
+    if [ ! -r "$TLS_KEY" ]; then
+        echo "[jarvis] ERROR: TLS key not readable: ${TLS_KEY}" >&2
+        exit 1
+    fi
+    TLS_ENABLED=true
+    echo "[jarvis] TLS enabled"
+elif [ -n "$TLS_CERT" ] || [ -n "$TLS_KEY" ]; then
+    echo "[jarvis] ERROR: Both JARVIS_TLS_CERT and JARVIS_TLS_KEY must be set" >&2
+    exit 1
+fi
+
+# --- Internal hook token ---
+# Auto-generate if not provided; hook scripts use this to authenticate
+JARVIS_INTERNAL_TOKEN="${JARVIS_INTERNAL_TOKEN:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
+export JARVIS_INTERNAL_TOKEN
+
 # --- Graceful shutdown ---
 cleanup() {
     echo "[jarvis] Shutting down..."
@@ -65,6 +92,13 @@ sys.exit(0 if token else 1)
 }
 
 # --- Wait for health check ---
+HEALTH_SCHEME="http"
+CURL_TLS_FLAGS=""
+if [ "$TLS_ENABLED" = "true" ]; then
+    HEALTH_SCHEME="https"
+    CURL_TLS_FLAGS="-k"  # Self-signed cert inside container
+fi
+
 wait_for_health() {
     local url="$1"
     local name="$2"
@@ -72,7 +106,7 @@ wait_for_health() {
     local i=0
 
     while [ $i -lt $max_retries ]; do
-        if curl -sf "${url}" > /dev/null 2>&1; then
+        if curl -sf $CURL_TLS_FLAGS "${url}" > /dev/null 2>&1; then
             echo "[jarvis] ${name} is ready"
             return 0
         fi
@@ -98,6 +132,12 @@ wait_for_health "http://127.0.0.1:${CHROMA_PORT}/api/v2/heartbeat" "ChromaDB" 30
 export CHROMA_HOST=127.0.0.1
 export CHROMA_PORT
 
+# --- Build TLS args (bash array — safe for paths with spaces) ---
+tls_args=()
+if [ "$TLS_ENABLED" = "true" ]; then
+    tls_args+=(--ssl-certfile "$TLS_CERT" --ssl-keyfile "$TLS_KEY")
+fi
+
 # --- Start jarvis-core ---
 echo "[jarvis] Starting jarvis-core on port ${CORE_PORT}..."
 cd /app/jarvis-core
@@ -105,7 +145,8 @@ uvicorn http_app:app \
     --host 0.0.0.0 \
     --port "${CORE_PORT}" \
     --log-level info \
-    --no-access-log &
+    --no-access-log \
+    "${tls_args[@]}" &
 CORE_PID=$!
 
 # --- Start jarvis-obsidian ---
@@ -115,11 +156,12 @@ uvicorn http_app:app \
     --host 0.0.0.0 \
     --port "${OBSIDIAN_PORT}" \
     --log-level info \
-    --no-access-log &
+    --no-access-log \
+    "${tls_args[@]}" &
 OBSIDIAN_PID=$!
 
 # Set URL for core's health check detection
-export JARVIS_OBSIDIAN_URL="http://127.0.0.1:${OBSIDIAN_PORT}"
+export JARVIS_OBSIDIAN_URL="${HEALTH_SCHEME}://127.0.0.1:${OBSIDIAN_PORT}"
 
 # --- Conditionally start jarvis-todoist ---
 if has_todoist_token; then
@@ -129,19 +171,20 @@ if has_todoist_token; then
         --host 0.0.0.0 \
         --port "${TODOIST_PORT}" \
         --log-level info \
-        --no-access-log &
+        --no-access-log \
+        "${tls_args[@]}" &
     TODOIST_PID=$!
 else
     echo "[jarvis] No Todoist token found, skipping jarvis-todoist."
 fi
 
 # --- Wait for health ---
-wait_for_health "http://localhost:${CORE_PORT}/health" "jarvis-core" 30
+wait_for_health "${HEALTH_SCHEME}://localhost:${CORE_PORT}/health" "jarvis-core" 30
 
-wait_for_health "http://localhost:${OBSIDIAN_PORT}/health" "jarvis-obsidian" 30
+wait_for_health "${HEALTH_SCHEME}://localhost:${OBSIDIAN_PORT}/health" "jarvis-obsidian" 30
 
 if [ -n "$TODOIST_PID" ]; then
-    wait_for_health "http://localhost:${TODOIST_PORT}/health" "jarvis-todoist" 30
+    wait_for_health "${HEALTH_SCHEME}://localhost:${TODOIST_PORT}/health" "jarvis-todoist" 30
 fi
 
 echo "[jarvis] All services started successfully."

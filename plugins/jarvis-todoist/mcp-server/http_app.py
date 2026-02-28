@@ -15,6 +15,7 @@ import sys
 # Mirror the sys.path setup from server.py so all tool imports resolve
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from jarvis_common.auth import authenticate, current_user
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from server import server
 
@@ -62,11 +63,27 @@ async def not_found(scope, receive, send):
     await _json_response(send, {"error": "Not found"}, status=404)
 
 
+async def _send_401(send, message: str):
+    """Send a 401 Unauthorized response with WWW-Authenticate header (RFC 7235)."""
+    body = json.dumps({"error": message}).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                [b"content-type", b"application/json"],
+                [b"www-authenticate", b'Bearer realm="jarvis"'],
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 async def app(scope, receive, send):
-    """ASGI application with path-based routing.
+    """ASGI application with path-based routing and opt-in auth.
 
     Routes:
-        GET  /health  -> health check
+        GET  /health  -> health check (always open)
         *    /mcp     -> MCP Streamable HTTP (initialize, tool calls, etc.)
     """
     if scope["type"] == "lifespan":
@@ -75,12 +92,25 @@ async def app(scope, receive, send):
 
     path = scope.get("path", "")
 
+    # Health check always open (Docker healthcheck, monitoring)
     if path == "/health" and scope.get("method") == "GET":
         await health_response(scope, receive, send)
-    elif path == "/mcp" or path.startswith("/mcp/"):
-        await session_manager.handle_request(scope, receive, send)
-    else:
-        await not_found(scope, receive, send)
+        return
+
+    # Auth check for all other endpoints
+    username, err = authenticate(scope)
+    if err:
+        await _send_401(send, err)
+        return
+
+    token = current_user.set(username)
+    try:
+        if path == "/mcp" or path.startswith("/mcp/"):
+            await session_manager.handle_request(scope, receive, send)
+        else:
+            await not_found(scope, receive, send)
+    finally:
+        current_user.reset(token)
 
 
 async def _handle_lifespan(scope, receive, send):

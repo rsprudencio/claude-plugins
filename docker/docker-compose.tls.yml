@@ -1,0 +1,21 @@
+# TLS overlay for Jarvis MCP servers.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up
+#
+# Prerequisites:
+#   Generate certs with: ./jarvis-certs.sh <server-hostname>
+#   Set JARVIS_CERTS to the directory containing server.crt and server.key
+#
+# This overlay mounts certs read-only and sets the env vars that
+# entrypoint.sh uses to enable TLS on all uvicorn instances.
+
+services:
+  jarvis:
+    volumes:
+      - ${JARVIS_CERTS:?Set JARVIS_CERTS to your certs directory}:/certs:ro
+    environment:
+      - JARVIS_TLS_CERT=/certs/server.crt
+      - JARVIS_TLS_KEY=/certs/server.key
+    healthcheck:
+      test: ["CMD", "curl", "-sfk", "https://localhost:8741/health"]
