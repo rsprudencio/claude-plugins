@@ -1,13 +1,11 @@
-"""Pytest fixtures for Jarvis Tools tests."""
+"""Pytest fixtures for jarvis-obsidian git tests."""
 
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Generator
 
-import chromadb
 import pytest
 
 
@@ -34,22 +32,14 @@ def temp_config_dir() -> Generator[Path, None, None]:
 
 @pytest.fixture
 def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
-    """Mock the config module to use temporary paths."""
-    import tools.config as config_module
-    import jarvis_common.config as common_config_module
-    import tools.memory as memory_module
-    from chromadb.api.shared_system_client import SharedSystemClient
+    """Mock the config module to use temporary paths.
 
-    # CRITICAL: Clear config cache, ChromaDB client, AND system cache
-    # to prevent tests from using production database or stale connections
+    Patches jarvis_common.config (where obsidian's git tools import from).
+    """
+    import jarvis_common.config as config_module
+
+    # Clear config cache
     config_module._config_cache = None
-    common_config_module._config_cache = None
-    memory_module._chroma_client = None
-    memory_module._chroma_cache_key = None
-    SharedSystemClient.clear_system_cache()
-
-    # Create a temporary ChromaDB directory for this test run
-    temp_db_dir = tempfile.mkdtemp(prefix="jarvis_test_db_")
 
     # Create a valid config
     config_file = temp_config_dir / "config.json"
@@ -57,75 +47,47 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
         "vault_path": str(temp_vault),
         "vault_confirmed": True,
         "configured_at": "2026-02-02T12:00:00Z",
-        "memory": {"chroma_data_path": temp_db_dir},  # Use isolated test database
     }
     config_file.write_text(json.dumps(config_data))
 
-    # Monkey-patch the config path in BOTH modules — jarvis_common.config
-    # is where shared functions (verify_config, get_vault_path, etc.) live,
-    # and tools.config is the re-export layer that tests may patch directly.
+    # Monkey-patch the config getter
     def mock_get_config():
-        if common_config_module._config_cache is None:
+        if config_module._config_cache is None:
             if config_file.exists():
-                common_config_module._config_cache = json.loads(config_file.read_text())
+                config_module._config_cache = json.loads(config_file.read_text())
             else:
-                common_config_module._config_cache = {}
-        return common_config_module._config_cache
+                config_module._config_cache = {}
+        return config_module._config_cache
 
-    monkeypatch.setattr(common_config_module, "get_config", mock_get_config)
     monkeypatch.setattr(config_module, "get_config", mock_get_config)
-
-    # Patch _get_client to return PersistentClient with temp dir.
-    # Production code uses HttpClient (requires a running Chroma server),
-    # but tests use PersistentClient for isolation. Both implement the same
-    # ClientAPI interface, so all assertions work identically.
-    monkeypatch.setattr(
-        memory_module,
-        "_get_client",
-        lambda: chromadb.PersistentClient(path=temp_db_dir),
-    )
-
-    def _clear_cache():
-        config_module._config_cache = None
-        common_config_module._config_cache = None
 
     # Return helper to modify config
     class ConfigHelper:
         def __init__(self):
             self.path = config_file
             self.vault_path = temp_vault
-            self.db_path = temp_db_dir
 
         def set(self, **kwargs):
             """Update config values."""
             data = json.loads(self.path.read_text()) if self.path.exists() else {}
             data.update(kwargs)
             self.path.write_text(json.dumps(data))
-            _clear_cache()
+            config_module._config_cache = None  # Clear cache
 
         def delete_key(self, key: str):
             """Remove a key from config."""
             data = json.loads(self.path.read_text())
             data.pop(key, None)
             self.path.write_text(json.dumps(data))
-            _clear_cache()
+            config_module._config_cache = None
 
         def delete_file(self):
             """Delete the config file entirely."""
             if self.path.exists():
                 self.path.unlink()
-            _clear_cache()
+            config_module._config_cache = None
 
-    helper = ConfigHelper()
-
-    yield helper
-
-    # Cleanup: Remove temporary database directory
-    try:
-        if os.path.exists(temp_db_dir):
-            shutil.rmtree(temp_db_dir)
-    except Exception:
-        pass  # Best effort cleanup
+    yield ConfigHelper()
 
 
 @pytest.fixture
@@ -140,24 +102,6 @@ def no_config(mock_config):
     """No config file exists."""
     mock_config.delete_file()
     return mock_config
-
-
-@pytest.fixture(autouse=True)
-def cleanup_chroma_client():
-    """Clean up ChromaDB client and config cache after each test."""
-    yield
-    # After test completes, clear config caches in both modules,
-    # the Python reference to ChromaDB, AND ChromaDB's internal cache
-    import tools.config as config_module
-    import jarvis_common.config as common_config_module
-    import tools.memory as memory_module
-    from chromadb.api.shared_system_client import SharedSystemClient
-
-    config_module._config_cache = None
-    common_config_module._config_cache = None
-    memory_module._chroma_client = None
-    memory_module._chroma_cache_key = None
-    SharedSystemClient.clear_system_cache()
 
 
 @pytest.fixture

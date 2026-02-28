@@ -14,7 +14,7 @@
       "name": "jarvis",
       "source": "./plugins/jarvis",
       "version": "1.14.0",
-      "description": "Core Jarvis - vault management, journal entries, git audit trail, semantic memory, auto-extract, JARVIS protocol (REQUIRED for extensions)"
+      "description": "Core Jarvis - vault management, semantic memory, auto-extract (REQUIRED for extensions)"
     },
     {
       "name": "jarvis-todoist",
@@ -33,6 +33,12 @@
       "source": "./plugins/jarvis-toolbelt",
       "version": "1.1.0",
       "description": "Professional engineering skills - security review agent, TDD workflows, and more"
+    },
+    {
+      "name": "jarvis-obsidian",
+      "source": "./plugins/jarvis-obsidian",
+      "version": "1.0.0",
+      "description": "Obsidian vault PKM workflows - JARVIS protocol, git audit trail, journal, exploration (requires: jarvis)"
     }
   ]
 }

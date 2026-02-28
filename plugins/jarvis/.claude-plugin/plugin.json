@@ -1,7 +1,7 @@
 {
   "name": "jarvis",
-  "description": "Core Jarvis - vault management, journal entries, git audit trail with JARVIS protocol",
-  "version": "2.0.5",
+  "description": "Core Jarvis - vault management, content API, semantic memory",
+  "version": "2.1.0",
   "author": {
     "name": "Raphael Prudencio"
   },
@@ -10,12 +10,8 @@
   "license": "CC-BY-NC-4.0",
   "keywords": [
     "jarvis",
-    "pkm",
-    "personal-knowledge-management",
-    "git-audit",
-    "journal",
-    "obsidian",
     "vault",
-    "JARVIS-protocol"
+    "semantic-memory",
+    "content-api"
   ]
 }

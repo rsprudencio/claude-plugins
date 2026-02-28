@@ -8,9 +8,9 @@ import logging
 import os
 from typing import Optional, Tuple
 
-from .config import get_verified_vault_path
+from jarvis_common.config import get_verified_vault_path
 
-logger = logging.getLogger("jarvis-core.git")
+logger = logging.getLogger("jarvis-obsidian.git")
 
 # Environment that disables git pager to prevent hanging on interactive prompts
 GIT_ENV = {**os.environ, "GIT_PAGER": ""}
@@ -57,7 +57,7 @@ def run_git_command(
             check=check,
             env=GIT_ENV,
             timeout=timeout,
-            cwd=vault_path,  # ✅ Always run in vault
+            cwd=vault_path,  # Always run in vault
         )
 
         if result.returncode != 0:

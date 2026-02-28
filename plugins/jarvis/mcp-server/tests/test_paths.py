@@ -304,7 +304,7 @@ class TestJarvisHomeEnvVar:
         import tools.config as config_module
 
         # Reset config to use default chroma_data_path (starting with ~/.jarvis)
-        config_module._config_cache = None
+        config_module.clear_config_cache()
         mock_config.set(memory={})  # Remove custom chroma_data_path override
 
         jarvis_home = tmp_path / "docker_config"
@@ -320,7 +320,7 @@ class TestJarvisHomeEnvVar:
         import tools.config as config_module
 
         # Reset config to use default chroma_data_path
-        config_module._config_cache = None
+        config_module.clear_config_cache()
         mock_config.set(memory={})
 
         monkeypatch.delenv("JARVIS_HOME", raising=False)

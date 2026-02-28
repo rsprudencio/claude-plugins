@@ -1,18 +1,18 @@
 """Jarvis commit operations with vault verification.
 
 All operations run in the configured vault directory.
+Unlike the core version, this does NOT perform ChromaDB reindexing —
+that responsibility stays with jarvis-core.
 """
 
 import logging
-import os
 import re
 from typing import Optional
 
 from .git_common import run_git_command
 from .git_ops import get_status
-from .format_support import is_indexable
 
-logger = logging.getLogger("jarvis-core.commit")
+logger = logging.getLogger("jarvis-obsidian.commit")
 
 
 def stage_files(files: Optional[list[str]] = None, stage_all: bool = False) -> dict:
@@ -168,48 +168,6 @@ def get_committed_files() -> list[str]:
     return [f for f in result.get("stdout", "").strip().split("\n") if f]
 
 
-def reindex_committed_files() -> dict:
-    """Sync ChromaDB with .md files changed in the most recent commit.
-
-    Called after a successful jarvis_commit to keep the index in sync.
-    For created/edited files, reindexes content. For deleted files,
-    removes stale chunks from ChromaDB. Failures are logged but never
-    propagated — indexing must not block the commit response.
-
-    Returns:
-        Dict with 'reindexed' (updated/created) and 'unindexed' (deleted) lists.
-    """
-    from .config import get_vault_path
-    from .memory import index_file, unindex_file
-
-    vault_path = get_vault_path()
-    reindexed = []
-    unindexed = []
-
-    for f in get_committed_files():
-        if not is_indexable(f):
-            continue
-        try:
-            full_path = os.path.join(vault_path, f) if vault_path else f
-            if os.path.isfile(full_path):
-                result = index_file(f)
-                if result.get("success"):
-                    reindexed.append(f)
-            else:
-                result = unindex_file(f)
-                if result.get("success") and result.get("deleted_chunks", 0) > 0:
-                    unindexed.append(f)
-        except Exception as e:
-            logger.warning(f"Failed to sync index for {f}: {e}")
-
-    if reindexed:
-        logger.info(f"Reindexed {len(reindexed)} file(s) after commit")
-    if unindexed:
-        logger.info(f"Unindexed {len(unindexed)} deleted file(s) after commit")
-
-    return {"reindexed": reindexed, "unindexed": unindexed}
-
-
 def commit_user_prologue(requested_files: set) -> dict | None:
     """Commit pre-existing dirty vault files as [JARVIS:U] before a Jarvis commit.
 
@@ -258,17 +216,9 @@ def commit_user_prologue(requested_files: set) -> dict | None:
     if not commit_result["success"]:
         return commit_result
 
-    # Reindex any .md files from the user prologue
-    index_sync = reindex_committed_files()
-
-    result = {
+    return {
         "success": True,
         "commit_hash": commit_result["commit_hash"],
         "protocol_tag": tag_string,
         "files_committed": user_files,
     }
-    if index_sync["reindexed"]:
-        result["reindexed"] = index_sync["reindexed"]
-    if index_sync["unindexed"]:
-        result["unindexed"] = index_sync["unindexed"]
-    return result

@@ -651,12 +651,12 @@ class TestPerPromptConfig:
         """Config can disable per-prompt search."""
         import tools.config as config_module
 
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
         config_data.setdefault("memory", {})["per_prompt_search"] = {"enabled": False}
         mock_config.path.write_text(json.dumps(config_data))
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         from tools.config import get_per_prompt_config
 
@@ -667,12 +667,12 @@ class TestPerPromptConfig:
         """Custom threshold overrides default."""
         import tools.config as config_module
 
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
         config_data.setdefault("memory", {})["per_prompt_search"] = {"threshold": 0.7}
         mock_config.path.write_text(json.dumps(config_data))
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         from tools.config import get_per_prompt_config
 
@@ -686,12 +686,12 @@ class TestPerPromptConfig:
         """Custom budget overrides default."""
         import tools.config as config_module
 
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
         config_data.setdefault("memory", {})["per_prompt_search"] = {"budget": 12000}
         mock_config.path.write_text(json.dumps(config_data))
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         from tools.config import get_per_prompt_config
 

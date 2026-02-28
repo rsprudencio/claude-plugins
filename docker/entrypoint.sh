@@ -1,16 +1,19 @@
 #!/bin/bash
 # Jarvis MCP Server - Docker Entrypoint
-# Manages ChromaDB server, jarvis-core, and optionally jarvis-todoist.
+# Manages ChromaDB server, jarvis-core, jarvis-obsidian, and optionally
+# jarvis-todoist.
 
 set -e
 
 CORE_PORT="${JARVIS_CORE_PORT:-8741}"
 TODOIST_PORT="${JARVIS_TODOIST_PORT:-8742}"
 CHROMA_PORT="${CHROMA_PORT:-8743}"
+OBSIDIAN_PORT="${JARVIS_OBSIDIAN_PORT:-8744}"
 CHROMA_DATA="${JARVIS_HOME:-/config}/db"
 CORE_PID=""
 TODOIST_PID=""
 CHROMA_PID=""
+OBSIDIAN_PID=""
 
 # --- Git configuration for mounted vault ---
 if [ -d "/vault" ]; then
@@ -27,6 +30,7 @@ cleanup() {
     echo "[jarvis] Shutting down..."
     [ -n "$CORE_PID" ] && kill "$CORE_PID" 2>/dev/null
     [ -n "$TODOIST_PID" ] && kill "$TODOIST_PID" 2>/dev/null
+    [ -n "$OBSIDIAN_PID" ] && kill "$OBSIDIAN_PID" 2>/dev/null
     # Wait up to 10s for jarvis-core to drain in-flight requests
     local timeout=10
     while [ $timeout -gt 0 ] && kill -0 "$CORE_PID" 2>/dev/null; do
@@ -104,6 +108,19 @@ uvicorn http_app:app \
     --no-access-log &
 CORE_PID=$!
 
+# --- Start jarvis-obsidian ---
+echo "[jarvis] Starting jarvis-obsidian on port ${OBSIDIAN_PORT}..."
+cd /app/jarvis-obsidian
+uvicorn http_app:app \
+    --host 0.0.0.0 \
+    --port "${OBSIDIAN_PORT}" \
+    --log-level info \
+    --no-access-log &
+OBSIDIAN_PID=$!
+
+# Set URL for core's health check detection
+export JARVIS_OBSIDIAN_URL="http://127.0.0.1:${OBSIDIAN_PORT}"
+
 # --- Conditionally start jarvis-todoist ---
 if has_todoist_token; then
     echo "[jarvis] Todoist token found, starting jarvis-todoist on port ${TODOIST_PORT}..."
@@ -120,6 +137,8 @@ fi
 
 # --- Wait for health ---
 wait_for_health "http://localhost:${CORE_PORT}/health" "jarvis-core" 30
+
+wait_for_health "http://localhost:${OBSIDIAN_PORT}/health" "jarvis-obsidian" 30
 
 if [ -n "$TODOIST_PID" ]; then
     wait_for_health "http://localhost:${TODOIST_PORT}/health" "jarvis-todoist" 30

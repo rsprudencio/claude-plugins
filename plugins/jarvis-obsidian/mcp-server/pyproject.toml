@@ -1,17 +1,12 @@
 [project]
-name = "jarvis-core"
-version = "2.1.0"
-description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
+name = "jarvis-obsidian"
+version = "1.0.0"
+description = "Jarvis Obsidian MCP Server - Git audit trail and PKM vault operations"
 requires-python = ">=3.11"
 dependencies = [
     "jarvis-common",
     "mcp>=1.0.0",
-    "chromadb>=1.5.0",
-    "tokenizers>=0.13.0",
 ]
-
-[tool.uv.sources]
-jarvis-common = { path = "../../../lib/jarvis-common" }
 
 [project.optional-dependencies]
 dev = [
@@ -20,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-jarvis-core = "server:main_sync"
+jarvis-obsidian = "server:main_sync"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,6 +23,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
+
+[tool.uv.sources]
+jarvis-common = { path = "../../../lib/jarvis-common" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

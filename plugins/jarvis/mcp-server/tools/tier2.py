@@ -200,6 +200,13 @@ def tier2_write(
     if extra_metadata:
         metadata.update(extra_metadata)
 
+    # Multi-user attribution
+    from jarvis_common.auth import get_current_user
+
+    user = get_current_user()
+    if user != "anonymous":
+        metadata["user"] = user
+
     # Write to ChromaDB
     try:
         collection = _get_collection()

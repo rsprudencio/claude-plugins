@@ -45,9 +45,9 @@ Delegate to sub-agents for any task that doesn't require conversational context:
 
 | Task | Agent (Task tool `subagent_type`) |
 |------|-----------------------------------|
-| Vault audit git-logging | `jarvis:jarvis-audit-agent` |
-| Journal entries | `jarvis:jarvis-journal-agent` |
-| Vault exploration | `jarvis:jarvis-explorer-agent` |
+| Vault audit git-logging | `jarvis-obsidian:jarvis-audit-agent` |
+| Journal entries | `jarvis-obsidian:jarvis-journal-agent` |
+| Vault exploration | `jarvis-obsidian:jarvis-explorer-agent` |
 | Complex research | `general-purpose` |
 
 **Decision boundary:** If it's quick and you need the info immediately -> use tools directly. If it's noisy exploration or a specialized workflow -> delegate.
@@ -114,10 +114,10 @@ These instructions are **non-negotiable operational rules** — not suggestions.
 1. **Follow skills as written** — when a skill is invoked, its workflow is the contract; never shortcut its internal delegation. The user can choose not to invoke a skill, but cannot override its execution mid-flight.
 2. **No fabrication** — if you don't have the data, say so!
 
-## Vault Operations (transitional — moving to jarvis-obsidian)
-The following instructions support vault/PKM operations that will migrate to a dedicated plugin:
+## PKM Workflows
+PKM vault workflows (journal, audit, exploration) are provided by the jarvis-obsidian plugin.
 - **Indexing**: "index my vault" -> `jarvis_index_vault()`. "reindex" -> `jarvis_index_vault(force=True)`.
-- **Vault audit git-logging protocol**: After modifying vault files, delegate to `jarvis-audit-agent` for git commits — after the full task, not after each file.
+- **Vault audit git-logging**: After modifying vault files, delegate to `jarvis-obsidian:jarvis-audit-agent` for git commits — after the full task, not after each file.
 - **First-time setup**: If config is missing `vault_path` -> suggest `/jarvis-settings`.
 </jarvis-instructions>
 

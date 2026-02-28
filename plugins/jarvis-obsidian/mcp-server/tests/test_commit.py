@@ -1,4 +1,4 @@
-"""Tests for commit.py git commit operations."""
+"""Tests for commit.py git commit operations (obsidian — no ChromaDB reindexing)."""
 
 import os
 
@@ -9,7 +9,6 @@ from tools.commit import (
     execute_commit,
     get_commit_stats,
     get_committed_files,
-    reindex_committed_files,
     commit_user_prologue,
 )
 
@@ -301,8 +300,6 @@ class TestGetCommitStats:
 
     def test_no_previous_commit_returns_zeros(self, mock_config, temp_vault):
         """Returns zeros when no previous commit exists."""
-        # temp_vault has a git repo but we need a commit
-        # Try to get stats without HEAD~1
         result = get_commit_stats()
 
         # Should handle gracefully
@@ -352,173 +349,6 @@ class TestGetCommittedFiles:
             lambda *a, **kw: (False, {"success": False}),
         )
         assert get_committed_files() == []
-
-
-class TestReindexCommittedFiles:
-    """Test reindex_committed_files — full commit-to-ChromaDB flow."""
-
-    def test_reindexes_md_files(self, mock_config, git_repo):
-        """Committed .md files are indexed into ChromaDB."""
-        from tools.memory import _get_collection
-
-        md_file = git_repo / "notes" / "reindex-test.md"
-        md_file.write_text("# Reindex Test\n\nThis should appear in ChromaDB.")
-        stage_files([str(md_file)])
-        execute_commit("Add reindex test note")
-
-        result = reindex_committed_files()
-
-        assert "notes/reindex-test.md" in result["reindexed"]
-
-        # Verify actually in ChromaDB
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/reindex-test.md"})
-        assert len(results["ids"]) >= 1
-        assert "Reindex Test" in results["documents"][0]
-
-    def test_skips_non_md_files(self, mock_config, git_repo):
-        """Non-markdown files are not reindexed."""
-        txt_file = git_repo / "data.txt"
-        txt_file.write_text("plain text")
-        stage_files([str(txt_file)])
-        execute_commit("Add txt file")
-
-        result = reindex_committed_files()
-
-        assert result["reindexed"] == []
-        assert result["unindexed"] == []
-
-    def test_mixed_files_only_indexes_md(self, mock_config, git_repo):
-        """Only .md files reindexed when commit has mixed types."""
-        from tools.memory import _get_collection
-
-        md = git_repo / "notes" / "mixed.md"
-        txt = git_repo / "config.yaml"
-        md.write_text("# Mixed Test\n\nMarkdown content.")
-        txt.write_text("key: value")
-        stage_files([str(md), str(txt)])
-        execute_commit("Mixed file commit")
-
-        result = reindex_committed_files()
-
-        assert "notes/mixed.md" in result["reindexed"]
-        assert len(result["reindexed"]) == 1
-
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/mixed.md"})
-        assert len(results["ids"]) >= 1
-
-    def test_handles_index_failure_gracefully(self, mock_config, git_repo, monkeypatch):
-        """Indexing failures are logged, not raised."""
-        from tools import memory as memory_module
-
-        md_file = git_repo / "notes" / "fail-test.md"
-        md_file.write_text("# Fail Test")
-        stage_files([str(md_file)])
-        execute_commit("Add failing file")
-
-        # Make index_file always fail
-        monkeypatch.setattr(
-            memory_module,
-            "index_file",
-            lambda path: (_ for _ in ()).throw(RuntimeError("boom")),
-        )
-
-        # Should not raise
-        result = reindex_committed_files()
-        assert result["reindexed"] == []
-
-    def test_reindex_updates_existing_content(self, mock_config, git_repo):
-        """Editing a file and recommitting updates the ChromaDB entry."""
-        from tools.memory import _get_collection
-
-        md_file = git_repo / "notes" / "evolving.md"
-        md_file.write_text("# Version 1\n\nOriginal content.")
-        stage_files([str(md_file)])
-        execute_commit("Create evolving note")
-        reindex_committed_files()
-
-        # Now edit it
-        md_file.write_text("# Version 2\n\nUpdated content.")
-        stage_files([str(md_file)])
-        execute_commit("Update evolving note")
-        result = reindex_committed_files()
-
-        assert "notes/evolving.md" in result["reindexed"]
-
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/evolving.md"})
-        assert len(results["ids"]) >= 1
-        assert "Version 2" in results["documents"][0]
-        assert "Version 1" not in results["documents"][0]
-
-    def test_unindexes_deleted_md_files(self, mock_config, git_repo):
-        """Deleted .md files are removed from ChromaDB."""
-        import os
-        from tools.memory import _get_collection, index_file
-
-        # Create and index a file
-        md_file = git_repo / "notes" / "doomed.md"
-        md_file.write_text("# Doomed File\n\nThis will be deleted.")
-        stage_files([str(md_file)])
-        execute_commit("Create doomed note")
-        reindex_committed_files()
-
-        # Verify it's in ChromaDB
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/doomed.md"})
-        assert len(results["ids"]) >= 1
-
-        # Delete the file and commit
-        os.remove(str(md_file))
-        os.system(f"cd {git_repo} && git add -A")
-        execute_commit("Delete doomed note")
-
-        result = reindex_committed_files()
-
-        assert "notes/doomed.md" in result["unindexed"]
-        assert result["reindexed"] == []
-
-        # Verify removed from ChromaDB
-        results = collection.get(where={"parent_file": "notes/doomed.md"})
-        assert len(results["ids"]) == 0
-
-    def test_mixed_create_and_delete(self, mock_config, git_repo):
-        """Single commit with both created and deleted files syncs both."""
-        import os
-        from tools.memory import _get_collection
-
-        # Create first file and commit
-        old_file = git_repo / "notes" / "old.md"
-        old_file.write_text("# Old File\n\nWill be replaced.")
-        stage_files([str(old_file)])
-        execute_commit("Create old note")
-        reindex_committed_files()
-
-        # Verify old file indexed
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/old.md"})
-        assert len(results["ids"]) >= 1
-
-        # Now delete old and create new in one commit
-        os.remove(str(old_file))
-        new_file = git_repo / "notes" / "new.md"
-        new_file.write_text("# New File\n\nFresh content.")
-        os.system(f"cd {git_repo} && git add -A")
-        execute_commit("Replace old with new")
-
-        result = reindex_committed_files()
-
-        assert "notes/old.md" in result["unindexed"]
-        assert "notes/new.md" in result["reindexed"]
-
-        # Old gone from ChromaDB
-        results = collection.get(where={"parent_file": "notes/old.md"})
-        assert len(results["ids"]) == 0
-
-        # New present in ChromaDB
-        results = collection.get(where={"parent_file": "notes/new.md"})
-        assert len(results["ids"]) >= 1
 
 
 class TestCommitUserPrologue:
@@ -582,33 +412,8 @@ class TestCommitUserPrologue:
         )
         assert "entry.md" in status.stdout
 
-    def test_reindexes_user_md_files(self, mock_config, git_repo):
-        """User prologue reindexes committed .md files into ChromaDB."""
-        from tools.memory import _get_collection
-
-        user_md = git_repo / "notes" / "user-note.md"
-        user_md.write_text("# User Note\n\nManual content.")
-
-        result = commit_user_prologue({"unrelated.md"})
-
-        assert result is not None
-        assert "notes/user-note.md" in result.get("reindexed", [])
-
-        collection = _get_collection()
-        results = collection.get(where={"parent_file": "notes/user-note.md"})
-        assert len(results["ids"]) >= 1
-
     def test_status_failure_returns_none(self, mock_config, git_repo, monkeypatch):
         """Silently returns None when git status fails."""
-        from tools import git_ops
-
-        monkeypatch.setattr(
-            git_ops,
-            "run_git_command",
-            lambda *a, **kw: (False, {"success": False, "error": "git error"}),
-        )
-
-        # Need to re-import since commit.py imports get_status at module level
         from tools import commit as commit_module
 
         monkeypatch.setattr(

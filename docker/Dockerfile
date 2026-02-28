@@ -1,6 +1,7 @@
 # Jarvis MCP Server - Docker Image
-# Runs ChromaDB (port 8743), jarvis-core (port 8741), and optionally
-# jarvis-todoist (port 8742) via Streamable HTTP transport.
+# Runs ChromaDB (port 8743), jarvis-core (port 8741), jarvis-obsidian
+# (port 8744), and optionally jarvis-todoist (port 8742) via Streamable
+# HTTP transport.
 
 # ---- Builder stage: install Python dependencies ----
 FROM python:3.12-slim AS builder
@@ -52,6 +53,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=model-fetch /models /app/models
 ENV JARVIS_MODEL_DIR=/app/models/cross-encoder
 
+# ---- Copy jarvis-common shared package ----
+WORKDIR /app/jarvis-common
+COPY lib/jarvis-common/ .
+RUN uv pip install --system /app/jarvis-common/
+
 # ---- Copy jarvis-core source ----
 # Uses directory COPY so new .py files are included automatically.
 # Tests, __pycache__, pyproject.toml etc. are excluded via .dockerignore.
@@ -61,6 +67,10 @@ COPY plugins/jarvis/mcp-server/ .
 # ---- Copy jarvis-todoist source ----
 WORKDIR /app/jarvis-todoist
 COPY plugins/jarvis-todoist/mcp-server/ .
+
+# ---- Copy jarvis-obsidian source ----
+WORKDIR /app/jarvis-obsidian
+COPY plugins/jarvis-obsidian/mcp-server/ .
 
 # ---- Entrypoint ----
 COPY docker/entrypoint.sh /app/entrypoint.sh
@@ -74,8 +84,9 @@ ENV JARVIS_VERSION=$JARVIS_VERSION
 ENV JARVIS_CORE_PORT=8741
 ENV JARVIS_TODOIST_PORT=8742
 ENV CHROMA_PORT=8743
+ENV JARVIS_OBSIDIAN_PORT=8744
 
-EXPOSE 8741 8742 8743
+EXPOSE 8741 8742 8743 8744
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -sf http://localhost:${JARVIS_CORE_PORT}/health || exit 1

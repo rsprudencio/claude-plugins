@@ -226,17 +226,20 @@ class TestToolsList:
         tools = data["result"]["tools"]
         tool_names = [t["name"] for t in tools]
 
-        # Should have at least 20 core tools
-        assert len(tools) >= 20, f"Expected >= 20 tools, got {len(tools)}: {tool_names}"
+        # Core has 13 tools (9 without obsidian, 13 with PKM conditionals)
+        assert len(tools) >= 9, f"Expected >= 9 tools, got {len(tools)}: {tool_names}"
 
-        # Verify key tools are present
+        # Verify key core tools are present
         for expected in [
             "jarvis_store",
             "jarvis_retrieve",
-            "jarvis_status",
-            "jarvis_commit",
+            "jarvis_collection_stats",
         ]:
             assert expected in tool_names, f"Missing tool: {expected}"
+
+        # Git tools should NOT be in core (moved to jarvis-obsidian)
+        for absent in ["jarvis_commit", "jarvis_status", "jarvis_push"]:
+            assert absent not in tool_names, f"Git tool should not be in core: {absent}"
 
 
 class TestVaultOps:

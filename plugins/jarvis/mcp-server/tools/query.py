@@ -138,7 +138,9 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
     return truncated + "..."
 
 
-def _translate_filter(filter_dict: Optional[dict]) -> Optional[dict]:
+def _translate_filter(
+    filter_dict: Optional[dict], user: Optional[str] = None
+) -> Optional[dict]:
     """Translate clean filter dict to ChromaDB where syntax.
 
     Handles the metadata schema where:
@@ -149,13 +151,20 @@ def _translate_filter(filter_dict: Optional[dict]) -> Optional[dict]:
     we transparently map to vault_type. When they use a content type value
     (vault, memory, etc.), we use the universal type field.
 
+    The optional ``user`` parameter adds a metadata filter for multi-user
+    isolation — only documents attributed to that user are returned.
+
     Input: {"directory": "journal", "type": "note", "importance": "high", "tags": "work"}
     Output: {"$and": [{"directory": "journal"}, {"vault_type": "note"}, ...]}
     """
     if not filter_dict:
-        return None
+        filter_dict = {}
 
     conditions = []
+
+    # Multi-user filter (opt-in)
+    if user and user != "anonymous":
+        conditions.append({"user": user})
 
     if "directory" in filter_dict and filter_dict["directory"]:
         conditions.append({"directory": filter_dict["directory"]})
@@ -254,13 +263,19 @@ def _increment_retrieval_counts(
         logger.warning(f"Failed to increment retrieval counts: {e}")
 
 
-def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -> dict:
+def query_vault(
+    query: str,
+    n_results: int = 5,
+    filter: Optional[dict] = None,
+    user: Optional[str] = None,
+) -> dict:
     """Semantic search across vault memory.
 
     Args:
         query: Natural language search query
         n_results: Max results (capped at 20)
         filter: Optional metadata filters (directory, type, importance, tags)
+        user: Optional user filter for multi-user isolation
 
     Returns:
         Formatted results dict with titles, paths, excerpts, relevance scores
@@ -281,7 +296,7 @@ def query_vault(query: str, n_results: int = 5, filter: Optional[dict] = None) -
         }
 
     n_results = min(max(1, n_results), 20)
-    where = _translate_filter(filter)
+    where = _translate_filter(filter, user=user)
 
     # Query expansion
     expansion_config = get_expansion_config()

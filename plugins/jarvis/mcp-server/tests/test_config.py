@@ -91,7 +91,7 @@ class TestConfigCaching:
         from tools import config as config_module
 
         # Clear cache
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         # First load
         config1 = config_module.get_config()
@@ -104,6 +104,7 @@ class TestConfigCaching:
     def test_invalid_json_returns_empty_dict(self, tmp_path, monkeypatch):
         """Invalid JSON should be handled gracefully."""
         from tools import config as config_module
+        import jarvis_common.config as common_config_module
 
         # Create config with invalid JSON
         config_dir = tmp_path / ".jarvis"
@@ -113,7 +114,8 @@ class TestConfigCaching:
 
         # Mock home to point to tmp_path
         monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-        config_module._config_cache = None
+        # Clear cache (canonical is jarvis_common, clear_config_cache handles it)
+        config_module.clear_config_cache()
 
         # Should raise JSONDecodeError
         with pytest.raises(Exception):  # json.JSONDecodeError
@@ -216,7 +218,7 @@ class TestEnvVarOverrides:
         """JARVIS_HOME env var should override default ~/.jarvis config path."""
         from tools import config as config_module
 
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
         # Create config in custom JARVIS_HOME
         jarvis_home = tmp_path / "custom_jarvis"
@@ -231,7 +233,7 @@ class TestEnvVarOverrides:
         config = config_module.get_config()
         assert config["vault_path"] == "/custom/vault"
 
-        config_module._config_cache = None
+        config_module.clear_config_cache()
 
     def test_jarvis_vault_path_overrides_config(
         self, tmp_path, mock_config, monkeypatch

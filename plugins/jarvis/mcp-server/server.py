@@ -2,18 +2,13 @@
 """
 Jarvis Core MCP Server
 
-Unified content API, git operations, and vault access for JARVIS protocol.
+Unified content API and vault access for JARVIS protocol.
 
 Tools - Content Lifecycle (unified API):
 - jarvis_store: Write any content (vault file, memory, or tier2)
 - jarvis_retrieve: Read/search any content (semantic, by ID, by name, list)
 - jarvis_remove: Delete any content (by ID or name)
 - jarvis_promote: Promote tier2 content to tier1 (file-backed)
-
-Tools - Git Operations:
-- jarvis_commit, jarvis_status, jarvis_parse_last_commit, jarvis_push
-- jarvis_move_files, jarvis_query_history, jarvis_rollback
-- jarvis_file_history, jarvis_rewrite_commit_messages
 
 Tools - Vault Filesystem:
 - jarvis_read_vault_file, jarvis_list_vault_dir, jarvis_file_exists
@@ -27,6 +22,9 @@ Tools - Path Configuration:
 Tools - Format Support:
 - jarvis_get_format_reference
 
+Note: Git operations (commit, status, push, etc.) have moved to jarvis-obsidian.
+PKM-specific tools (index_vault, index_file, promote, get_format_reference)
+are conditionally visible based on jarvis-obsidian availability.
 """
 import asyncio
 import inspect
@@ -34,6 +32,8 @@ import json
 import logging
 import os
 import sys
+import time
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -41,30 +41,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-from protocol import (
-    ProtocolTag,
-    ProtocolValidator,
-    format_commit_message,
-    VALID_OPERATIONS,
-)
-from tools.commit import (
-    stage_files,
-    execute_commit,
-    get_commit_stats,
-    reindex_committed_files,
-    commit_user_prologue,
-)
 from tools.file_ops import read_vault_file, list_vault_dir, file_exists_in_vault
-from tools.git_ops import (
-    parse_last_commit,
-    get_status,
-    push_to_remote,
-    move_files,
-    query_history,
-    rollback_commit,
-    file_history,
-    rewrite_commit_messages,
-)
 from tools.memory import index_vault, index_file
 from tools.paths import (
     get_path,
@@ -92,150 +69,6 @@ server = Server("core", instructions=system_prompt.instructions)
 
 # Tool definitions
 TOOLS = [
-    Tool(
-        name="jarvis_commit",
-        description="Create a JARVIS protocol git commit with validation and formatting.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["create", "edit", "delete", "move", "user"],
-                    "description": "Operation type",
-                },
-                "description": {"type": "string", "description": "Commit message"},
-                "entry_id": {
-                    "type": "string",
-                    "description": "14-digit timestamp (optional)",
-                },
-                "trigger_mode": {
-                    "type": "string",
-                    "enum": ["conversational", "agent"],
-                    "default": "conversational",
-                },
-                "files": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Files to stage (optional)",
-                },
-            },
-            "required": ["operation", "description"],
-        },
-    ),
-    Tool(
-        name="jarvis_status",
-        description="Get current git status (staged, unstaged, untracked files).",
-        inputSchema={"type": "object", "properties": {}},
-    ),
-    Tool(
-        name="jarvis_parse_last_commit",
-        description="Parse info about the most recent commit.",
-        inputSchema={"type": "object", "properties": {}},
-    ),
-    Tool(
-        name="jarvis_push",
-        description="Push commits to remote repository.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "branch": {"type": "string", "description": "Branch to push (optional)"}
-            },
-        },
-    ),
-    Tool(
-        name="jarvis_move_files",
-        description="Move/rename files using git mv (preserves history).",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "moves": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "source": {"type": "string"},
-                            "destination": {"type": "string"},
-                        },
-                        "required": ["source", "destination"],
-                    },
-                }
-            },
-            "required": ["moves"],
-        },
-    ),
-    Tool(
-        name="jarvis_query_history",
-        description="Query Jarvis operations from git history.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["create", "edit", "delete", "move", "user", "all"],
-                    "description": "Filter by operation type (default: all)",
-                },
-                "since": {
-                    "type": "string",
-                    "description": "Time filter (e.g., 'today', '1 week ago')",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results (default: 10)",
-                },
-                "file": {
-                    "type": "string",
-                    "description": "Filter by file path (optional)",
-                },
-            },
-        },
-    ),
-    Tool(
-        name="jarvis_rollback",
-        description="Rollback a specific Jarvis commit using git revert.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "commit_hash": {
-                    "type": "string",
-                    "description": "Commit hash to revert",
-                }
-            },
-            "required": ["commit_hash"],
-        },
-    ),
-    Tool(
-        name="jarvis_file_history",
-        description="Get Jarvis operation history for a specific file.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "file_path": {"type": "string", "description": "Path to the file"},
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results (default: 10)",
-                },
-            },
-            "required": ["file_path"],
-        },
-    ),
-    Tool(
-        name="jarvis_rewrite_commit_messages",
-        description="Rewrite recent commit messages to remove unwanted text (e.g., Co-Authored-By lines). WARNING: Rewrites history - only use on unpushed commits.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "count": {
-                    "type": "integer",
-                    "description": "Number of recent commits to process (default: 1)",
-                },
-                "patterns": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Sed regex patterns to remove. Default: ['Co-Authored-By:.*']",
-                },
-            },
-        },
-    ),
     # Unified content API
     Tool(
         name="jarvis_store",
@@ -442,6 +275,10 @@ TOOLS = [
                     "default": "importance_desc",
                     "description": "Sort order for tier2 list mode (default: importance_desc)",
                 },
+                "user": {
+                    "type": "string",
+                    "description": "Filter results by user (for multi-user deployments)",
+                },
             },
         },
     ),
@@ -624,72 +461,42 @@ TOOLS = [
 ]
 
 
+# Conditional PKM tool visibility — these tools are only useful when
+# jarvis-obsidian provides the git audit layer for PKM workflows.
+_obsidian_cache = {"available": None, "checked_at": 0.0}
+_OBSIDIAN_HEALTH_TTL = 30  # seconds
+
+_PKM_TOOLS = {
+    "jarvis_index_vault",
+    "jarvis_index_file",
+    "jarvis_get_format_reference",
+    "jarvis_promote",
+}
+
+
+def _is_obsidian_available() -> bool:
+    """Check if jarvis-obsidian server is reachable (with TTL cache)."""
+    now = time.time()
+    if now - _obsidian_cache["checked_at"] < _OBSIDIAN_HEALTH_TTL:
+        if _obsidian_cache["available"] is not None:
+            return _obsidian_cache["available"]
+    url = os.environ.get("JARVIS_OBSIDIAN_URL", "http://localhost:8744")
+    try:
+        req = urllib.request.Request(f"{url}/health", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read())
+            available = data.get("status") == "ok"
+    except Exception:
+        available = False
+    _obsidian_cache.update(available=available, checked_at=now)
+    return available
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    return TOOLS
-
-
-async def handle_commit(args: dict) -> dict:
-    """Handle jarvis_commit."""
-    operation = args.get("operation")
-    description = args.get("description")
-    entry_id = args.get("entry_id")
-    trigger_mode = args.get("trigger_mode", "conversational")
-    files = args.get("files")
-
-    # Validate
-    errors = ProtocolValidator.validate_all(
-        operation=operation,
-        description=description,
-        entry_id=entry_id,
-        trigger_mode=trigger_mode,
-    )
-    if errors:
-        return {"success": False, "validation_errors": errors}
-
-    # Auto user prologue: when explicit files are provided and this isn't a
-    # user operation, automatically commit any other dirty vault files as
-    # [JARVIS:U] first.  This keeps the audit trail clean without relying on
-    # the LLM agent to order operations correctly.
-    prologue_result = None
-    if operation != "user" and files:
-        prologue_result = commit_user_prologue(set(files))
-        if prologue_result and not prologue_result.get("success", True):
-            return prologue_result
-
-    # Stage
-    stage_result = stage_files(files)
-    if not stage_result["success"]:
-        return stage_result
-
-    # Build protocol tag
-    tag = ProtocolTag(operation=operation, trigger_mode=trigger_mode, entry_id=entry_id)
-    tag_string = tag.to_string()
-
-    # Commit
-    commit_msg = format_commit_message(operation, description, tag_string)
-    commit_result = execute_commit(commit_msg)
-    if not commit_result["success"]:
-        return commit_result
-
-    stats = get_commit_stats()
-    index_sync = reindex_committed_files()
-
-    response = {
-        "success": True,
-        "commit_hash": commit_result["commit_hash"],
-        "protocol_tag": tag_string,
-        "files_changed": stats["files_changed"],
-        "insertions": stats["insertions"],
-        "deletions": stats["deletions"],
-    }
-    if prologue_result and prologue_result.get("commit_hash"):
-        response["user_prologue"] = prologue_result
-    if index_sync["reindexed"]:
-        response["reindexed"] = index_sync["reindexed"]
-    if index_sync["unindexed"]:
-        response["unindexed"] = index_sync["unindexed"]
-    return response
+    if _is_obsidian_available():
+        return TOOLS
+    return [t for t in TOOLS if t.name not in _PKM_TOOLS]
 
 
 def handle_resolve_path(args: dict) -> dict:
@@ -768,24 +575,6 @@ def handle_get_format_reference() -> dict:
 
 # Tool name -> handler mapping (module-level to avoid per-call allocation)
 _HANDLERS = {
-    "jarvis_commit": handle_commit,
-    "jarvis_status": lambda args: get_status(),
-    "jarvis_parse_last_commit": lambda args: parse_last_commit(),
-    "jarvis_push": lambda args: push_to_remote(args.get("branch")),
-    "jarvis_move_files": lambda args: move_files(args.get("moves", [])),
-    "jarvis_query_history": lambda args: query_history(
-        operation=args.get("operation", "all"),
-        since=args.get("since"),
-        limit=args.get("limit", 10),
-        file_path=args.get("file"),
-    ),
-    "jarvis_rollback": lambda args: rollback_commit(args.get("commit_hash")),
-    "jarvis_file_history": lambda args: file_history(
-        args.get("file_path"), args.get("limit", 10)
-    ),
-    "jarvis_rewrite_commit_messages": lambda args: rewrite_commit_messages(
-        count=args.get("count", 1), patterns=args.get("patterns")
-    ),
     # Unified content API
     "jarvis_store": lambda args: store(**args),
     "jarvis_retrieve": lambda args: retrieve(**args),

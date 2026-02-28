@@ -28,6 +28,7 @@ roadmaps/
 dist/
 build/
 **/pyproject.toml
+!lib/jarvis-common/pyproject.toml
 **/uv.lock
 **/requirements.txt
 

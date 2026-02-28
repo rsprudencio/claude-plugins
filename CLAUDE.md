@@ -251,11 +251,14 @@ If plugin doesn't load after reinstall:
 
 ### Plugin Architecture (Modular Marketplace)
 
-The plugin is split into 3 independent plugins in a single marketplace:
+The plugin is split into 5 independent plugins in a single marketplace:
 
-- **`plugins/jarvis/`** - Core: MCP server, agents (journal, audit, explorer), core skills
+- **`plugins/jarvis/`** - Core: MCP server, vault management, semantic memory, auto-extract
+- **`plugins/jarvis-obsidian/`** - PKM: git audit trail, journal, exploration agents + skills
 - **`plugins/jarvis-todoist/`** - Optional: Todoist agent + skills
 - **`plugins/jarvis-strategic/`** - Optional: Strategic analysis skills
+- **`plugins/jarvis-toolbelt/`** - Engineering: security review, TDD workflows
+- **`lib/jarvis-common/`** - Shared Python package (config, paths, namespaces)
 
 ### Key Files
 
@@ -265,9 +268,13 @@ The plugin is split into 3 independent plugins in a single marketplace:
 | `plugins/jarvis/.claude-plugin/plugin.json` | Core plugin manifest (version, name) |
 | `plugins/jarvis/mcp-server/system_prompt.py` | Jarvis core identity and constraints (MCP instructions) |
 | `plugins/jarvis/.mcp.json` | MCP server registration |
-| `plugins/jarvis/mcp-server/` | Python MCP server (21 tools) |
-| `plugins/jarvis/agents/*.md` | Core agent definitions |
+| `plugins/jarvis/mcp-server/` | Python MCP server (13 tools) |
 | `plugins/jarvis/skills/*/SKILL.md` | Core skill workflows |
+| `plugins/jarvis-obsidian/.claude-plugin/plugin.json` | Obsidian plugin manifest |
+| `plugins/jarvis-obsidian/mcp-server/` | Obsidian MCP server (9 git tools) |
+| `plugins/jarvis-obsidian/agents/*.md` | PKM agent definitions (journal, audit, explorer) |
+| `plugins/jarvis-obsidian/skills/*/SKILL.md` | PKM skill workflows |
+| `lib/jarvis-common/` | Shared config, paths, namespaces package |
 | `plugins/jarvis-todoist/agents/*.md` | Todoist agent definition |
 | `plugins/jarvis-todoist/skills/*/SKILL.md` | Todoist skill workflows |
 | `plugins/jarvis-strategic/skills/*/SKILL.md` | Strategic skill workflows |
@@ -279,12 +286,13 @@ The plugin is split into 3 independent plugins in a single marketplace:
 
 ### Docker Development
 
-Both MCP servers have `http_app.py` alongside `server.py` — thin ASGI wrappers using `StreamableHTTPSessionManager` from MCP SDK. Key facts:
+All three MCP servers have `http_app.py` alongside `server.py` — thin ASGI wrappers using `StreamableHTTPSessionManager` from MCP SDK. Key facts:
 
 - **Transport:** Streamable HTTP with `json_response=True` (not SSE)
 - **Architecture:** Raw ASGI app (no Starlette) to avoid `/mcp` → `/mcp/` 307 redirects
-- **Ports:** jarvis-core on 8741, jarvis-todoist on 8742
+- **Ports:** jarvis-core on 8741, jarvis-todoist on 8742, jarvis-obsidian on 8744
 - **Config:** `JARVIS_HOME` and `JARVIS_VAULT_PATH` env vars override config.json paths
+- **Shared code:** `lib/jarvis-common/` provides config, paths, and namespace resolution used by core and obsidian
 
 ```bash
 # Build locally

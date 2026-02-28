@@ -170,6 +170,13 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
         meta["importance"] = "0.5"
         meta["importance_score"] = "0.5"
 
+    # Multi-user attribution
+    from jarvis_common.auth import get_current_user
+
+    user = get_current_user()
+    if user != "anonymous":
+        meta["user"] = user
+
     return meta
 
 

@@ -74,6 +74,22 @@ def remove(
     if id:
         tier = get_tier(id)
         if tier == TIER_CHROMADB:
+            # Ownership check for multi-user deployments
+            from jarvis_common.auth import get_current_user
+
+            user = get_current_user()
+            if user != "anonymous":
+                from .tier2 import tier2_read
+
+                existing = tier2_read(id)
+                if existing.get("found"):
+                    owner = existing.get("metadata", {}).get("user")
+                    if owner and owner != user:
+                        return {
+                            "success": False,
+                            "error": "Cannot delete another user's content",
+                        }
+
             from .tier2 import tier2_delete
 
             return tier2_delete(id)

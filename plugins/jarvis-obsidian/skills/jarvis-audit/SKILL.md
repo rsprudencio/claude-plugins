@@ -25,9 +25,9 @@ Note: This only applies to the vault. Git commands in other repositories are una
 
 ## Agent Handles
 
-- Auto user prologue: `jarvis_commit` automatically commits dirty files as `[JARVIS:U]` first
+- Auto user prologue: `obsidian_commit` automatically commits dirty files as `[JARVIS:U]` first
 - Protocol-compliant commit formatting
-- All git commands via MCP tools (jarvis_commit, jarvis_status, jarvis_push)
+- All git commands via MCP tools (obsidian_commit, obsidian_status, obsidian_push)
 
 ## Protocol Format
 
@@ -49,11 +49,11 @@ ENTRY_ID = 14-digit timestamp (journal entries only)
 
 | Tool | Purpose |
 |------|---------|
-| `jarvis_commit` | Create protocol-compliant commit |
-| `jarvis_status` | Check working tree state |
-| `jarvis_push` | Push to remote |
-| `jarvis_parse_last_commit` | Verify last commit |
-| `jarvis_rewrite_commit_messages` | Clean commit history |
+| `obsidian_commit` | Create protocol-compliant commit |
+| `obsidian_status` | Check working tree state |
+| `obsidian_push` | Push to remote |
+| `obsidian_parse_last_commit` | Verify last commit |
+| `obsidian_rewrite_commit_messages` | Clean commit history |
 
 ## When to Delegate
 

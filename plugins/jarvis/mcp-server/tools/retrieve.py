@@ -30,6 +30,7 @@ def retrieve(
     include_metadata: bool = True,
     include_content: bool = False,
     sort_by: str = "importance_desc",
+    user: Optional[str] = None,
 ) -> dict:
     """Unified read/search entry point.
 
@@ -53,7 +54,7 @@ def retrieve(
     if query:
         from .query import query_vault
 
-        return query_vault(query=query, n_results=n_results, filter=filter)
+        return query_vault(query=query, n_results=n_results, filter=filter, user=user)
 
     # Route 2: ID-based read
     if id:
