@@ -1,0 +1,79 @@
+#!/bin/bash
+# Jarvis ECS Instance Bootstrap
+# Registers to ECS cluster and writes config/certs to host filesystem.
+# The ECS agent handles pulling and running the container.
+
+set -euo pipefail
+exec > /var/log/jarvis-setup.log 2>&1
+
+echo "=== Jarvis ECS Setup: $(date) ==="
+
+# ---------- Register to ECS cluster ----------
+cat >> /etc/ecs/ecs.config <<ECSEOF
+ECS_CLUSTER=${ecs_cluster}
+ECS_ENABLE_TASK_IAM_ROLE=true
+ECS_ENABLE_EXECUTE_COMMAND=true
+ECSEOF
+
+# ---------- Create directories ----------
+
+mkdir -p /opt/jarvis/{vault,config,certs}
+mkdir -p /opt/jarvis/vault/{journal,notes,inbox}
+
+# Initialize vault as git repo
+cd /opt/jarvis/vault
+git init -q
+git config user.email "jarvis@ecs"
+git config user.name "Jarvis"
+git commit -q --allow-empty -m "Initialize vault"
+
+# ---------- Write TLS certificates ----------
+
+cat > /opt/jarvis/certs/ca.key <<'CERT_EOF'
+${ca_key_pem}
+CERT_EOF
+
+cat > /opt/jarvis/certs/ca.crt <<'CERT_EOF'
+${ca_cert_pem}
+CERT_EOF
+
+cat > /opt/jarvis/certs/server.key <<'CERT_EOF'
+${server_key_pem}
+CERT_EOF
+
+cat > /opt/jarvis/certs/server.crt <<'CERT_EOF'
+${server_cert_pem}
+CERT_EOF
+
+chmod 600 /opt/jarvis/certs/*.key
+chmod 644 /opt/jarvis/certs/*.crt
+
+# ---------- Write Jarvis config ----------
+# mTLS handles user identity via client certificates — no token hashes needed.
+# Empty tokens map preserved for backward compat with Bearer token fallback.
+
+python3 -c "
+import json
+config = {
+    'server': {
+        'auth': {
+            'enabled': True,
+            'tokens': {}
+        }
+    },
+    'vault_path': '/vault',
+    'vault_confirmed': True,
+    'memory': {
+        'chroma_data_path': '/config/db'
+    }
+}
+todoist_token = '${todoist_api_token}'
+if todoist_token:
+    config['todoist'] = {'api_token': todoist_token}
+with open('/opt/jarvis/config/config.json', 'w') as f:
+    json.dump(config, f, indent=2)
+"
+
+chmod 600 /opt/jarvis/config/config.json
+
+echo "=== Jarvis ECS Setup Complete: $(date) ==="

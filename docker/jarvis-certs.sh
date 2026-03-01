@@ -1,21 +1,85 @@
 #!/bin/bash
-# jarvis-certs.sh — Generate self-signed CA, server cert, and user tokens
+# jarvis-certs.sh — Generate CA, server certs, client certs, and user tokens
 #
 # Usage:
-#   ./jarvis-certs.sh [hostname] [output-dir]
+#   ./jarvis-certs.sh [hostname] [output-dir]       # Server mode (CA + server cert + token)
+#   ./jarvis-certs.sh --client <username> [output-dir]  # Client cert mode
 #
-# Generates:
+# Server mode generates:
 #   ca.key, ca.crt           — CA (10-year validity)
 #   server.key, server.crt   — Server cert signed by CA (1-year, with SANs)
+#   + prints a Bearer token for backward compat
 #
-# Also generates a user token and prints the config.json snippet to paste.
+# Client mode generates:
+#   <username>.key, <username>.crt  — Client cert signed by CA (1-year, clientAuth)
+#   Requires ca.key and ca.crt in the output directory.
 #
-# Example:
+# Examples:
 #   ./jarvis-certs.sh jarvis.local ./certs
-#   # Copy the printed tokens block into ~/.jarvis/config.json
+#   ./jarvis-certs.sh --client raph ./certs
 
 set -euo pipefail
 
+# --- Client cert mode ---
+if [ "${1:-}" = "--client" ]; then
+    USERNAME="${2:-}"
+    OUTDIR="${3:-./certs}"
+
+    if [ -z "$USERNAME" ]; then
+        echo "Usage: $0 --client <username> [output-dir]" >&2
+        exit 1
+    fi
+
+    # Validate username: lowercase alphanumeric + dots/underscores/hyphens, 1-64 chars
+    if ! echo "$USERNAME" | grep -qE '^[a-z0-9._-]{1,64}$'; then
+        echo "ERROR: Username must match ^[a-z0-9._-]{1,64}$" >&2
+        echo "  Got: '$USERNAME'" >&2
+        exit 1
+    fi
+
+    # Require CA files
+    if [ ! -f "$OUTDIR/ca.key" ] || [ ! -f "$OUTDIR/ca.crt" ]; then
+        echo "ERROR: CA files not found in $OUTDIR" >&2
+        echo "  Run '$0 <hostname> $OUTDIR' first, or copy ca.key + ca.crt there." >&2
+        exit 1
+    fi
+
+    echo "=== Generating client certificate for '$USERNAME' ==="
+
+    # Generate client key + CSR
+    openssl genrsa -out "$OUTDIR/${USERNAME}.key" 2048 2>/dev/null
+    openssl req -new -key "$OUTDIR/${USERNAME}.key" \
+        -out "$OUTDIR/${USERNAME}.csr" \
+        -subj "/CN=$USERNAME" 2>/dev/null
+
+    # Sign with CA (clientAuth only — cannot be used as server cert)
+    cat > "$OUTDIR/${USERNAME}.ext" <<EXTEOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage = digitalSignature
+extendedKeyUsage = clientAuth
+EXTEOF
+
+    openssl x509 -req -in "$OUTDIR/${USERNAME}.csr" \
+        -CA "$OUTDIR/ca.crt" -CAkey "$OUTDIR/ca.key" -CAcreateserial \
+        -out "$OUTDIR/${USERNAME}.crt" -days 365 \
+        -extfile "$OUTDIR/${USERNAME}.ext" 2>/dev/null
+
+    rm -f "$OUTDIR/${USERNAME}.csr" "$OUTDIR/${USERNAME}.ext" "$OUTDIR/ca.srl"
+    chmod 600 "$OUTDIR/${USERNAME}.key"
+
+    echo "[OK] Client cert generated for '$USERNAME' (1-year validity)"
+    echo
+    echo "Configure Claude Code:"
+    echo "  export CLAUDE_CODE_CLIENT_CERT=$OUTDIR/${USERNAME}.crt"
+    echo "  export CLAUDE_CODE_CLIENT_KEY=$OUTDIR/${USERNAME}.key"
+    echo "  export NODE_EXTRA_CA_CERTS=$OUTDIR/ca.crt"
+    echo
+    echo "=== Done ==="
+    exit 0
+fi
+
+# --- Server cert mode ---
 HOSTNAME="${1:-localhost}"
 OUTDIR="${2:-./certs}"
 
@@ -50,6 +114,7 @@ cat > "$OUTDIR/server.ext" <<EXTEOF
 authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
 keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
 subjectAltName = $SAN
 EXTEOF
 
@@ -61,9 +126,9 @@ openssl x509 -req -in "$OUTDIR/server.csr" \
 rm -f "$OUTDIR/server.csr" "$OUTDIR/server.ext" "$OUTDIR/ca.srl"
 echo "[OK] Server cert generated (1-year validity, SANs: $SAN)"
 
-# --- Generate a user token ---
+# --- Generate a user token (backward compat) ---
 echo
-echo "=== User Token ==="
+echo "=== User Token (for Bearer auth fallback) ==="
 TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 HASH=$(python3 -c "import hashlib; print(hashlib.sha256('$TOKEN'.encode()).hexdigest())")
 
@@ -87,7 +152,7 @@ cat <<CONFIGEOF
 CONFIGEOF
 
 echo
-echo "Then configure Claude Code's .mcp.json with:"
-echo '  "headers": { "Authorization": "Bearer '"$TOKEN"'" }'
+echo "For mTLS (recommended), generate a client cert instead:"
+echo "  $0 --client <username> $OUTDIR"
 echo
 echo "=== Done ==="

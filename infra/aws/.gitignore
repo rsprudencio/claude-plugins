@@ -1,0 +1,11 @@
+# Terraform state (contains secrets — token, private keys)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# User config (contains IPs, SSH keys, tokens)
+terraform.tfvars
+
+# Extracted secrets
+ca.crt

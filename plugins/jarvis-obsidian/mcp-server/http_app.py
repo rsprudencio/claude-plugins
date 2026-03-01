@@ -9,6 +9,7 @@ Usage:
 """
 
 import json
+import logging
 import os
 import sys
 
@@ -16,8 +17,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from jarvis_common.auth import authenticate, current_user
+from jarvis_common.mtls import patch_uvicorn_transport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from server import server
+
+logger = logging.getLogger("jarvis-obsidian")
+
+# Patch uvicorn to expose transport in ASGI scope (required for mTLS CN extraction)
+_mtls_patch_ok = patch_uvicorn_transport()
+if os.environ.get("JARVIS_TLS_CA") and not _mtls_patch_ok:
+    logger.error("JARVIS_TLS_CA is set but uvicorn transport patch failed — cannot verify client certs")
+    sys.exit(1)
 
 
 def _get_version():

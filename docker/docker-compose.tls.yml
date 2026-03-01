@@ -17,5 +17,6 @@ services:
     environment:
       - JARVIS_TLS_CERT=/certs/server.crt
       - JARVIS_TLS_KEY=/certs/server.key
+      - JARVIS_TLS_CA=/certs/ca.crt
     healthcheck:
       test: ["CMD", "curl", "-sfk", "https://localhost:8741/health"]
