@@ -12,7 +12,7 @@ Covers all auth scenarios including DAR-reviewed edge cases:
 import asyncio
 import hashlib
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -350,3 +350,119 @@ class TestContextVar:
         assert results["b"] == "bob"
         # After both tasks complete, default should be restored
         assert get_current_user() == "anonymous"
+
+
+# ── mTLS authentication ───────────────────────────────────────────────
+
+
+def _make_mtls_scope(cn, token=None):
+    """Build a scope with mTLS client cert (and optionally a Bearer token)."""
+    ssl_object = MagicMock()
+    ssl_object.getpeercert.return_value = {
+        "subject": ((("commonName", cn),),)
+    }
+
+    transport = MagicMock()
+    transport.get_extra_info.return_value = ssl_object
+
+    headers = []
+    if token:
+        headers.append([b"authorization", f"Bearer {token}".encode("latin-1")])
+
+    return {"type": "http", "headers": headers, "transport": transport}
+
+
+class TestMtlsAuth:
+    def test_mtls_cn_takes_priority_over_bearer(self):
+        """When both mTLS cert and Bearer token present, cert CN wins."""
+        with patch("jarvis_common.auth.get_config", return_value=AUTH_ENABLED_CONFIG):
+            scope = _make_mtls_scope(cn="raph", token="valid-token-xyz")
+            user, err = authenticate(scope)
+            # cert says "raph", token maps to "alice" — cert wins
+            assert user == "raph"
+            assert err == ""
+
+    def test_mtls_cn_without_bearer(self):
+        """Client cert alone is sufficient (no Bearer needed)."""
+        with patch("jarvis_common.auth.get_config", return_value=AUTH_ENABLED_CONFIG):
+            scope = _make_mtls_scope(cn="alice")
+            user, err = authenticate(scope)
+            assert user == "alice"
+            assert err == ""
+
+    def test_no_cert_falls_through_to_bearer(self):
+        """Without client cert, Bearer token is used."""
+        with patch("jarvis_common.auth.get_config", return_value=AUTH_ENABLED_CONFIG):
+            # Scope with transport but no cert (CERT_OPTIONAL, no cert presented)
+            ssl_object = MagicMock()
+            ssl_object.getpeercert.return_value = {}
+
+            transport = MagicMock()
+            transport.get_extra_info.return_value = ssl_object
+
+            scope = {
+                "type": "http",
+                "headers": [
+                    [b"authorization", b"Bearer valid-token-abc"]
+                ],
+                "transport": transport,
+            }
+            user, err = authenticate(scope)
+            assert user == "raph"
+            assert err == ""
+
+    def test_no_cert_no_bearer_rejected(self):
+        """Neither client cert nor Bearer token → Unauthorized."""
+        with patch("jarvis_common.auth.get_config", return_value=AUTH_ENABLED_CONFIG):
+            ssl_object = MagicMock()
+            ssl_object.getpeercert.return_value = {}
+
+            transport = MagicMock()
+            transport.get_extra_info.return_value = ssl_object
+
+            scope = {"type": "http", "headers": [], "transport": transport}
+            user, err = authenticate(scope)
+            assert user is None
+            assert err == "Unauthorized"
+
+    def test_auth_disabled_ignores_cert(self):
+        """When auth is disabled, cert is ignored and anonymous is returned."""
+        with patch("jarvis_common.auth.get_config", return_value=AUTH_DISABLED_CONFIG):
+            scope = _make_mtls_scope(cn="raph")
+            user, err = authenticate(scope)
+            assert user == "anonymous"
+            assert err == ""
+
+    def test_denied_cn_rejected(self):
+        """CN in denied_cns list is rejected even with valid cert."""
+        config_with_denied = {
+            "server": {
+                "auth": {
+                    "enabled": True,
+                    "tokens": {},
+                    "denied_cns": ["compromised-user"],
+                }
+            }
+        }
+        with patch("jarvis_common.auth.get_config", return_value=config_with_denied):
+            scope = _make_mtls_scope(cn="compromised-user")
+            user, err = authenticate(scope)
+            assert user is None
+            assert err == "Unauthorized"
+
+    def test_non_denied_cn_accepted(self):
+        """CN not in denied_cns list is accepted."""
+        config_with_denied = {
+            "server": {
+                "auth": {
+                    "enabled": True,
+                    "tokens": {},
+                    "denied_cns": ["compromised-user"],
+                }
+            }
+        }
+        with patch("jarvis_common.auth.get_config", return_value=config_with_denied):
+            scope = _make_mtls_scope(cn="good-user")
+            user, err = authenticate(scope)
+            assert user == "good-user"
+            assert err == ""

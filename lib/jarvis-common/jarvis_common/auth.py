@@ -1,10 +1,12 @@
 """Shared authentication module for Jarvis MCP servers.
 
-Provides opt-in Bearer token authentication with:
-- SHA-256 hashed tokens at rest (config.json stores hashes, not raw tokens)
+Provides opt-in authentication with:
+- mTLS client certificate CN extraction (highest priority, cryptographic identity)
+- SHA-256 hashed Bearer tokens at rest (fallback for non-TLS / programmatic access)
 - Constant-time comparison via hmac.compare_digest (timing side-channel prevention)
 - Request-scoped user identity via contextvars (async-safe, no signature pollution)
 - Internal token support for hook scripts running inside the container
+- Emergency CN blocklist via server.auth.denied_cns config
 """
 
 import contextvars
@@ -56,6 +58,21 @@ def authenticate(scope: dict) -> tuple[str | None, str]:
     auth_cfg = get_auth_config()
     if auth_cfg is None:
         return "anonymous", ""
+
+    # --- mTLS: client certificate takes priority ---
+    from .mtls import extract_client_cn
+
+    client_cn = extract_client_cn(scope)
+    if client_cn:
+        # Check CN blocklist for emergency revocation
+        denied_cns = auth_cfg.get("denied_cns", [])
+        if isinstance(denied_cns, list) and client_cn in denied_cns:
+            logger.warning(f"Auth failure: CN '{client_cn}' is denied")
+            return None, "Unauthorized"
+        logger.info(f"Auth success (mTLS): user={client_cn}")
+        return client_cn, ""
+
+    # --- Bearer token: fallback for non-TLS / programmatic access ---
 
     # Extract Authorization header from ASGI scope
     # ASGI headers are list of (name, value) byte tuples — iterate, don't dict()

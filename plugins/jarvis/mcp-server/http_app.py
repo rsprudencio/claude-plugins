@@ -18,11 +18,18 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from jarvis_common.auth import authenticate, current_user
+from jarvis_common.mtls import patch_uvicorn_transport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from server import server
 from system_prompt import _version as _VERSION
 
 logger = logging.getLogger("jarvis-core")
+
+# Patch uvicorn to expose transport in ASGI scope (required for mTLS CN extraction)
+_mtls_patch_ok = patch_uvicorn_transport()
+if os.environ.get("JARVIS_TLS_CA") and not _mtls_patch_ok:
+    logger.error("JARVIS_TLS_CA is set but uvicorn transport patch failed — cannot verify client certs")
+    sys.exit(1)
 
 session_manager = StreamableHTTPSessionManager(
     app=server,
@@ -117,13 +124,15 @@ async def health_response(scope, receive, send):
         },
     }
 
-    # Auth status
+    # Auth status (mTLS is a detail of auth, not a separate concern)
     auth_cfg = get_auth_config()
     if auth_cfg is not None:
         tokens = auth_cfg.get("tokens", {})
+        mtls_configured = bool(os.environ.get("JARVIS_TLS_CA"))
         data["auth"] = {
             "enabled": True,
             "users": len(tokens) if isinstance(tokens, dict) else 0,
+            "mtls": mtls_configured and _mtls_patch_ok,
         }
     else:
         data["auth"] = {"enabled": False}

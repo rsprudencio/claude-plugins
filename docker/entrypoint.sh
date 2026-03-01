@@ -138,6 +138,23 @@ if [ "$TLS_ENABLED" = "true" ]; then
     tls_args+=(--ssl-certfile "$TLS_CERT" --ssl-keyfile "$TLS_KEY")
 fi
 
+# --- mTLS: client certificate verification ---
+TLS_CA="${JARVIS_TLS_CA:-}"
+if [ -n "$TLS_CA" ]; then
+    if [ ! -r "$TLS_CA" ]; then
+        echo "[jarvis] ERROR: TLS CA cert not readable: ${TLS_CA}" >&2
+        exit 1
+    fi
+    if [ "$TLS_ENABLED" != "true" ]; then
+        echo "[jarvis] ERROR: JARVIS_TLS_CA requires JARVIS_TLS_CERT and JARVIS_TLS_KEY" >&2
+        exit 1
+    fi
+    # CERT_OPTIONAL (1): request client cert, verify if presented, but don't require.
+    # This lets health check curl work without a client cert.
+    tls_args+=(--ssl-ca-certs "$TLS_CA" --ssl-cert-reqs 1)
+    echo "[jarvis] mTLS enabled (client certs verified against ${TLS_CA})"
+fi
+
 # --- Start jarvis-core ---
 echo "[jarvis] Starting jarvis-core on port ${CORE_PORT}..."
 cd /app/jarvis-core
