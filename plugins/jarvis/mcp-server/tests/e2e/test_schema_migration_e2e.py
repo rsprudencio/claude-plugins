@@ -104,7 +104,7 @@ def migration_db(e2e_config):
         "INSERT INTO jarvis (id, document, embedding, metadata) "
         "VALUES (%s, %s, %s::halfvec, %s::jsonb)",
         ("vault::notes/auth-guide.md", "OAuth authentication guide",
-         str(vault_emb.tolist()), vault_meta),
+         str(vault_emb), vault_meta),
     )
 
     # 2. Observation (tier2)
@@ -125,7 +125,7 @@ def migration_db(e2e_config):
         "INSERT INTO jarvis (id, document, embedding, metadata) "
         "VALUES (%s, %s, %s::halfvec, %s::jsonb)",
         ("obs::abc123", "User prefers dark mode",
-         str(obs_emb.tolist()), obs_meta),
+         str(obs_emb), obs_meta),
     )
 
     # 3. Strategic memory
@@ -143,7 +143,7 @@ def migration_db(e2e_config):
         "INSERT INTO jarvis (id, document, embedding, metadata) "
         "VALUES (%s, %s, %s::halfvec, %s::jsonb)",
         ("memory::global::test-principle", "Always write tests first",
-         str(mem_emb.tolist()), mem_meta),
+         str(mem_emb), mem_meta),
     )
 
     # 4. Superseded observation
@@ -162,7 +162,7 @@ def migration_db(e2e_config):
         "INSERT INTO jarvis (id, document, embedding, metadata) "
         "VALUES (%s, %s, %s::halfvec, %s::jsonb)",
         ("obs::superseded-old", "Old observation",
-         str(sup_emb.tolist()), sup_meta),
+         str(sup_emb), sup_meta),
     )
 
     # 5. Legacy meta
@@ -204,7 +204,7 @@ def test_migration_moves_vault_to_vault_schema(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     # Verify vault document migrated
     with conn.cursor() as cur:
@@ -233,7 +233,7 @@ def test_migration_moves_observations_to_core(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute(
@@ -260,7 +260,7 @@ def test_migration_memory_prefix_gets_category_memory(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute(
@@ -281,7 +281,7 @@ def test_migration_preserves_superseded_status(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute(
@@ -302,7 +302,7 @@ def test_migration_strips_promoted_fields_from_metadata(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute(
@@ -336,7 +336,7 @@ def test_migration_meta_table(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         # Schema version should be bumped to 3
@@ -363,7 +363,7 @@ def test_migration_row_count_matches(migration_db):
 
     db_url = migration_db["db_url"]
     conn = psycopg.connect(db_url, autocommit=True)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM jarvis")
@@ -388,8 +388,8 @@ def test_migration_is_idempotent(migration_db):
     conn = psycopg.connect(db_url, autocommit=True)
 
     # Run twice
-    conn.execute(MIGRATION_SQL)
-    conn.execute(MIGRATION_SQL)
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
+    conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM core.memories")

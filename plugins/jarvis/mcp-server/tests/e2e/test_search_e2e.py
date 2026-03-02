@@ -96,7 +96,7 @@ def test_cross_schema_search(e2e_config):
     assert len(result["results"]) >= 2
 
     # Should have results from both schemas
-    schemas = {r.get("_schema") for r in result["results"]}
+    schemas = {r.get("schema") for r in result["results"]}
     assert "core" in schemas or "vault" in schemas
 
 
