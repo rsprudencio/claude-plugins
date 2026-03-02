@@ -27,14 +27,14 @@ Memory System Status
 
 Collection: vault
 Documents indexed: 142
-ChromaDB: localhost:8743  (configurable via memory.chroma_host/chroma_port in ~/.jarvis/config.json)
+Database: PostgreSQL pgvector  (configurable via memory.postgres_url in ~/.jarvis/config.json)
 
 Sample entries:
 - notes/projects/jarvis-plugin.md (type: note)
 - journal/jarvis/2026/01/20260124-entry.md (type: journal)
 - notes/career/goals.md (type: note)
 - work/kubernetes-setup.md (type: work)
-- journal/jarvis/2026/02/20260206-chromadb.md (type: journal)
+- journal/jarvis/2026/02/20260206-entry.md (type: journal)
 
 Commands:
   /jarvis-recall <query>       - Search your vault semantically
@@ -56,5 +56,5 @@ Ask Jarvis to index your vault, or run /jarvis-settings to configure and index.
 
 ## Key Rules
 
-- **Read-only** — only queries ChromaDB, never modifies
+- **Read-only** — only queries the database, never modifies
 - **Quick** — single API call, no heavy processing

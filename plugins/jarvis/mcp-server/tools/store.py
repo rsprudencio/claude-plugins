@@ -4,9 +4,9 @@ Routes writes based on parameters (priority: id -> relative_path -> type):
 - id provided -> parse namespace prefix -> update existing content
   - vault::* -> extract path, vault file write + reindex
   - memory::* -> extract name, memory upsert
-  - obs::/pattern::/etc -> tier2 upsert by ID
+  - obs::/pattern::/etc -> content upsert by ID
 - relative_path provided -> vault file create (new, no prior ID)
-- type provided -> create new memory or tier2 content (auto-generate ID)
+- type provided -> create new memory or content (auto-generate ID)
 
 All .md file writes are auto-indexed for semantic search.
 """
@@ -14,7 +14,7 @@ All .md file writes are auto-indexed for semantic search.
 import logging
 from typing import Optional
 
-from .namespaces import TIER2_TYPES, parse_id, get_tier, TIER_CHROMADB
+from .namespaces import CONTENT_TYPES, parse_id, schema_for_id, SCHEMA_CORE
 from .format_support import is_indexable
 from .routing_utils import validate_exactly_one, parse_memory_scope
 
@@ -48,13 +48,13 @@ def store(
     Routing priority: id -> relative_path -> type
     - id: Update existing content (from a previous jarvis_retrieve result)
     - relative_path: Create new vault file (no prior ID)
-    - type: Create new memory or tier2 content
+    - type: Create new memory or content
     """
     # Validate: exactly ONE routing param must be set
     error = validate_exactly_one(
         [id, relative_path, type],
         "Provide one of: id (update existing), "
-        "relative_path (new vault file), type (new memory/tier2)",
+        "relative_path (new vault file), type (new memory/content)",
         "Provide only ONE of: id, relative_path, type",
     )
     if error:
@@ -104,9 +104,9 @@ def store(
             skip_secret_scan=skip_secret_scan,
         )
 
-    # Route 4: New tier2 content (auto-generate ID)
-    if type in TIER2_TYPES:
-        return _store_tier2(
+    # Route 4: New content (auto-generate ID)
+    if type in CONTENT_TYPES:
+        return _store_content(
             content=content,
             content_type=type,
             name=name,
@@ -120,7 +120,7 @@ def store(
 
     return {
         "success": False,
-        "error": f"Unknown type '{type}'. Valid: memory, {', '.join(TIER2_TYPES)}",
+        "error": f"Unknown type '{type}'. Valid: memory, {', '.join(CONTENT_TYPES)}",
     }
 
 
@@ -169,10 +169,10 @@ def _store_by_id(
             skip_secret_scan=skip_secret_scan,
         )
 
-    # Tier 2 content (obs::, pattern::, etc.)
-    tier = get_tier(doc_id)
-    if tier == TIER_CHROMADB:
-        return _update_tier2(
+    # Core content (obs::, pattern::, etc.)
+    schema = schema_for_id(doc_id)
+    if schema == SCHEMA_CORE:
+        return _update_content(
             doc_id=doc_id,
             content=content,
             importance=importance,
@@ -244,7 +244,7 @@ def _store_memory(
     )
 
 
-def _store_tier2(
+def _store_content(
     content,
     content_type,
     name,
@@ -255,10 +255,10 @@ def _store_tier2(
     extra_metadata,
     skip_secret_scan,
 ):
-    """Route to tier2.tier2_write (creates new with auto-generated ID)."""
-    from .tier2 import tier2_write
+    """Route to content.content_write (creates new with auto-generated ID)."""
+    from .content import content_write
 
-    return tier2_write(
+    return content_write(
         content=content,
         content_type=content_type,
         name=name,
@@ -271,17 +271,17 @@ def _store_tier2(
     )
 
 
-def _update_tier2(doc_id, content, importance, tags, source, extra_metadata):
-    """Update existing tier2 content by ID (pgvector upsert).
+def _update_content(doc_id, content, importance, tags, source, extra_metadata):
+    """Update existing content by ID.
 
     Reads existing doc, merges updates, upserts back.
     """
-    from .tier2 import tier2_read, tier2_upsert
+    from .content import content_read, content_upsert
 
     # Read existing to get current metadata
-    existing = tier2_read(doc_id)
+    existing = content_read(doc_id)
     if not existing.get("found", False):
-        return {"success": False, "error": f"Tier 2 document '{doc_id}' not found"}
+        return {"success": False, "error": f"Document '{doc_id}' not found"}
 
     # Build updated metadata (merge, don't replace)
     metadata = existing.get("metadata", {})
@@ -296,7 +296,7 @@ def _update_tier2(doc_id, content, importance, tags, source, extra_metadata):
 
     updated_content = content if content else existing.get("content", "")
 
-    return tier2_upsert(
+    return content_upsert(
         doc_id=doc_id,
         content=updated_content,
         metadata=metadata,

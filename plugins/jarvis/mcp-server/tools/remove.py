@@ -8,7 +8,7 @@ Routes deletes based on parameters:
 import os
 from typing import Optional
 
-from .namespaces import get_tier, TIER_CHROMADB
+from .namespaces import schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
 from .routing_utils import validate_exactly_one, parse_memory_scope
 
 
@@ -71,30 +71,12 @@ def remove(
         return error
 
     if id:
-        tier = get_tier(id)
-        if tier == TIER_CHROMADB:
-            # Ownership check for multi-user deployments
-            from jarvis_common.auth import get_current_user
+        schema = schema_for_id(id)
 
-            user = get_current_user()
-            if user != "anonymous":
-                from .tier2 import tier2_read
-
-                existing = tier2_read(id)
-                if existing.get("found"):
-                    owner = existing.get("metadata", {}).get("user")
-                    if owner and owner != user:
-                        return {
-                            "success": False,
-                            "error": "Cannot delete another user's content",
-                        }
-
-            from .tier2 import tier2_delete
-
-            return tier2_delete(id)
-        elif id.startswith("vault::"):
+        if schema == SCHEMA_VAULT:
             return _remove_vault_file(id, confirm=confirm)
-        elif id.startswith("memory::"):
+
+        if id.startswith("memory::"):
             from .namespaces import parse_id
             from .memory_crud import memory_delete
 
@@ -106,13 +88,35 @@ def remove(
                 project=project,
                 confirm=confirm,
             )
-        else:
-            return {
-                "success": False,
-                "error": f"Unrecognized ID prefix in '{id}'. "
-                f"Use id= for Tier 2 content (obs::, pattern::, etc.) "
-                f"or vault content (vault::), or name= for strategic memories.",
-            }
+
+        # Core content (obs::, pattern::, learning::, etc.)
+        if schema == SCHEMA_CORE:
+            # Ownership check for multi-user deployments
+            from jarvis_common.auth import get_current_user
+
+            user = get_current_user()
+            if user != "anonymous":
+                from .content import content_read
+
+                existing = content_read(id)
+                if existing.get("found"):
+                    owner = existing.get("metadata", {}).get("user")
+                    if owner and owner != user:
+                        return {
+                            "success": False,
+                            "error": "Cannot delete another user's content",
+                        }
+
+            from .content import content_delete
+
+            return content_delete(id)
+
+        return {
+            "success": False,
+            "error": f"Unrecognized ID prefix in '{id}'. "
+            f"Use id= for content (obs::, pattern::, etc.) "
+            f"or vault content (vault::), or name= for strategic memories.",
+        }
 
     if name:
         from .memory_crud import memory_delete

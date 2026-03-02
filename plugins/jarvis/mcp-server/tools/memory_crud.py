@@ -1,18 +1,20 @@
 """Memory CRUD tool handlers.
 
 Orchestrates file I/O (tools.memory_files) + pgvector indexing (tools.schema)
-for Tier 1 file-backed memories. Each handler is called from server.py.
+for file-backed strategic memories. Each handler is called from server.py.
 
 Storage locations:
 - Global:  <vault>/.jarvis/strategic/<name>.md
 - Project: <vault>/.jarvis/memories/<project>/<name>.md
+
+Database: core.memories with category='memory'
 """
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .schema import execute_query, execute_write, metadata_to_jsonb, jsonb_to_metadata
+from .schema import execute_query, execute_write
 from .memory_files import (
     resolve_memory_path,
     write_memory_file,
@@ -75,39 +77,6 @@ def _normalize_importance(value) -> float:
         f"Invalid importance: '{value}'. "
         f"Use 0.0-1.0 or: {', '.join(CATEGORICAL_TO_NUMERIC.keys())}"
     )
-
-
-def _build_memory_metadata(
-    name: str,
-    scope: str,
-    importance: float,
-    tags: list,
-    project: Optional[str] = None,
-    created: Optional[str] = None,
-    modified: Optional[str] = None,
-) -> dict:
-    """Build metadata for a memory document."""
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    namespace = memory_namespace(project)
-
-    meta = {
-        "type": ContentType.MEMORY,
-        "namespace": namespace,
-        "tier": "file",
-        "scope": scope,
-        "name": name,
-        "importance": str(importance),
-        "importance_score": str(importance),
-        "source": "memory-write",
-        "created_at": created or now_iso,
-        "updated_at": modified or now_iso,
-    }
-    if tags:
-        meta["tags"] = ",".join(tags)
-    if scope == "project" and project:
-        meta["project"] = project
-
-    return meta
 
 
 def memory_write(
@@ -191,20 +160,13 @@ def memory_write(
     if not write_result.get("success"):
         return write_result
 
-    # Index in PostgreSQL
+    # Index in PostgreSQL (core.memories with category='memory')
     indexed = False
     doc_id = _build_doc_id(name, scope, project)
     try:
         from .embedding import get_embedding_service
-        from .schema import _get_pool
+        from .schema import _get_pool, metadata_to_jsonb
 
-        metadata = _build_memory_metadata(
-            name=name,
-            scope=scope,
-            importance=importance,
-            tags=tags,
-            project=project,
-        )
         # Store full content (with frontmatter) for search
         file_result = read_memory_file(path)
         full_content = (
@@ -217,27 +179,44 @@ def memory_write(
         service = get_embedding_service()
         embedding = service.encode(full_content)
 
-        # Upsert into jarvis table
+        # Build remaining JSONB metadata (only non-column fields)
+        jsonb_meta = {"name": name}
+        if tags:
+            jsonb_meta["tags"] = ",".join(tags)
+
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Upsert into core.memories with proper columns
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
-                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
+                    """INSERT INTO core.memories
+                       (id, document, embedding, category, scope, project,
+                        source, importance_score, metadata,
+                        created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, 'memory', %s, %s,
+                               'memory-write', %s, %s::jsonb,
                                COALESCE(%s::timestamptz, now()),
                                COALESCE(%s::timestamptz, now()))
                        ON CONFLICT (id) DO UPDATE SET
                            document = EXCLUDED.document,
                            embedding = EXCLUDED.embedding,
+                           scope = EXCLUDED.scope,
+                           project = EXCLUDED.project,
+                           importance_score = EXCLUDED.importance_score,
                            metadata = EXCLUDED.metadata,
                            updated_at = EXCLUDED.updated_at""",
                     (
                         doc_id,
                         full_content,
                         embedding,
-                        metadata_to_jsonb(metadata),
-                        metadata.get("created_at"),
-                        metadata.get("updated_at"),
+                        scope,
+                        project,
+                        importance,
+                        metadata_to_jsonb(jsonb_meta),
+                        now_iso,
+                        now_iso,
                     ),
                 )
                 conn.commit()
@@ -282,11 +261,21 @@ def memory_read(
     # Try PostgreSQL first (fast path)
     try:
         row = execute_query(
-            "SELECT id, document, metadata FROM jarvis WHERE id = %s",
+            """SELECT id, document, category, scope, project, source,
+                      importance_score, metadata
+               FROM core.memories WHERE id = %s""",
             (doc_id,),
             fetch="one",
         )
         if row:
+            # Reconstruct metadata from columns + JSONB
+            metadata = dict(row["metadata"]) if row["metadata"] else {}
+            metadata["category"] = row["category"]
+            metadata["scope"] = row["scope"]
+            metadata["source"] = row["source"]
+            metadata["importance_score"] = str(row["importance_score"])
+            if row["project"]:
+                metadata["project"] = row["project"]
             return {
                 "success": True,
                 "found": True,
@@ -294,7 +283,7 @@ def memory_read(
                 "name": name,
                 "scope": scope,
                 "content": row["document"],
-                "metadata": jsonb_to_metadata(row["metadata"]),
+                "metadata": metadata,
                 "source": "database",
             }
     except Exception as e:
@@ -379,7 +368,7 @@ def memory_list(
             mem["id"] = doc_id
             try:
                 row = execute_query(
-                    "SELECT id FROM jarvis WHERE id = %s",
+                    "SELECT id FROM core.memories WHERE id = %s",
                     (doc_id,),
                     fetch="one",
                 )
@@ -454,7 +443,7 @@ def memory_delete(
     file_result = delete_memory_file(path)
     file_deleted = file_result.get("success", False)
 
-    # Delete database entry
+    # Delete database entry (hard delete for strategic memories)
     index_deleted = False
     doc_id = _build_doc_id(name, scope, project)
     try:
@@ -463,7 +452,7 @@ def memory_delete(
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM jarvis WHERE id = %s", (doc_id,))
+                cur.execute("DELETE FROM core.memories WHERE id = %s", (doc_id,))
                 index_deleted = cur.rowcount > 0
                 conn.commit()
     except Exception as e:

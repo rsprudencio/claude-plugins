@@ -8,7 +8,7 @@ context collapse).
 Applied ONLY to query_vault(). NOT applied to semantic_context() (per-prompt search)
 which has a ~100ms latency budget.
 
-Dependencies: onnxruntime (already via chromadb), tokenizers (~5MB).
+Dependencies: onnxruntime, tokenizers (~5MB).
 Model: ~92MB ONNX, baked into Docker image at /app/models/cross-encoder/.
 Falls back to download with SHA-256 verification for local dev.
 """

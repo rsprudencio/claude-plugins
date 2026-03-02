@@ -1,4 +1,4 @@
-"""Tests for unified store module — routing writes to vault/memory/tier2."""
+"""Tests for unified store module — routing writes to vault/memory/content."""
 
 import os
 import pytest
@@ -129,12 +129,12 @@ class TestStoreById:
         )
         assert result["success"]
 
-    def test_tier2_id_routes_to_upsert(self, mock_config):
-        """obs:: ID routes to tier2 upsert."""
-        from tools.tier2 import tier2_write
+    def test_content_id_routes_to_upsert(self, mock_config):
+        """obs:: ID routes to content upsert."""
+        from tools.content import content_write
 
-        # Create tier2 content first
-        write_result = tier2_write(content="Original obs", content_type="observation")
+        # Create content first
+        write_result = content_write(content="Original obs", content_type="observation")
         doc_id = write_result["id"]
 
         # Update via ID
@@ -142,11 +142,11 @@ class TestStoreById:
         assert result["success"]
         assert result.get("updated") is True
 
-    def test_tier2_id_merges_metadata(self, mock_config):
-        """Tier2 ID update merges metadata instead of replacing."""
-        from tools.tier2 import tier2_write, tier2_read
+    def test_content_id_merges_metadata(self, mock_config):
+        """Content ID update merges metadata instead of replacing."""
+        from tools.content import content_write, content_read
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Test",
             content_type="observation",
             importance_score=0.5,
@@ -157,9 +157,9 @@ class TestStoreById:
         # Update importance only
         store(id=doc_id, importance=0.9)
 
-        # Verify metadata merged
-        read_result = tier2_read(doc_id)
-        assert float(read_result["metadata"]["importance_score"]) == 0.9
+        # Verify importance updated (top-level column, not in metadata)
+        read_result = content_read(doc_id)
+        assert read_result["importance_score"] == 0.9
 
     def test_unknown_namespace_returns_error(self, mock_config):
         """Unknown namespace prefix returns error."""
@@ -201,8 +201,8 @@ class TestStoreMemory:
         assert result["success"]
 
 
-class TestStoreTier2:
-    """Test tier2 creation via type parameter."""
+class TestStoreContent:
+    """Test content creation via type parameter."""
 
     def test_create_observation(self, mock_config):
         """Create an observation via type."""
@@ -245,8 +245,8 @@ class TestStoreTier2:
         assert "decision::" in result["id"]
 
     def test_extra_metadata_passthrough(self, mock_config):
-        """Extra metadata is passed through to tier2."""
-        from tools.tier2 import tier2_read
+        """Extra metadata is passed through to content."""
+        from tools.content import content_read
 
         result = store(
             content="Observation with context",
@@ -258,8 +258,8 @@ class TestStoreTier2:
         )
         assert result["success"]
 
-        # Read and verify metadata
-        read_result = tier2_read(result["id"])
+        # Read and verify metadata (extra fields remain in JSONB metadata)
+        read_result = content_read(result["id"])
         assert (
             read_result["metadata"]["project_path"]
             == "/home/user/projects/jarvis-plugin"
@@ -267,8 +267,8 @@ class TestStoreTier2:
         assert read_result["metadata"]["git_branch"] == "master"
 
     def test_tags_passthrough(self, mock_config):
-        """Tags are passed through to tier2."""
-        from tools.tier2 import tier2_read
+        """Tags are passed through to content."""
+        from tools.content import content_read
 
         result = store(
             content="Tagged observation",
@@ -277,7 +277,7 @@ class TestStoreTier2:
         )
         assert result["success"]
 
-        read_result = tier2_read(result["id"])
+        read_result = content_read(result["id"])
         assert read_result["metadata"]["tags"] == "work,testing"
 
     def test_default_importance(self, mock_config):
@@ -287,10 +287,11 @@ class TestStoreTier2:
         assert result["importance_score"] == 0.5
 
     def test_default_source(self, mock_config):
-        """Default source is 'manual' for tier2 via store."""
-        from tools.tier2 import tier2_read
+        """Default source is 'manual' for content via store."""
+        from tools.content import content_read
 
         result = store(content="No source specified", type="observation")
         assert result["success"]
-        read_result = tier2_read(result["id"])
-        assert read_result["metadata"]["source"] == "manual"
+        read_result = content_read(result["id"])
+        # source is a top-level column in content_read results
+        assert read_result["source"] == "manual"

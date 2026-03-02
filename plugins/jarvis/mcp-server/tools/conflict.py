@@ -1,6 +1,6 @@
-"""Tier 2 conflict detection: automatically supersede stale entries.
+"""Content conflict detection: automatically supersede stale entries.
 
-When new Tier 2 content is written, this module checks for older entries
+When new content is written, this module checks for older entries
 that the new one contradicts.  Detection uses a hybrid approach:
 
 1. **Negation pre-filter** -- cheap regex gate; most writes exit here.
@@ -10,9 +10,9 @@ that the new one contradicts.  Detection uses a hybrid approach:
 3. **(Optional) LLM verification** -- when ``use_llm`` is enabled, Haiku
    confirms which candidates are genuinely contradicted.
 
-Superseded entries get ``status: "superseded"`` and ``superseded_by``
-metadata; they are then filtered out of query paths (per-prompt
-injection, pattern detection) automatically.
+Superseded entries get ``status = 'superseded'`` and ``superseded_by``
+column values; they are then filtered out of query paths (per-prompt
+injection, pattern detection) automatically via core.active_memories view.
 """
 
 import json
@@ -68,14 +68,14 @@ def find_conflict_candidates(
     content: str,
     config: dict,
 ) -> list[dict]:
-    """Query PostgreSQL for Tier 2 entries that may conflict with *content*.
+    """Query core.active_memories for entries that may conflict with *content*.
 
     Uses pgvector similarity search to find entries on the same topic,
     then applies word Jaccard divergence to detect contradictions
     (high similarity + low word overlap = likely contradiction).
     """
     from .embedding import get_embedding_service
-    from .schema import _get_pool, jsonb_to_metadata
+    from .schema import _get_pool
 
     try:
         service = get_embedding_service()
@@ -88,10 +88,10 @@ def find_conflict_candidates(
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT id, document, metadata,
+                    """SELECT id, document, category, scope, source,
+                              importance_score, metadata,
                               embedding <=> %s::halfvec AS distance
-                       FROM jarvis
-                       WHERE metadata->>'tier' = 'chromadb'
+                       FROM core.active_memories
                        ORDER BY distance ASC
                        LIMIT %s""",
                     (query_embedding, config["max_candidates"]),
@@ -107,9 +107,6 @@ def find_conflict_candidates(
     for row in rows:
         cid = row["id"]
         if cid == doc_id:
-            continue
-        metadata = jsonb_to_metadata(row["metadata"])
-        if metadata.get("status") == "superseded":
             continue
 
         distance = float(row["distance"])
@@ -242,28 +239,24 @@ def verify_conflicts_with_llm(
 
 
 def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
-    """Add ``status: superseded`` and ``superseded_by`` to *old_doc_id*.
+    """Set ``status = 'superseded'`` and ``superseded_by`` on *old_doc_id*.
 
-    Uses a single SQL UPDATE (no read-then-write round-trip).
+    Uses a single SQL UPDATE with proper columns (no JSONB merge).
     Returns True on success, False on failure (missing doc, database error).
     """
     from .schema import _get_pool
 
     try:
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """UPDATE jarvis
-                       SET metadata = metadata
-                           || jsonb_build_object(
-                               'status', 'superseded'::text,
-                               'superseded_by', %s::text,
-                               'superseded_at', %s::text),
+                    """UPDATE core.memories
+                       SET status = 'superseded',
+                           superseded_by = %s,
                            updated_at = now()
-                       WHERE id = %s""",
-                    (new_doc_id, now_iso, old_doc_id),
+                       WHERE id = %s AND status = 'active'""",
+                    (new_doc_id, old_doc_id),
                 )
                 updated = cur.rowcount > 0
                 conn.commit()

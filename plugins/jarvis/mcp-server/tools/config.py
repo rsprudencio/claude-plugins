@@ -139,18 +139,6 @@ def get_memory_config() -> dict:
     return _merge_with_defaults(defaults, _get_memory_section())
 
 
-def get_promotion_config() -> dict:
-    """Get promotion subsystem configuration with defaults."""
-    defaults = {
-        "importance_threshold": 0.85,
-        "retrieval_count_threshold": 3,
-        "age_importance_days": 30,
-        "age_importance_score": 0.7,
-        "on_promoted_file_deleted": "remove",
-    }
-    return _merge_with_defaults(defaults, _get_config_section("promotion"))
-
-
 def get_auto_extract_config() -> dict:
     """Get auto-extract configuration with defaults."""
     defaults = {

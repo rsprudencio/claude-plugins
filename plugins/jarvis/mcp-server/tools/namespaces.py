@@ -22,12 +22,15 @@ from jarvis_common.namespaces import (  # noqa: F401
     # Content type enum
     ContentType,
     ALL_TYPES,
-    TIER2_TYPES,
-    # Tier constants
-    TIER_FILE,
-    TIER_CHROMADB,
-    TIER_1_PREFIXES,
-    TIER_2_PREFIXES,
+    CONTENT_TYPES,
+    TIER2_TYPES,  # Backward compatibility alias — removed in v3.1
+    # Valid categories for core.memories.category column
+    VALID_CATEGORIES,
+    # Schema constants
+    SCHEMA_CORE,
+    SCHEMA_VAULT,
+    # Schema routing
+    schema_for_id,
     # ID generators
     vault_id,
     global_memory_id,
@@ -43,8 +46,6 @@ from jarvis_common.namespaces import (  # noqa: F401
     learning_id,
     decision_id,
     worklog_id,
-    # Tier detection
-    get_tier,
     # ID parser
     ParsedId,
     parse_id,

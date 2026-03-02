@@ -15,7 +15,7 @@ Pipeline:
 4. Substance gate: total conversation text exceeds char threshold
 5. Build session prompt including ALL turns (budget truncates, not excludes)
 6. Call Haiku to extract 1-3 behavioral observations
-7. Store observations via tier2_write
+7. Store observations via content_write
 8. Advance watermark to last line read
 """
 import json
@@ -1189,7 +1189,7 @@ def build_ingest_event_id(
     item_type: str,
     content: str,
 ) -> str:
-    """Create deterministic event IDs for idempotent tier2 writes."""
+    """Create deterministic event IDs for idempotent content writes."""
     normalized = _normalize_for_hash(content)
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
     sid = session_id or "unknown"
@@ -1674,7 +1674,7 @@ def main():
     7. Build session prompt with ALL turns (budget truncates, never excludes)
     8. Call Haiku → extract 1-3 observations
     9. Normalize response → handle new/legacy schema
-    10. Store each observation → persist to Tier 2
+    10. Store each observation → persist to core.memories
     11. Advance watermark → mark position for next invocation
 
     Watermark advance rules:

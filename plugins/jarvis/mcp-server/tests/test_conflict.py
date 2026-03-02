@@ -1,4 +1,4 @@
-"""Tests for Tier 2 conflict detection."""
+"""Tests for content conflict detection."""
 
 import json
 import os
@@ -17,15 +17,27 @@ from tools.conflict import (
     detect_conflicts,
     _resolve_log_dir,
 )
-from tools.tier2 import tier2_write
+from tools.content import content_write
 
 
-def _seed_doc(db, doc_id, text, metadata):
-    """Plant a document directly in the mock database for testing."""
+def _seed_doc(db, doc_id, text, category="observation", scope="global",
+              source="auto-extract", importance_score=0.5, metadata=None):
+    """Plant a document directly in the mock database for testing.
+
+    Uses upsert_core() directly with proper column values — no legacy
+    metadata keys like tier/namespace/promoted.
+    """
     from tools.embedding import get_embedding_service
 
     emb = get_embedding_service()
-    db.upsert(doc_id, text, emb.encode(text), metadata)
+    db.upsert_core(
+        doc_id, text, emb.encode(text),
+        category=category,
+        scope=scope,
+        source=source,
+        importance_score=importance_score,
+        metadata=metadata or {},
+    )
 
 
 # -- has_negation_signals ----------------------------------------------------
@@ -135,7 +147,7 @@ class TestFindConflictCandidates:
             mock_config.db,
             "obs::old1",
             "Python is great for data science and machine learning",
-            {"tier": "chromadb", "type": "observation"},
+            category="observation",
         )
         config = {
             "similarity_threshold": 0.99,  # Very high threshold
@@ -155,7 +167,7 @@ class TestFindConflictCandidates:
             mock_config.db,
             "obs::old1",
             "Use the singleton pattern for database connections",
-            {"tier": "chromadb", "type": "observation"},
+            category="observation",
         )
         config = {
             "similarity_threshold": 0.3,  # Low threshold to ensure match
@@ -177,13 +189,20 @@ class TestFindConflictCandidates:
             assert "jaccard" in c
 
     def test_skip_already_superseded(self, mock_config):
-        """Entries with status=superseded should be skipped."""
+        """Entries with status=superseded should be skipped.
+
+        The query uses core.active_memories which filters status='active',
+        so superseded entries never appear in results.
+        """
         _seed_doc(
             mock_config.db,
             "obs::old1",
             "Use pattern X for error handling",
-            {"tier": "chromadb", "type": "observation", "status": "superseded"},
+            category="observation",
         )
+        # Manually set status to superseded (simulating mark_superseded)
+        mock_config.db.core_rows["obs::old1"]["status"] = "superseded"
+
         config = {
             "similarity_threshold": -2.0,  # Accept everything
             "divergence_threshold": 1.0,  # Accept everything
@@ -202,7 +221,7 @@ class TestFindConflictCandidates:
             mock_config.db,
             "obs::self1",
             "test content for self-matching",
-            {"tier": "chromadb", "type": "observation"},
+            category="observation",
         )
         config = {
             "similarity_threshold": -2.0,
@@ -222,7 +241,7 @@ class TestFindConflictCandidates:
             mock_config.db,
             "obs::old1",
             "Always use type hints in Python functions",
-            {"tier": "chromadb", "type": "observation"},
+            category="observation",
         )
         config = {
             "similarity_threshold": -2.0,  # Accept by similarity
@@ -305,43 +324,47 @@ class TestVerifyConflictsWithLlm:
 
 class TestMarkSuperseded:
 
-    def test_adds_metadata(self, mock_config):
+    def test_updates_columns(self, mock_config):
+        """mark_superseded sets status and superseded_by as columns, not metadata."""
         _seed_doc(
             mock_config.db,
             "obs::old1",
             "old content",
-            {"tier": "chromadb", "type": "observation", "source": "auto-extract"},
+            category="observation",
+            source="auto-extract",
         )
         result = mark_superseded("obs::old1", "obs::new1")
         assert result is True
 
         row = mock_config.db.get("obs::old1")
-        meta = row["metadata"]
-        assert meta["status"] == "superseded"
-        assert meta["superseded_by"] == "obs::new1"
-        assert "superseded_at" in meta
+        # status and superseded_by are top-level columns, not in metadata
+        assert row["status"] == "superseded"
+        assert row["superseded_by"] == "obs::new1"
 
-    def test_preserves_other_metadata(self, mock_config):
+    def test_preserves_other_columns(self, mock_config):
+        """Other column values and metadata remain intact after superseding."""
         _seed_doc(
             mock_config.db,
             "obs::old1",
             "old content",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "source": "auto-extract",
-                "tags": "foo,bar",
-                "importance_score": "0.8",
-            },
+            category="observation",
+            source="auto-extract",
+            importance_score=0.8,
+            metadata={"tags": "foo,bar", "session_id": "sess-123"},
         )
         mark_superseded("obs::old1", "obs::new1")
 
         row = mock_config.db.get("obs::old1")
-        meta = row["metadata"]
-        assert meta["source"] == "auto-extract"
-        assert meta["tags"] == "foo,bar"
-        assert meta["importance_score"] == "0.8"
-        assert meta["status"] == "superseded"
+        # Top-level columns preserved
+        assert row["source"] == "auto-extract"
+        assert row["importance_score"] == 0.8
+        assert row["category"] == "observation"
+        # JSONB metadata preserved
+        assert row["metadata"]["tags"] == "foo,bar"
+        assert row["metadata"]["session_id"] == "sess-123"
+        # Column-level superseded fields
+        assert row["status"] == "superseded"
+        assert row["superseded_by"] == "obs::new1"
 
     def test_nonexistent_id(self, mock_config):
         result = mark_superseded("obs::doesnotexist", "obs::new1")
@@ -359,9 +382,9 @@ class TestCrossTypeConflict:
             mock_config.db,
             "pattern::use-singleton",
             "Use singleton pattern for database connections",
-            {"tier": "chromadb", "type": "pattern", "namespace": "pattern::"},
+            category="pattern",
         )
-        # The candidate finder queries all tier=chromadb, so patterns are included
+        # The candidate finder queries core.active_memories, so patterns are included
         config = {
             "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
@@ -382,7 +405,7 @@ class TestCrossTypeConflict:
             mock_config.db,
             "decision::use-redux",
             "Decided to use Redux for state management",
-            {"tier": "chromadb", "type": "decision", "namespace": "decision::"},
+            category="decision",
         )
         config = {
             "similarity_threshold": -2.0,
@@ -428,7 +451,7 @@ class TestDetectConflicts:
             mock_config.db,
             "obs::old1",
             "Use the factory pattern for creating objects",
-            {"tier": "chromadb", "type": "observation"},
+            category="observation",
         )
 
         # The detect_conflicts uses config defaults (use_llm=False)
@@ -491,25 +514,18 @@ class TestFilterSuperseded:
             mock_config.db,
             "obs::active",
             "active observation",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "namespace": "obs::",
-                "created_at": now,
-            },
+            category="observation",
+            metadata={"created_at": now},
         )
         _seed_doc(
             mock_config.db,
             "obs::stale",
             "stale observation",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "namespace": "obs::",
-                "created_at": now,
-                "status": "superseded",
-            },
+            category="observation",
+            metadata={"created_at": now},
         )
+        # Manually set status to superseded (column-level)
+        mock_config.db.core_rows["obs::stale"]["status"] = "superseded"
 
         recent = _fetch_recent_observations(lookback_minutes=60)
         ids = [d["id"] for d in recent]
@@ -526,25 +542,18 @@ class TestFilterSuperseded:
             mock_config.db,
             "obs::active",
             "Python error handling best practices",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "namespace": "obs::",
-                "updated_at": now,
-            },
+            category="observation",
+            metadata={"updated_at": now},
         )
         _seed_doc(
             mock_config.db,
             "obs::stale",
             "Python error handling best practices outdated version",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "namespace": "obs::",
-                "updated_at": now,
-                "status": "superseded",
-            },
+            category="observation",
+            metadata={"updated_at": now},
         )
+        # Manually set status to superseded (column-level)
+        mock_config.db.core_rows["obs::stale"]["status"] = "superseded"
 
         result = semantic_context("Python error handling", threshold=0.0, budget=8000)
         sources = [m["source"] for m in result.get("matches", [])]
@@ -552,7 +561,7 @@ class TestFilterSuperseded:
         assert "obs::stale" not in sources
 
     def test_backwards_compatible_no_status(self, mock_config):
-        """Entries without status field still work (backward compatible)."""
+        """Entries without explicit status still work (default is 'active')."""
         from tools.patterns import _fetch_recent_observations
         from datetime import datetime, timezone
 
@@ -560,13 +569,9 @@ class TestFilterSuperseded:
         _seed_doc(
             mock_config.db,
             "obs::legacy",
-            "legacy observation without status field",
-            {
-                "tier": "chromadb",
-                "type": "observation",
-                "namespace": "obs::",
-                "created_at": now,
-            },
+            "legacy observation without explicit status",
+            category="observation",
+            metadata={"created_at": now},
         )
 
         recent = _fetch_recent_observations(lookback_minutes=60)
@@ -614,15 +619,15 @@ class TestConflictLog:
         assert "reasoning" in record
 
 
-# -- tier2_write integration -------------------------------------------------
+# -- content_write integration -----------------------------------------------
 
 
-class TestTier2WriteIntegration:
+class TestContentWriteIntegration:
 
     @patch("tools.conflict.detect_conflicts")
     def test_triggers_for_observation(self, mock_detect, mock_config):
         mock_detect.return_value = ["obs::old1"]
-        result = tier2_write(
+        result = content_write(
             content="actually stop using pattern X",
             content_type="observation",
         )
@@ -633,9 +638,9 @@ class TestTier2WriteIntegration:
 
     @patch("tools.conflict.detect_conflicts")
     def test_triggers_for_learning(self, mock_detect, mock_config):
-        """Conflict detection runs for all Tier 2 types, not just observations."""
+        """Conflict detection runs for all content types, not just observations."""
         mock_detect.return_value = []
-        result = tier2_write(
+        result = content_write(
             content="actually avoid using X for performance reasons",
             content_type="learning",
         )
@@ -645,7 +650,7 @@ class TestTier2WriteIntegration:
     @patch("tools.conflict.detect_conflicts")
     def test_no_conflicts_no_extra_keys(self, mock_detect, mock_config):
         mock_detect.return_value = []
-        result = tier2_write(
+        result = content_write(
             content="no negation here, just a normal observation",
             content_type="observation",
         )
@@ -655,7 +660,7 @@ class TestTier2WriteIntegration:
     @patch("tools.conflict.detect_conflicts", side_effect=Exception("boom"))
     def test_exception_does_not_block_write(self, mock_detect, mock_config):
         """If conflict detection fails, the write still succeeds."""
-        result = tier2_write(
+        result = content_write(
             content="actually stop X",
             content_type="observation",
         )

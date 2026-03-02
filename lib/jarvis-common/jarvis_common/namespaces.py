@@ -1,12 +1,13 @@
 """Namespace ID generation and parsing for the unified jarvis collection.
 
-All document IDs in the jarvis ChromaDB collection follow the pattern:
+All document IDs follow the pattern:
     <namespace>::<content-specific-id>
 
 This module provides:
 - ID generators for each namespace
 - ID parser to decompose any ID
 - Namespace constants for filtering
+- Schema routing based on ID prefix
 """
 
 import re
@@ -32,38 +33,62 @@ NAMESPACE_DECISION = "decision::"
 NAMESPACE_WORKLOG = "worklog::"
 
 
-# Content type enum (for metadata 'type' field)
-# Using (str, Enum) so values work as plain strings in ChromaDB metadata,
-# JSON serialization, and == comparisons with raw strings.
+# Content type enum (for metadata 'type' field and category column)
 class ContentType(str, Enum):
-    # Tier 1 (file-backed)
+    # Vault (indexed file content)
     VAULT = "vault"
+    # Memory (strategic, file-backed)
     MEMORY = "memory"
-    # Tier 2 (ephemeral)
-    OBSERVATION = "observation"  # Short captured insight (auto-extract default)
-    PATTERN = "pattern"  # Recurring behavior or preference
-    LEARNING = "learning"  # Problem/solution pair, technique, debugging case study
-    DECISION = "decision"  # Architectural/strategic choice with rationale
-    SUMMARY = "summary"  # Time-period or session aggregation
-    CODE = "code"  # Code snippet or technique reference
-    RELATIONSHIP = "relationship"  # Entity relationship mapping
-    HINT = "hint"  # Contextual suggestion
-    PLAN = "plan"  # Strategy or task plan
-    WORKLOG = "worklog"  # Intent-focused activity record (what user worked on)
+    # Content categories (stored in core.memories)
+    OBSERVATION = "observation"
+    PATTERN = "pattern"
+    LEARNING = "learning"
+    DECISION = "decision"
+    SUMMARY = "summary"
+    CODE = "code"
+    RELATIONSHIP = "relationship"
+    HINT = "hint"
+    PLAN = "plan"
+    WORKLOG = "worklog"
 
 
 ALL_TYPES = [t.value for t in ContentType]
-TIER2_TYPES = [
-    t.value for t in ContentType if t not in (ContentType.VAULT, ContentType.MEMORY)
+
+# Content types stored in core.memories (everything except VAULT)
+CONTENT_TYPES = [
+    t.value for t in ContentType if t != ContentType.VAULT
 ]
 
-# --- Tier Constants ---
+# Backward compatibility alias — will be removed in v3.1
+TIER2_TYPES = CONTENT_TYPES
 
-TIER_FILE = "file"
-TIER_CHROMADB = "chromadb"
-TIER_1_PREFIXES = frozenset({"vault::", "memory::"})
-TIER_2_PREFIXES = frozenset(
+# Valid categories for the core.memories.category column
+VALID_CATEGORIES = (
+    "observation",
+    "pattern",
+    "learning",
+    "decision",
+    "summary",
+    "code",
+    "relationship",
+    "hint",
+    "plan",
+    "worklog",
+    "memory",
+)
+
+# --- Schema Constants ---
+
+SCHEMA_CORE = "core"
+SCHEMA_VAULT = "vault"
+
+# Prefixes that route to vault.documents
+_VAULT_PREFIXES = frozenset({"vault::"})
+
+# Prefixes that route to core.memories
+_CORE_PREFIXES = frozenset(
     {
+        "memory::",
         "obs::",
         "pattern::",
         "summary::",
@@ -76,6 +101,21 @@ TIER_2_PREFIXES = frozenset(
         "worklog::",
     }
 )
+
+
+# --- Schema Routing ---
+
+
+def schema_for_id(doc_id: str) -> str:
+    """Determine target schema from document ID prefix.
+
+    Returns:
+        SCHEMA_VAULT for vault:: IDs
+        SCHEMA_CORE for everything else (memory, obs, pattern, etc.)
+    """
+    if doc_id.startswith("vault::"):
+        return SCHEMA_VAULT
+    return SCHEMA_CORE
 
 
 # --- ID Generators ---
@@ -167,31 +207,6 @@ def worklog_id(timestamp_ms: Optional[int] = None) -> str:
     return f"worklog::{timestamp_ms}"
 
 
-# --- Tier Detection ---
-
-
-def get_tier(doc_id: str) -> str:
-    """Determine document tier from ID prefix (O(1) operation).
-
-    Returns:
-        TIER_FILE for Tier 1 (vault::, memory::)
-        TIER_CHROMADB for Tier 2 (obs::, pattern::, summary::, code::, rel::, hint::, plan::)
-        TIER_FILE for bare paths (legacy vault documents)
-    """
-    # Check Tier 2 prefixes first (most specific)
-    for prefix in TIER_2_PREFIXES:
-        if doc_id.startswith(prefix):
-            return TIER_CHROMADB
-
-    # Check Tier 1 prefixes
-    for prefix in TIER_1_PREFIXES:
-        if doc_id.startswith(prefix):
-            return TIER_FILE
-
-    # Bare path defaults to Tier 1 (file-backed vault document)
-    return TIER_FILE
-
-
 # --- ID Parser ---
 
 
@@ -199,10 +214,10 @@ def get_tier(doc_id: str) -> str:
 class ParsedId:
     """Decomposed document ID."""
 
-    namespace: str  # "vault", "memory", "obs", "pattern", "summary", "code", "rel", "hint", "plan", "learning", "decision", "worklog"
+    namespace: str  # "vault", "memory", "obs", "pattern", etc.
     full_prefix: str  # "vault::", "memory::global::", "obs::", etc.
     content_id: str  # The part after the prefix
-    tier: str = TIER_FILE  # "file" or "chromadb"
+    schema: str = SCHEMA_CORE  # "core" or "vault"
     chunk: Optional[int] = None  # For vault chunks only
     project: Optional[str] = None  # For project-scoped memories
 
@@ -213,7 +228,7 @@ def parse_id(doc_id: str) -> ParsedId:
     Handles all known namespace prefixes. Legacy IDs (no prefix)
     are treated as vault documents for backward compatibility.
     """
-    tier = get_tier(doc_id)
+    schema = schema_for_id(doc_id)
 
     if doc_id.startswith("vault::"):
         content = doc_id[7:]
@@ -221,49 +236,49 @@ def parse_id(doc_id: str) -> ParsedId:
         if "#chunk-" in content:
             content, chunk_str = content.rsplit("#chunk-", 1)
             chunk = int(chunk_str)
-        return ParsedId("vault", "vault::", content, tier, chunk)
+        return ParsedId("vault", "vault::", content, schema, chunk)
 
     if doc_id.startswith("memory::global::"):
-        return ParsedId("memory", "memory::global::", doc_id[16:], tier)
+        return ParsedId("memory", "memory::global::", doc_id[16:], schema)
 
     if doc_id.startswith("memory::"):
         parts = doc_id.split("::", 2)
         project = parts[1] if len(parts) > 1 else ""
         name = parts[2] if len(parts) > 2 else ""
-        return ParsedId("memory", f"memory::{project}::", name, tier, project=project)
+        return ParsedId("memory", f"memory::{project}::", name, schema, project=project)
 
     if doc_id.startswith("obs::"):
-        return ParsedId("obs", "obs::", doc_id[5:], tier)
+        return ParsedId("obs", "obs::", doc_id[5:], schema)
 
     if doc_id.startswith("pattern::"):
-        return ParsedId("pattern", "pattern::", doc_id[9:], tier)
+        return ParsedId("pattern", "pattern::", doc_id[9:], schema)
 
     if doc_id.startswith("summary::"):
-        return ParsedId("summary", "summary::", doc_id[9:], tier)
+        return ParsedId("summary", "summary::", doc_id[9:], schema)
 
     if doc_id.startswith("code::"):
-        return ParsedId("code", "code::", doc_id[6:], tier)
+        return ParsedId("code", "code::", doc_id[6:], schema)
 
     if doc_id.startswith("rel::"):
-        return ParsedId("rel", "rel::", doc_id[5:], tier)
+        return ParsedId("rel", "rel::", doc_id[5:], schema)
 
     if doc_id.startswith("hint::"):
-        return ParsedId("hint", "hint::", doc_id[6:], tier)
+        return ParsedId("hint", "hint::", doc_id[6:], schema)
 
     if doc_id.startswith("plan::"):
-        return ParsedId("plan", "plan::", doc_id[6:], tier)
+        return ParsedId("plan", "plan::", doc_id[6:], schema)
 
     if doc_id.startswith("learning::"):
-        return ParsedId("learning", "learning::", doc_id[10:], tier)
+        return ParsedId("learning", "learning::", doc_id[10:], schema)
 
     if doc_id.startswith("decision::"):
-        return ParsedId("decision", "decision::", doc_id[10:], tier)
+        return ParsedId("decision", "decision::", doc_id[10:], schema)
 
     if doc_id.startswith("worklog::"):
-        return ParsedId("worklog", "worklog::", doc_id[9:], tier)
+        return ParsedId("worklog", "worklog::", doc_id[9:], schema)
 
     # Bare path without namespace prefix — default to vault
-    return ParsedId("vault", "vault::", doc_id, tier)
+    return ParsedId("vault", "vault::", doc_id, SCHEMA_VAULT)
 
 
 # --- Helpers ---

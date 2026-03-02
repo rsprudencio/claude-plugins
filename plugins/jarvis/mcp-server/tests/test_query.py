@@ -358,20 +358,20 @@ class TestCollectionStats:
         assert "type" in sample
         # Paths should not have vault:: prefix
         assert not sample["path"].startswith("vault::")
+        # Samples should have schema field
+        assert "schema" in sample
+        assert sample["schema"] in ("core", "vault")
 
     def test_collection_stats_detailed(self, mock_config):
         self._index_test_files(mock_config)
 
         result = collection_stats(detailed=True)
         assert result["success"] is True
-        assert "type_breakdown" in result
-        assert "namespace_breakdown" in result
-        assert "storage_bytes" in result
-        assert "storage_mb" in result
-
-        # All indexed docs should be vault type
-        assert result["type_breakdown"].get("vault", 0) >= 2
-        assert result["namespace_breakdown"].get("vault::", 0) >= 2
+        # New API uses category_breakdown and vault_type_breakdown
+        # instead of type_breakdown and namespace_breakdown
+        assert "core_documents" in result
+        assert "vault_documents" in result
+        assert result["vault_documents"] >= 2
 
     def test_collection_stats_empty(self, mock_config):
         result = collection_stats()
@@ -385,11 +385,11 @@ class TestCollectionStats:
         assert memory_stats is collection_stats
 
 
-class TestTierAwareQuery:
-    """Tests for tier-aware query results."""
+class TestCrossSchemaQuery:
+    """Tests for cross-schema query results (core.memories + vault.documents)."""
 
-    def test_query_includes_tier_field(self, mock_config):
-        """Test that query results include tier field."""
+    def test_query_includes_schema_field(self, mock_config):
+        """Test that query results include schema field instead of tier."""
         from tools.memory import index_file
 
         test_file = mock_config.vault_path / "notes" / "test.md"
@@ -402,10 +402,10 @@ class TestTierAwareQuery:
         assert result["success"]
         assert len(result["results"]) > 0
 
-        # Check tier field
+        # Check schema field (replaces old tier field)
         for res in result["results"]:
-            assert "tier" in res
-            assert res["tier"] == "file"  # Vault files are Tier 1
+            assert "schema" in res
+            assert res["schema"] == "vault"  # Vault files are in vault schema
 
     def test_query_includes_source_field(self, mock_config):
         """Test that query results include source field."""
@@ -420,59 +420,59 @@ class TestTierAwareQuery:
         result = query_vault("test")
         assert result["success"]
 
-        # Check source field
+        # Check source field - vault documents have source="vault"
         for res in result["results"]:
             assert "source" in res
-            assert res["source"] == "file"  # Tier 1 files have source="file"
+            assert res["source"] == "vault"
 
-    def test_query_mixed_tier_results(self, mock_config):
-        """Test query with both Tier 1 and Tier 2 results."""
-        # Index a Tier 1 file
+    def test_query_mixed_schema_results(self, mock_config):
+        """Test query with both core and vault results."""
+        # Index a vault file
         from tools.memory import index_file
 
         test_file = mock_config.vault_path / "notes" / "test.md"
         test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("# Test\nTest content for tier testing")
+        test_file.write_text("# Test\nTest content for schema testing")
         index_file("notes/test.md")
 
-        # Add a Tier 2 observation
-        from tools.tier2 import tier2_write
+        # Add a core observation
+        from tools.content import content_write
 
-        tier2_write(
-            content="Tier 2 test content for tier testing",
+        content_write(
+            content="Core observation about schema testing content",
             content_type="observation",
             importance_score=0.8,
         )
 
         # Query
-        result = query_vault("tier testing")
+        result = query_vault("schema testing")
         assert result["success"]
         assert len(result["results"]) >= 2
 
-        # Should have both tiers
-        tiers = {res["tier"] for res in result["results"]}
-        assert "file" in tiers or "chromadb" in tiers
+        # Should have both schemas
+        schemas = {res["schema"] for res in result["results"]}
+        assert "vault" in schemas or "core" in schemas
 
-    def test_query_increments_tier2_retrieval_count(self, mock_config):
-        """Test that querying increments Tier 2 retrieval counts."""
-        # Add Tier 2 observation
-        from tools.tier2 import tier2_write, tier2_read
+    def test_query_increments_core_retrieval_count(self, mock_config):
+        """Test that querying increments core retrieval counts."""
+        # Add core observation
+        from tools.content import content_write, content_read
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Test observation for retrieval count", content_type="observation"
         )
         doc_id = write_result["id"]
 
-        # Initial count should be 0
-        read_result = tier2_read(doc_id)
-        assert read_result["metadata"]["retrieval_count"] == "1.0"  # Read increments it
+        # Initial count should be 0, reading increments it to 1
+        read_result = content_read(doc_id)
+        assert read_result["retrieval_count"] == 1.0
 
         # Query (should increment)
         query_vault("retrieval count")
 
-        # Check count increased (read again increments, so should be 3)
-        read_result2 = tier2_read(doc_id)
-        assert float(read_result2["metadata"]["retrieval_count"]) >= 2
+        # Check count increased (read again increments, so should be >= 3)
+        read_result2 = content_read(doc_id)
+        assert read_result2["retrieval_count"] >= 3.0
 
 
 class TestIncrementRetrievalCountsFractional:
@@ -480,9 +480,9 @@ class TestIncrementRetrievalCountsFractional:
 
     def test_fractional_increment(self, mock_config):
         """increment=0.01 adds 0.01 to count."""
-        from tools.tier2 import tier2_write
+        from tools.content import content_write
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Test observation for fractional increment",
             content_type="observation",
         )
@@ -490,14 +490,14 @@ class TestIncrementRetrievalCountsFractional:
 
         _increment_retrieval_counts([doc_id], increment=0.01)
 
-        row = mock_config.db.get(doc_id)
-        assert row["metadata"]["retrieval_count"] == "0.01"
+        row = mock_config.db.get_core(doc_id)
+        assert row["retrieval_count"] == pytest.approx(0.01)
 
     def test_rounds_to_two_decimals(self, mock_config):
         """0.01 + 0.01 + 0.01 = 0.03 (no float noise)."""
-        from tools.tier2 import tier2_write
+        from tools.content import content_write
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Test rounding",
             content_type="observation",
         )
@@ -506,14 +506,14 @@ class TestIncrementRetrievalCountsFractional:
         for _ in range(3):
             _increment_retrieval_counts([doc_id], increment=0.01)
 
-        row = mock_config.db.get(doc_id)
-        assert row["metadata"]["retrieval_count"] == "0.03"
+        row = mock_config.db.get_core(doc_id)
+        assert row["retrieval_count"] == pytest.approx(0.03, abs=0.001)
 
     def test_default_increment_is_one(self, mock_config):
         """No increment arg -> adds 1.0 (backward compat)."""
-        from tools.tier2 import tier2_write
+        from tools.content import content_write
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Test default increment",
             content_type="observation",
         )
@@ -521,11 +521,11 @@ class TestIncrementRetrievalCountsFractional:
 
         _increment_retrieval_counts([doc_id])
 
-        row = mock_config.db.get(doc_id)
-        assert row["metadata"]["retrieval_count"] == "1.0"
+        row = mock_config.db.get_core(doc_id)
+        assert row["retrieval_count"] == pytest.approx(1.0)
 
-    def test_skips_tier1_ids(self, mock_config):
-        """Tier 1 (vault::) IDs are not incremented."""
+    def test_skips_vault_ids(self, mock_config):
+        """Vault (vault::) IDs are not incremented — only core.memories tracks counts."""
         from tools.memory import index_file
 
         notes_dir = mock_config.vault_path / "notes"
@@ -538,10 +538,11 @@ class TestIncrementRetrievalCountsFractional:
             ["vault::notes/skip-test.md"], increment=0.01
         )
 
-        # Verify no retrieval_count was added to tier 1 doc
-        row = mock_config.db.get("vault::notes/skip-test.md")
-        meta = row["metadata"]
-        assert meta.get("retrieval_count") is None or meta.get("retrieval_count") == "0"
+        # Vault rows don't have retrieval_count column
+        row = mock_config.db.get_vault("vault::notes/skip-test.md")
+        assert row is not None
+        # vault rows don't track retrieval_count
+        assert "retrieval_count" not in row or row.get("retrieval_count") is None
 
 
 class TestSemanticContextFractionalBump:
@@ -555,9 +556,9 @@ class TestSemanticContextFractionalBump:
             }
         )
 
-        from tools.tier2 import tier2_write
+        from tools.content import content_write
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Observation about career goals and strategic planning",
             content_type="observation",
             importance_score=0.8,
@@ -567,9 +568,9 @@ class TestSemanticContextFractionalBump:
         # Call semantic_context (should fractionally increment)
         semantic_context("career goals", threshold=0.0)
 
-        # Check retrieval count was bumped
-        row = mock_config.db.get(doc_id)
-        count = float(row["metadata"]["retrieval_count"])
+        # Check retrieval count was bumped (column-level, not metadata)
+        row = mock_config.db.get_core(doc_id)
+        count = row["retrieval_count"]
         assert count == pytest.approx(0.05, abs=0.001)
 
     def test_no_bump_when_zero(self, mock_config):
@@ -580,9 +581,9 @@ class TestSemanticContextFractionalBump:
             }
         )
 
-        from tools.tier2 import tier2_write
+        from tools.content import content_write
 
-        write_result = tier2_write(
+        write_result = content_write(
             content="Observation about career goals zero increment",
             content_type="observation",
             importance_score=0.8,
@@ -591,5 +592,61 @@ class TestSemanticContextFractionalBump:
 
         semantic_context("career goals zero increment", threshold=0.0)
 
-        row = mock_config.db.get(doc_id)
-        assert row["metadata"]["retrieval_count"] == "0"
+        row = mock_config.db.get_core(doc_id)
+        assert row["retrieval_count"] == pytest.approx(0.0)
+
+    def test_core_results_display_full_content(self, mock_config):
+        """Core results in semantic_context should have display_mode='full'."""
+        from tools.content import content_write
+
+        content_write(
+            content="Strategic observation about architecture decisions",
+            content_type="observation",
+            importance_score=0.9,
+        )
+
+        result = semantic_context("architecture decisions", threshold=0.0)
+        assert len(result["matches"]) > 0
+
+        # Core results should have full content display
+        for match in result["matches"]:
+            # match has 'type' from metadata — observations come from core
+            if match["type"] == "observation":
+                assert match["display_mode"] == "full"
+
+    def test_vault_results_display_reference(self, mock_config):
+        """Vault results in semantic_context should have display_mode='reference'."""
+        from tools.memory import index_file
+
+        notes_dir = mock_config.vault_path / "notes"
+        notes_dir.mkdir(exist_ok=True)
+        (notes_dir / "ref-test.md").write_text(
+            "# Reference Test\n\nContent about architecture."
+        )
+        index_file("notes/ref-test.md")
+
+        result = semantic_context("architecture", threshold=0.0)
+        assert len(result["matches"]) > 0
+
+        # Vault results should have reference display
+        for match in result["matches"]:
+            if match["type"] in ("document", "vault", "note"):
+                assert match["display_mode"] == "reference"
+
+    def test_budget_tracking(self, mock_config):
+        """semantic_context returns budget_used with core and vault breakdown."""
+        from tools.content import content_write
+
+        content_write(
+            content="Budget test observation content",
+            content_type="observation",
+            importance_score=0.8,
+        )
+
+        result = semantic_context("budget test", threshold=0.0, budget=8000)
+
+        assert "budget_used" in result
+        assert "core" in result["budget_used"]
+        assert "vault" in result["budget_used"]
+        assert "total" in result["budget_used"]
+        assert result["budget_used"]["total"] == 8000

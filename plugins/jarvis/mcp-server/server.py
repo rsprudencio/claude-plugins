@@ -5,10 +5,9 @@ Jarvis Core MCP Server
 Unified content API and vault access for JARVIS protocol.
 
 Tools - Content Lifecycle (unified API):
-- jarvis_store: Write any content (vault file, memory, or tier2)
+- jarvis_store: Write any content (vault file, memory, or content)
 - jarvis_retrieve: Read/search any content (semantic, by ID, by name, list)
 - jarvis_remove: Delete any content (by ID or name)
-- jarvis_promote: Promote tier2 content to tier1 (file-backed)
 
 Tools - Vault Filesystem:
 - jarvis_read_vault_file, jarvis_list_vault_dir, jarvis_file_exists
@@ -23,7 +22,7 @@ Tools - Format Support:
 - jarvis_get_format_reference
 
 Note: Git operations (commit, status, push, etc.) have moved to jarvis-obsidian.
-PKM-specific tools (index_vault, index_file, promote, get_format_reference)
+PKM-specific tools (index_vault, index_file, get_format_reference)
 are conditionally visible based on jarvis-obsidian availability.
 """
 import asyncio
@@ -51,7 +50,6 @@ from tools.paths import (
     PathNotConfiguredError,
 )
 from tools.query import collection_stats
-from tools.promotion import promote, check_promotion_criteria
 from tools.store import store
 from tools.retrieve import retrieve
 from tools.remove import remove
@@ -72,7 +70,7 @@ TOOLS = [
     # Unified content API
     Tool(
         name="jarvis_store",
-        description="Store content in Jarvis. Provide ONE routing param: id (update existing from retrieve), relative_path (new vault file), or type (new memory/tier2). Auto-indexes .md files.",
+        description="Store content in Jarvis. Provide ONE routing param: id (update existing from retrieve), relative_path (new vault file), or type (new memory/content). Auto-indexes .md files.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -82,7 +80,7 @@ TOOLS = [
                 },
                 "id": {
                     "type": "string",
-                    "description": "Document ID from jarvis_retrieve — update existing content. Routes by prefix: vault::* -> file, memory::* -> memory, obs::/pattern::/* -> tier2.",
+                    "description": "Document ID from jarvis_retrieve — update existing content. Routes by prefix: vault::* -> file, memory::* -> memory, obs::/pattern::/* -> content.",
                 },
                 "relative_path": {
                     "type": "string",
@@ -184,7 +182,7 @@ TOOLS = [
     ),
     Tool(
         name="jarvis_retrieve",
-        description="Retrieve content from Jarvis. Provide ONE of: query (semantic search), id (read by ID), name (memory by name), or list_type ('tier2'/'memory' to browse).",
+        description="Retrieve content from Jarvis. Provide ONE of: query (semantic search), id (read by ID), name (memory by name), or list_type ('content'/'memory' to browse).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -202,8 +200,8 @@ TOOLS = [
                 },
                 "list_type": {
                     "type": "string",
-                    "enum": ["tier2", "memory"],
-                    "description": "List content: 'tier2' (ephemeral) or 'memory' (strategic)",
+                    "enum": ["content", "tier2", "memory"],
+                    "description": "List content: 'content' (ephemeral) or 'memory' (strategic)",
                 },
                 "n_results": {
                     "type": "integer",
@@ -218,11 +216,11 @@ TOOLS = [
                     "type": "number",
                     "minimum": 0.0,
                     "maximum": 1.0,
-                    "description": "Min importance score for tier2 listing",
+                    "description": "Min importance score for content listing",
                 },
                 "source": {
                     "type": "string",
-                    "description": "Filter by source for tier2 listing",
+                    "description": "Filter by source for content listing",
                 },
                 "scope": {
                     "type": "string",
@@ -261,7 +259,7 @@ TOOLS = [
                 "include_content": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Include document content in list results (for list_type='memory' and 'tier2')",
+                    "description": "Include document content in list results (for list_type='memory' and 'content')",
                 },
                 "sort_by": {
                     "type": "string",
@@ -273,11 +271,11 @@ TOOLS = [
                         "none",
                     ],
                     "default": "importance_desc",
-                    "description": "Sort order for tier2 list mode (default: importance_desc)",
+                    "description": "Sort order for content list mode (default: importance_desc)",
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Filter tier2 results by session ID",
+                    "description": "Filter content results by session ID",
                 },
                 "user": {
                     "type": "string",
@@ -294,7 +292,7 @@ TOOLS = [
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "Document ID to delete (from jarvis_retrieve results). Works for vault and tier2 content.",
+                    "description": "Document ID to delete (from jarvis_retrieve results). Works for vault and content.",
                 },
                 "name": {
                     "type": "string",
@@ -424,7 +422,7 @@ TOOLS = [
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'chroma_data_path')",
+                    "description": "Path identifier (e.g., 'journal_jarvis', 'inbox', 'strategic')",
                 },
                 "substitutions": {
                     "type": "object",
@@ -444,20 +442,6 @@ TOOLS = [
         inputSchema={"type": "object", "properties": {}},
     ),
     Tool(
-        name="jarvis_promote",
-        description="Promote Tier 2 content to Tier 1 (file-backed) storage. Checks importance/retrieval thresholds and writes to vault.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "doc_id": {
-                    "type": "string",
-                    "description": "Tier 2 document ID to promote",
-                }
-            },
-            "required": ["doc_id"],
-        },
-    ),
-    Tool(
         name="jarvis_get_format_reference",
         description="Get the active file format reference (syntax guide + journal entry template). Returns the format guide content and configured extension. Call this before creating new vault files to know the correct syntax.",
         inputSchema={"type": "object", "properties": {}},
@@ -474,7 +458,6 @@ _PKM_TOOLS = {
     "jarvis_index_vault",
     "jarvis_index_file",
     "jarvis_get_format_reference",
-    "jarvis_promote",
 }
 
 
@@ -607,7 +590,6 @@ _HANDLERS = {
     # Path configuration
     "jarvis_resolve_path": lambda args: handle_resolve_path(args),
     "jarvis_list_paths": lambda args: handle_list_paths(),
-    "jarvis_promote": lambda args: promote(doc_id=args.get("doc_id", "")),
     "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
 }
 

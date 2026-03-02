@@ -1,10 +1,10 @@
 """Unified content retrieval for Jarvis.
 
 Routes reads based on parameters:
-- query -> semantic search (query_vault)
-- id -> ID-based read (tier2_read or doc_read by prefix)
+- query -> semantic search (query_vault) across core + vault
+- id -> ID-based read (content_read or doc_read by prefix)
 - name -> memory read by name (memory_crud.memory_read)
-- list_type -> list content (tier2_list or memory_list)
+- list_type -> list content (content_list or memory_list)
 """
 
 from typing import Optional
@@ -39,13 +39,13 @@ def retrieve(
     1. query -> semantic search across all content
     2. id -> read specific document by ID (routes by prefix)
     3. name -> read strategic memory by name
-    4. list_type -> list content ("tier2" or "memory")
+    4. list_type -> list content ("content"/"tier2" or "memory")
     """
     # Count how many routing params are set
     error = validate_exactly_one(
         [query, id, name, list_type],
         "Provide one of: query (search), id (read by ID), "
-        "name (memory name), list_type ('tier2' or 'memory')",
+        "name (memory name), list_type ('content' or 'memory')",
         "Provide only ONE of: query, id, name, list_type",
     )
     if error:
@@ -88,22 +88,22 @@ def retrieve(
 
 
 def _read_by_id(doc_id: str, include_metadata: bool):
-    """Route ID-based reads by prefix and normalize the response format."""
-    from .namespaces import get_tier, TIER_CHROMADB
+    """Route ID-based reads by schema prefix and normalize the response format."""
+    from .namespaces import schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
 
-    tier = get_tier(doc_id)
-    if tier == TIER_CHROMADB:
-        # Tier 2: use tier2_read (increments retrieval_count)
-        from .tier2 import tier2_read
+    schema = schema_for_id(doc_id)
+    if schema == SCHEMA_CORE:
+        # Core memory: use content_read (increments retrieval_count)
+        from .content import content_read
 
-        return tier2_read(doc_id)
+        return content_read(doc_id)
     else:
-        # Tier 1: use doc_read for indexed content
+        # Vault document: use doc_read for indexed content
         from .query import doc_read
 
         result = doc_read(ids=[doc_id], include_metadata=include_metadata)
 
-        # Normalize to same format as tier2_read for single-ID lookup
+        # Normalize to same format as content_read for single-ID lookup
         if result.get("success") and result.get("documents"):
             doc = result["documents"][0]
             return {
@@ -138,10 +138,11 @@ def _list_content(
     include_content=False,
 ):
     """Route list operations."""
-    if list_type == "tier2":
-        from .tier2 import tier2_list
+    # "tier2" kept as deprecated alias for "content" (removed in v3.1)
+    if list_type in ("content", "tier2"):
+        from .content import content_list
 
-        return tier2_list(
+        return content_list(
             content_type=type_filter,
             min_importance=min_importance,
             source=source,
@@ -163,5 +164,5 @@ def _list_content(
     else:
         return {
             "success": False,
-            "error": f"Invalid list_type '{list_type}'. Use: 'tier2' or 'memory'",
+            "error": f"Invalid list_type '{list_type}'. Use: 'content' or 'memory'",
         }

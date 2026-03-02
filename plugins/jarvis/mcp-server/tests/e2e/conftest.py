@@ -2,7 +2,7 @@
 
 Three layered fixtures:
   e2e_database_url  (session) — CREATE/DROP disposable jarvis_e2e_test database
-  e2e_schema        (session) — run SCHEMA_SQL + META_SCHEMA_SQL (real DDL)
+  e2e_schema        (session) — run dual-schema DDL (core + vault)
   e2e_config        (function, autouse) — env vars, mock embedding, pool reset,
                                           TRUNCATE on teardown
 """
@@ -43,7 +43,6 @@ def e2e_database_url():
         admin_conn.close()
 
     # Build the test database URL by replacing the database name.
-    # Preserves query params (e.g. ?sslmode=disable).
     parsed = urlparse(E2E_POSTGRES_URL)
     test_url = urlunparse(parsed._replace(path="/jarvis_e2e_test"))
 
@@ -52,7 +51,6 @@ def e2e_database_url():
     # Teardown: drop the test database
     admin_conn = psycopg.connect(E2E_POSTGRES_URL, autocommit=True)
     try:
-        # Terminate any lingering connections before dropping
         admin_conn.execute(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
             "WHERE datname = 'jarvis_e2e_test' AND pid <> pg_backend_pid()"
@@ -64,14 +62,15 @@ def e2e_database_url():
 
 @pytest.fixture(scope="session")
 def e2e_schema(e2e_database_url):
-    """Initialize the jarvis schema in the test database."""
-    from tools.schema import SCHEMA_SQL, META_SCHEMA_SQL
+    """Initialize dual-schema DDL (core + vault) in the test database."""
+    from tools.schema import CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL
 
     conn = psycopg.connect(e2e_database_url, autocommit=True)
     try:
-        # The schema SQL has a {dimensions} placeholder
-        conn.execute(SCHEMA_SQL.format(dimensions=384))
-        conn.execute(META_SCHEMA_SQL)
+        conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        conn.execute(CORE_SCHEMA_SQL.format(dimensions=384))
+        conn.execute(VAULT_SCHEMA_SQL.format(dimensions=384))
+        conn.execute(CORE_META_SQL)
     finally:
         conn.close()
 
@@ -187,7 +186,7 @@ def e2e_config(e2e_schema, tmp_path, monkeypatch):
     # ── Teardown: TRUNCATE tables, reset pool ─────────────────────
     try:
         conn = psycopg.connect(db_url, autocommit=True)
-        conn.execute("TRUNCATE jarvis, jarvis_meta")
+        conn.execute("TRUNCATE core.memories, vault.documents, core.meta")
         conn.close()
     except Exception:
         pass

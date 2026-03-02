@@ -64,8 +64,6 @@ class TestBuildMetadata:
 
     def test_universal_fields_present(self):
         meta = _build_metadata({}, "notes/test.md")
-        assert meta["type"] == "vault"
-        assert meta["namespace"] == "vault::"
         assert meta["source"] == "vault-index"
         assert "created_at" in meta
         assert "updated_at" in meta
@@ -75,21 +73,17 @@ class TestBuildMetadata:
     def test_vault_type_from_frontmatter(self):
         fm = {"type": "incident-log", "tags": "jarvis,work", "importance": "high"}
         meta = _build_metadata(fm, "journal/jarvis/2026/01/entry.md")
-        # Universal type is always "vault" for vault content
-        assert meta["type"] == "vault"
         # Old frontmatter type is preserved as vault_type
         assert meta["vault_type"] == "incident-log"
         assert meta["tags"] == "jarvis,work"
-        assert meta["importance"] == "high"
-        assert meta["importance_score"] == "0.8"
+        assert meta["importance_score"] == 0.8
         assert meta["directory"] == "journal"
         assert meta["has_frontmatter"] == "true"
 
     def test_vault_type_inferred_from_directory(self):
         meta = _build_metadata({}, "notes/my-note.md")
         assert meta["vault_type"] == "note"
-        assert meta["importance"] == "0.5"
-        assert meta["importance_score"] == "0.5"
+        assert meta["importance_score"] == 0.5
         assert meta["has_frontmatter"] == "false"
 
     def test_directory_inference(self):
@@ -99,10 +93,9 @@ class TestBuildMetadata:
         assert _build_metadata({}, "random/test.md")["vault_type"] == "random"
 
     def test_all_inferred_have_vault_type(self):
-        """All vault metadata must have type=vault and a vault_type."""
+        """All vault metadata must have a vault_type."""
         for path in ("notes/a.md", "journal/b.md", "work/c.md"):
             meta = _build_metadata({}, path)
-            assert meta["type"] == "vault"
             assert "vault_type" in meta
 
     def test_vault_type_directory_fallback(self):
@@ -143,6 +136,12 @@ class TestShouldSkip:
         assert _should_skip("notes/my-note.md", False) is False
         assert _should_skip("journal/jarvis/2026/01/entry.md", False) is False
 
+    def test_skip_jarvis_strategic(self):
+        """DAR F17: .jarvis/strategic/ is skipped to prevent duplicates."""
+        assert _should_skip(".jarvis/strategic/test.md", False) is True
+        # Non-strategic .jarvis subdirs are still indexed
+        assert _should_skip(".jarvis/config/test.md", False) is False
+
 
 class TestIndexVault:
     """Integration tests for bulk vault indexing."""
@@ -169,16 +168,14 @@ class TestIndexVault:
 
         # Verify IDs have vault:: prefix
         db = mock_config.db
-        for doc_id in db.rows.keys():
+        for doc_id in db.vault_rows.keys():
             assert doc_id.startswith("vault::"), f"ID {doc_id} missing vault:: prefix"
 
-        # Verify metadata has universal fields
-        for row in db.rows.values():
-            meta = row["metadata"]
-            assert meta["type"] == "vault"
-            assert meta["namespace"] == "vault::"
-            assert "vault_type" in meta
-            assert "created_at" in meta
+        # Verify vault rows have proper columns and metadata
+        for row in db.vault_rows.values():
+            assert "vault_type" in row  # column
+            assert "parent_file" in row  # column
+            assert "created_at" in row["metadata"]
 
     def test_index_vault_skips_templates(self, mock_config):
         """Should skip templates directory."""
@@ -191,21 +188,38 @@ class TestIndexVault:
         assert result["files_skipped"] >= 1
 
     def test_index_vault_includes_dot_directories(self, mock_config):
-        """Should index files in dot-prefixed directories like .jarvis/."""
-        dot_dir = mock_config.vault_path / ".jarvis" / "strategic"
+        """Should index files in dot-prefixed directories like .jarvis/ (non-strategic)."""
+        dot_dir = mock_config.vault_path / ".jarvis" / "config"
         dot_dir.mkdir(parents=True, exist_ok=True)
-        (dot_dir / "test-values.md").write_text("# Test Values\n\nSome strategic content here.")
+        (dot_dir / "test-config.md").write_text("# Test Config\n\nSome config content here.")
 
         result = index_vault(force=True)
         assert result["success"] is True
         assert result["files_indexed"] >= 1
 
-        # Verify the file is in the database with correct parent_file
+        # Verify the file is in vault_rows with correct parent_file column
         matching = [
-            r for r in mock_config.db.rows.values()
-            if r["metadata"].get("parent_file") == ".jarvis/strategic/test-values.md"
+            r for r in mock_config.db.vault_rows.values()
+            if r.get("parent_file") == ".jarvis/config/test-config.md"
         ]
         assert len(matching) > 0
+
+    def test_index_vault_skips_strategic_dir(self, mock_config):
+        """DAR F17: .jarvis/strategic/ is skipped to prevent duplicates with memory_crud."""
+        strategic_dir = mock_config.vault_path / ".jarvis" / "strategic"
+        strategic_dir.mkdir(parents=True, exist_ok=True)
+        (strategic_dir / "test-values.md").write_text("# Test Values\n\nStrategic content.")
+
+        result = index_vault(force=True)
+        assert result["success"] is True
+        assert result["files_skipped"] >= 1
+
+        # Verify the strategic file is NOT in vault_rows
+        matching = [
+            r for r in mock_config.db.vault_rows.values()
+            if r.get("parent_file", "").startswith(".jarvis/strategic/")
+        ]
+        assert len(matching) == 0
 
     def test_index_vault_skips_serena(self, mock_config):
         """Should skip .serena directory (deprecated Serena memories)."""
@@ -248,7 +262,6 @@ class TestIndexFile:
         assert result["id"] == "vault::notes/single.md"
         assert result["title"] == "Single File"
         assert result["chunks"] == 1
-        assert result["metadata"]["type"] == "vault"
         assert result["metadata"]["vault_type"] == "note"
 
     def test_index_nonexistent_file(self, mock_config):
@@ -308,17 +321,15 @@ class TestChunkingIntegration:
         assert result["chunks"] >= 2
 
         # Verify chunk IDs in database
-        chunk_ids = [rid for rid in mock_config.db.rows.keys() if "chunked.md" in rid]
+        chunk_ids = [rid for rid in mock_config.db.vault_rows.keys() if "chunked.md" in rid]
         assert len(chunk_ids) >= 2
 
-        # Verify chunk metadata
-        for rid, row in mock_config.db.rows.items():
+        # Verify chunk columns
+        for rid, row in mock_config.db.vault_rows.items():
             if "chunked.md" in rid:
-                meta = row["metadata"]
-                assert "parent_file" in meta
-                assert meta["parent_file"] == "notes/chunked.md"
-                assert "chunk_heading" in meta
-                assert int(meta["chunk_total"]) >= 2
+                assert row["parent_file"] == "notes/chunked.md"
+                assert "chunk_heading" in row
+                assert int(row["chunk_total"]) >= 2
 
     def test_index_file_without_headings_single_doc(self, mock_config):
         """Short file without headings should produce a single document."""
@@ -345,7 +356,7 @@ class TestChunkingIntegration:
         assert result["success"] is True
         assert result["chunks"] >= 2
 
-        multi_ids = [rid for rid in mock_config.db.rows.keys() if "multi.md" in rid]
+        multi_ids = [rid for rid in mock_config.db.vault_rows.keys() if "multi.md" in rid]
         for doc_id in multi_ids:
             assert doc_id.startswith("vault::notes/multi.md#chunk-")
 
@@ -369,7 +380,7 @@ class TestChunkingIntegration:
         result2 = index_file("notes/evolving.md")
 
         # Old chunks should be cleaned up
-        evolving_ids = [rid for rid in mock_config.db.rows.keys() if "evolving.md" in rid]
+        evolving_ids = [rid for rid in mock_config.db.vault_rows.keys() if "evolving.md" in rid]
         assert len(evolving_ids) == result2["chunks"]
 
     def test_index_vault_with_chunking(self, mock_config):
@@ -420,45 +431,43 @@ class TestChunkingIntegration:
 
         index_file("notes/mixed-importance.md")
 
-        # Group scores by heading prefix
+        # Group scores by heading prefix (chunk_heading and importance_score are columns)
         arch_scores = [
-            float(r["metadata"]["importance_score"])
-            for r in mock_config.db.rows.values()
-            if r["metadata"].get("chunk_heading", "").startswith("Architecture Decision")
+            float(r["importance_score"])
+            for r in mock_config.db.vault_rows.values()
+            if r.get("chunk_heading", "").startswith("Architecture Decision")
         ]
         shopping_scores = [
-            float(r["metadata"]["importance_score"])
-            for r in mock_config.db.rows.values()
-            if r["metadata"].get("chunk_heading", "").startswith("Shopping List")
+            float(r["importance_score"])
+            for r in mock_config.db.vault_rows.values()
+            if r.get("chunk_heading", "").startswith("Shopping List")
         ]
         assert len(arch_scores) >= 1
         assert len(shopping_scores) >= 1
         # "architecture decision" concepts should score higher than generic filler
         assert max(arch_scores) > max(shopping_scores)
 
-    def test_parent_file_metadata(self, mock_config):
-        """All indexed chunks should have parent_file metadata."""
+    def test_parent_file_column(self, mock_config):
+        """All indexed chunks should have parent_file as a column."""
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "parent-test.md").write_text("# Simple\n\nJust content.")
 
         index_file("notes/parent-test.md")
 
-        for row in mock_config.db.rows.values():
-            assert row["metadata"].get("parent_file") == "notes/parent-test.md"
+        for row in mock_config.db.vault_rows.values():
+            assert row.get("parent_file") == "notes/parent-test.md"
 
 
-class TestTierMetadata:
-    """Tests for tier field in metadata."""
+class TestVaultDocumentColumns:
+    """Tests for vault-specific columns in indexed documents."""
 
-    def test_build_metadata_includes_tier(self, mock_config):
-        """Test that _build_metadata includes tier field."""
-        # Index a file
-        test_file = mock_config.vault_path / "notes" / "test-tier.md"
+    def test_index_file_has_vault_type_column(self, mock_config):
+        """Indexed files should have vault_type as a column."""
+        test_file = mock_config.vault_path / "notes" / "test-col.md"
         test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("# Test Tier\nTesting tier metadata")
+        test_file.write_text("# Test Column\nTesting vault columns")
 
-        result = index_file("notes/test-tier.md")
+        result = index_file("notes/test-col.md")
         assert result["success"]
-        assert "tier" in result["metadata"]
-        assert result["metadata"]["tier"] == "file"
+        assert result["metadata"]["vault_type"] == "note"

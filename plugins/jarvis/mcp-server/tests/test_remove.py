@@ -3,7 +3,7 @@
 
 import pytest
 from tools.remove import remove
-from tools.tier2 import tier2_write, tier2_read
+from tools.content import content_write, content_read
 
 
 class TestRemoveRouting:
@@ -25,9 +25,9 @@ class TestRemoveRouting:
 class TestRemoveById:
     """Test ID-based deletion."""
 
-    def test_delete_tier2_by_id(self, mock_config):
-        """Delete tier2 content by ID."""
-        write_result = tier2_write(
+    def test_delete_content_by_id(self, mock_config):
+        """Delete content by ID (soft delete)."""
+        write_result = content_write(
             content="To be deleted",
             content_type="observation",
         )
@@ -37,12 +37,12 @@ class TestRemoveById:
         assert result["success"]
         assert result["deleted"]
 
-        # Verify deletion
-        read_result = tier2_read(doc_id)
+        # Verify soft deletion — content_read should not find it
+        read_result = content_read(doc_id)
         assert not read_result["found"]
 
-    def test_delete_nonexistent_tier2(self, mock_config):
-        """Deleting nonexistent tier2 doc returns deleted=False."""
+    def test_delete_nonexistent_content(self, mock_config):
+        """Deleting nonexistent content doc returns deleted=False."""
         result = remove(id="obs::nonexistent")
         assert result["success"]
         assert not result["deleted"]
@@ -139,10 +139,8 @@ class TestRemoveByName:
         """Delete strategic memory by name."""
         from tools.store import store
 
-        # Create memory
         store(content="To be deleted", type="memory", name="delete-test")
 
-        # Delete (confirm=True for global)
         result = remove(name="delete-test", confirm=True)
         assert result["success"]
 
@@ -158,5 +156,4 @@ class TestRemoveByName:
     def test_delete_nonexistent_memory(self, mock_config):
         """Deleting nonexistent memory with confirm returns no file deleted."""
         result = remove(name="nonexistent-mem", confirm=True)
-        # memory_delete resolves path and attempts deletion
         assert isinstance(result, dict)

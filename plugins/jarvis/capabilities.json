@@ -43,7 +43,7 @@
   },
 
   "skills": {
-    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 15 user-invocable skills across 4 plugins (plus jarvis-audit, a background reference skill).",
+    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 14 user-invocable skills across 4 plugins (plus jarvis-audit, a background reference skill).",
 
     "jarvis": {
       "command": "/jarvis:jarvis",
@@ -81,16 +81,16 @@
       "command": "/jarvis:jarvis-settings",
       "triggers": ["jarvis settings", "update config", "configure jarvis", "change vault path"],
       "description": "View and update Jarvis configuration",
-      "what_it_does": "Menu-driven config manager: vault path, auto-extract, promotion thresholds, vault directory paths, memory system tuning, shell integration. First-time users get a streamlined flow; returning users jump to any section.",
-      "outputs": "~/.jarvis/config.json with all ~30 keys visible (vault, memory, auto_extract, promotion, paths)",
+      "what_it_does": "Menu-driven config manager: vault path, auto-extract, vault directory paths, memory system tuning, shell integration. First-time users get a streamlined flow; returning users jump to any section.",
+      "outputs": "~/.jarvis/config.json with all keys visible (vault, memory, auto_extract, paths)",
       "plugin": "jarvis"
     },
 
     "jarvis-recall": {
       "command": "/jarvis:jarvis-recall",
       "triggers": ["recall", "search vault", "find in vault"],
-      "description": "Semantic search across vault content using ChromaDB",
-      "what_it_does": "Finds related content by meaning, not just keywords. Searches all indexed vault files and Tier 2 content. Returns ranked results with relevance scoring.",
+      "description": "Semantic search across vault content using PostgreSQL pgvector",
+      "what_it_does": "Finds related content by meaning, not just keywords. Searches all indexed vault files and memory content. Returns ranked results with relevance scoring.",
       "plugin": "jarvis"
     },
 
@@ -98,16 +98,7 @@
       "command": "/jarvis:jarvis-memory-stats",
       "triggers": ["memory stats", "memory health"],
       "description": "Show memory system health and statistics",
-      "what_it_does": "Displays ChromaDB document count, sample entries, per-type breakdowns, and index status.",
-      "plugin": "jarvis"
-    },
-
-    "jarvis-promote": {
-      "command": "/jarvis:jarvis-promote",
-      "triggers": ["promote", "promote observations"],
-      "description": "Browse and promote Tier 2 ephemeral content to permanent vault files",
-      "what_it_does": "Interactive Tier 2 content management with 4 modes: browse (list), preview (inspect), promote (write to vault with YAML frontmatter), auto-promote (batch promote by criteria).",
-      "modes": ["browse", "preview", "promote", "auto-promote"],
+      "what_it_does": "Displays document count, sample entries, per-type breakdowns, and index status.",
       "plugin": "jarvis"
     },
 
@@ -115,7 +106,7 @@
       "command": "/jarvis:jarvis-worklog",
       "triggers": ["worklog", "what did I work on", "work summary", "weekly activity"],
       "description": "Review auto-captured worklog entries grouped by workstream",
-      "what_it_does": "Queries worklog Tier 2 entries by date range (default: today), groups by workstream, shows timeline of activities. Can create journal entries from worklog data.",
+      "what_it_does": "Queries worklog entries by date range (default: today), groups by workstream, shows timeline of activities. Can create journal entries from worklog data.",
       "plugin": "jarvis"
     },
 
@@ -260,7 +251,7 @@
         "Date range and tag filtering",
         "Wiki link following with configurable depth",
         "Git history search (deleted files, previous versions)",
-        "Semantic search via ChromaDB (jarvis_retrieve)",
+        "Semantic search via PostgreSQL pgvector (jarvis_retrieve)",
         "Structured JSON results with relevance scoring"
       ],
       "respects": "File access control policy (asks before documents/, people/)"
@@ -312,24 +303,24 @@
   },
 
   "mcp_tools": {
-    "_note": "Provided by jarvis-core MCP server. 22 tools across 6 categories.",
+    "_note": "Provided by jarvis-core MCP server. 20 tools across 5 categories.",
 
     "unified_content_api": {
       "_note": "Single entry points for all content operations. Routes automatically by parameter.",
       "jarvis_store": {
-        "purpose": "Write any content — vault files, strategic memories, or Tier 2 ephemeral content",
-        "routing": "Provide ONE of: id (update existing), relative_path (new vault file), type (new memory/tier2)",
+        "purpose": "Write any content — vault files, strategic memories, or memory content (observations, patterns, etc.)",
+        "routing": "Provide ONE of: id (update existing), relative_path (new vault file), type (new memory/content)",
         "params": ["content", "id", "relative_path", "type", "name", "mode (write/append/edit)", "old_string", "new_string", "importance", "tags", "scope", "extra_metadata"],
-        "features": ["Auto-indexes .md files to ChromaDB", "Secret detection on writes", "Namespace-based ID routing"]
+        "features": ["Auto-indexes .md files to PostgreSQL pgvector", "Secret detection on writes", "Namespace-based ID routing"]
       },
       "jarvis_retrieve": {
         "purpose": "Read or search any content — semantic search, ID lookup, memory read, or listing",
-        "routing": "Provide ONE of: query (semantic search), id (read by ID), name (memory by name), list_type (tier2/memory)",
+        "routing": "Provide ONE of: query (semantic search), id (read by ID), name (memory by name), list_type (content/memory)",
         "params": ["query", "id", "name", "list_type", "n_results", "type_filter", "min_importance", "scope", "filter", "include_content", "sort_by"],
-        "features": ["Semantic search across all indexed content", "Auto-routes by ID prefix", "Increments retrieval_count for Tier 2", "include_content flag controls whether document text is returned in list results (default false for memory, true for tier2)"]
+        "features": ["Semantic search across all indexed content", "Auto-routes by ID prefix", "Increments retrieval_count for content", "include_content flag controls whether document text is returned in list results"]
       },
       "jarvis_remove": {
-        "purpose": "Delete content — Tier 2 by ID or strategic memory by name",
+        "purpose": "Delete content — by ID or strategic memory by name",
         "params": ["id", "name", "scope", "confirm"],
         "safety": ["confirm=true required for global memory deletion"]
       }
@@ -353,26 +344,18 @@
     },
 
     "memory_maintenance": {
-      "_note": "Index management and health monitoring for ChromaDB.",
+      "_note": "Index management and health monitoring for PostgreSQL pgvector.",
       "jarvis_index_vault": {
-        "purpose": "Bulk index all .md files in vault into ChromaDB",
+        "purpose": "Bulk index all .md files in vault into PostgreSQL pgvector",
         "params": ["force", "directory", "include_sensitive"]
       },
       "jarvis_index_file": {
-        "purpose": "Index a single vault file into ChromaDB (incremental)",
+        "purpose": "Index a single vault file into PostgreSQL pgvector (incremental)",
         "params": ["relative_path (required)"]
       },
       "jarvis_collection_stats": {
         "purpose": "Memory system health: document count, sample entries, index status",
         "params": ["sample_size", "detailed"]
-      }
-    },
-
-    "promotion": {
-      "jarvis_promote": {
-        "purpose": "Promote Tier 2 content to Tier 1 (file-backed) vault storage",
-        "params": ["doc_id (required)"],
-        "checks": ["importance threshold", "retrieval count threshold", "age + importance combo"]
       }
     },
 
@@ -465,20 +448,20 @@
   },
 
   "memory_system": {
-    "_note": "ChromaDB-backed semantic memory with two-tier architecture.",
+    "_note": "PostgreSQL pgvector-backed semantic memory with dual-schema architecture.",
 
     "architecture": {
-      "tier1_file_backed": {
-        "description": "Durable, git-tracked content visible in Obsidian",
-        "storage": "Vault .md files + strategic memory files at .jarvis/strategic/",
-        "namespace_prefixes": ["vault::", "memory::"],
-        "persistence": "Git-tracked, permanent"
+      "core_memories": {
+        "description": "All memory content — observations, patterns, decisions, summaries, worklogs, strategic memories",
+        "storage": "PostgreSQL core.memories table",
+        "namespace_prefixes": ["obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::", "worklog::", "memory::"],
+        "persistence": "Durable PostgreSQL storage"
       },
-      "tier2_chromadb_first": {
-        "description": "Ephemeral auto-generated content (observations, patterns, summaries)",
-        "storage": "ChromaDB only (at ~/.jarvis/db/)",
-        "namespace_prefixes": ["obs::", "pattern::", "summary::", "code::", "rel::", "hint::", "plan::", "learning::", "decision::"],
-        "persistence": "ChromaDB-only, disposable, promotable to Tier 1"
+      "vault_documents": {
+        "description": "Indexed vault file chunks for semantic search",
+        "storage": "PostgreSQL vault.documents table",
+        "namespace_prefixes": ["vault::"],
+        "persistence": "Durable PostgreSQL storage, git-tracked source files"
       }
     },
 
@@ -496,10 +479,9 @@
     },
 
     "features": {
-      "semantic_search": "Vector similarity search across all indexed content",
-      "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to ChromaDB",
+      "semantic_search": "Vector similarity search across all indexed content via pgvector",
+      "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to PostgreSQL pgvector",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
-      "promotion": "Tier 2 content meeting importance/retrieval thresholds can be promoted to vault files via jarvis_promote",
       "recency_boost": "Recent content (within configurable days) gets boosted in search ranking",
       "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to per-prompt search."
     }
@@ -510,7 +492,7 @@
 
     "auto_extract": {
       "hook_type": "Stop",
-      "description": "Passively observes conversation turns and extracts behavioral observations into Tier 2 memory",
+      "description": "Passively observes conversation turns and extracts behavioral observations into memory",
       "handler": "stop-extract.sh → extract_observation.py (background)",
       "modes": {
         "disabled": "No extraction, zero overhead",
@@ -522,31 +504,31 @@
       "extraction": {
         "model": "Haiku (fast, ~$0.001-0.01 per extraction)",
         "focus": "User preferences, architectural decisions, workflow patterns, project context, behavioral insights",
-        "output": "Tier 2 observation with importance score, tags, and project context metadata (project_dir, git_branch)",
+        "output": "Observation with importance score, tags, and project context metadata (project_dir, git_branch)",
         "worklog": "Single worklog entry per extraction capturing what the user was working on, categorized by workstream"
       },
       "dedup": {
-        "observations": "Global dedup via ChromaDB embedding relevance score. If the nearest existing observation has relevance >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
-        "worklogs": "Session-scoped dedup via tier2_list + Jaccard word-overlap. Only prevents double-logging within same session. Configurable at memory.worklog.dedup_threshold (default 0.7)."
+        "observations": "Global dedup via pgvector embedding relevance score. If the nearest existing observation has relevance >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
+        "worklogs": "Session-scoped dedup via content listing + Jaccard word-overlap. Only prevents double-logging within same session. Configurable at memory.worklog.dedup_threshold (default 0.7)."
       }
     },
 
     "pattern_detection": {
       "hook_type": "Background task (asyncio.gather with MCP server)",
-      "description": "Periodically scans Tier 2 observations for recurring themes and promotes clusters to durable pattern:: entries",
+      "description": "Periodically scans observations for recurring themes and creates pattern:: entries from clusters",
       "handler": "tools/patterns.py → pattern_detection_loop()",
       "pipeline": {
         "1_fetch": "Query recent observations within lookback window",
         "2_signature": "Extract token signatures from content/tags/title (stop words filtered)",
         "3_cluster": "Jaccard similarity clustering into in-memory candidates",
-        "4_promote": "Candidates exceeding frequency threshold promoted to pattern:: entries",
+        "4_create": "Candidates exceeding frequency threshold written as pattern:: entries",
         "5_dedup": "New patterns checked against existing patterns via Jaccard merge threshold"
       },
       "configuration": {
         "enabled": { "type": "boolean", "default": true, "description": "Master switch" },
         "scan_interval_seconds": { "type": "integer", "default": 300, "description": "Seconds between scans" },
         "similarity_threshold": { "type": "float", "default": 0.3, "description": "Jaccard threshold for merging observations into a candidate" },
-        "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations to promote a candidate" },
+        "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations to create a pattern from a candidate" },
         "max_candidates": { "type": "integer", "default": 200, "description": "Max in-memory candidates before LRU eviction" },
         "candidate_expiry_days": { "type": "integer", "default": 7, "description": "Days before inactive candidate expires" },
         "lookback_minutes": { "type": "integer", "default": 10, "description": "How far back each scan looks for new observations" },
@@ -562,11 +544,6 @@
     "directories": {
       "journal/jarvis/YYYY/MM/": "Jarvis-created journal entries (timestamped)",
       "journal/jarvis/YYYY/summaries/": "Weekly, monthly, quarterly, yearly summaries",
-      ".jarvis/memories/observations/": "Promoted observations from Tier 2",
-      ".jarvis/memories/patterns/": "Promoted patterns from Tier 2",
-      ".jarvis/memories/learnings/": "Promoted learnings from Tier 2",
-      ".jarvis/memories/decisions/": "Promoted decisions from Tier 2",
-      ".jarvis/memories/worklogs/": "Promoted worklogs from Tier 2",
       "journal/daily/": "User's daily notes",
       "notes/": "Main knowledge base (open access)",
       "work/": "Work-related content (open access)",
@@ -592,11 +569,7 @@
       "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
       "recency_boost_days": { "type": "integer", "default": 7, "description": "Days within which recency boost is applied" },
       "default_importance": { "type": "number", "default": 0.5, "description": "Default importance score (0.0-1.0) for new memories" },
-      "chroma_host": { "type": "string", "default": "localhost", "description": "ChromaDB server hostname" },
-      "chroma_port": { "type": "integer", "default": 8743, "description": "ChromaDB server port" },
-      "chroma_ssl": { "type": "boolean", "default": false, "description": "Use HTTPS for ChromaDB connection" },
-      "chroma_headers": { "type": "object", "default": {}, "description": "Auth headers for ChromaDB (e.g. Authorization, X-Chroma-Token)" },
-      "chroma_data_path": { "type": "string", "default": "~/.jarvis/db", "description": "ChromaDB server data directory" }
+      "postgres_url": { "type": "string", "default": "postgresql://jarvis:jarvis@localhost:5432/jarvis", "description": "PostgreSQL connection URL for pgvector storage" }
     },
 
     "memory_auto_extract": {
@@ -610,7 +583,7 @@
     "memory_per_prompt_search": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
       "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.4=aggressive, 0.5=balanced, 0.6=conservative)" },
-      "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (split 50/50 between tier2 full content and vault references)" },
+      "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (split 50/50 between core memories and vault references)" },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for per-prompt search" },
       "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" }
     },
@@ -638,7 +611,7 @@
 
     "memory_reranking": {
       "enabled": { "type": "boolean", "default": true, "description": "Enable cross-encoder reranking for query_vault() results. Uses ONNX model (~23MB, downloaded on first use)." },
-      "candidate_count": { "type": "integer", "default": 100, "description": "How many results to over-fetch from ChromaDB for reranking" },
+      "candidate_count": { "type": "integer", "default": 100, "description": "How many results to over-fetch from pgvector for reranking" },
       "top_k": { "type": "integer", "default": 10, "description": "Final result count after reranking" },
       "alpha": { "type": "float", "default": 0.7, "description": "Blend weight: 0.0=vector only, 1.0=reranker only, 0.7=recommended blend" },
       "max_latency_ms": { "type": "integer", "default": 1000, "description": "Latency budget — if exceeded, falls back to vector scores" },
@@ -659,19 +632,11 @@
       "enabled": { "type": "boolean", "default": true, "description": "Enable background pattern detection from observations" },
       "scan_interval_seconds": { "type": "integer", "default": 300, "description": "Seconds between detection scans" },
       "similarity_threshold": { "type": "float", "default": 0.3, "description": "Jaccard threshold for merging observations into a candidate" },
-      "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations before promoting candidate to pattern" },
+      "promotion_threshold": { "type": "integer", "default": 3, "description": "Min observations before creating a pattern from candidate" },
       "max_candidates": { "type": "integer", "default": 200, "description": "Max in-memory candidates before LRU eviction" },
       "candidate_expiry_days": { "type": "integer", "default": 7, "description": "Days before inactive candidate expires" },
       "lookback_minutes": { "type": "integer", "default": 10, "description": "How far back each scan looks for new observations" },
       "merge_threshold": { "type": "float", "default": 0.7, "description": "Jaccard threshold for dedup against existing patterns" }
-    },
-
-    "promotion": {
-      "importance_threshold": { "type": "float", "default": 0.85, "description": "Min importance score for auto-promote" },
-      "retrieval_count_threshold": { "type": "number", "default": 3, "description": "Min retrieval count for promotion (supports float comparison from fractional increments)" },
-      "age_importance_days": { "type": "integer", "default": 30, "description": "Days after which age+importance combo triggers" },
-      "age_importance_score": { "type": "float", "default": 0.7, "description": "Importance threshold for aged content" },
-      "on_promoted_file_deleted": { "type": "string", "default": "remove", "options": ["remove", "revert_to_chromadb"], "description": "What to do when a promoted vault file is deleted" }
     },
 
     "todoist_prompt_alerts": {
@@ -703,15 +668,9 @@
         "templates": "templates",
         "people": "people",
         "documents": "documents",
-        "strategic": ".jarvis/strategic",
-        "observations_promoted": ".jarvis/memories/observations",
-        "patterns_promoted": ".jarvis/memories/patterns",
-        "summaries_promoted": ".jarvis/memories/summaries",
-        "learnings_promoted": ".jarvis/memories/learnings",
-        "decisions_promoted": ".jarvis/memories/decisions"
+        "strategic": ".jarvis/strategic"
       },
       "absolute": {
-        "chroma_data_path": "~/.jarvis/db",
         "project_memories_path": "~/.jarvis/memories"
       },
       "template_variables": ["{YYYY}", "{MM}", "{WW}"],
@@ -736,10 +695,13 @@
         "todoist-routing-rules": "Custom task classification rules (YAML)"
       }
     },
-    "chromadb": {
-      "purpose": "Embedded vector database for semantic search and Tier 2 ephemeral storage",
-      "storage": "~/.jarvis/db/ (outside vault to avoid Obsidian Sync pollution)",
-      "features": ["Semantic similarity search", "Namespaced document IDs", "Metadata filtering", "Automatic indexing of vault .md files"]
+    "postgresql_pgvector": {
+      "purpose": "PostgreSQL with pgvector extension for semantic search and durable memory storage",
+      "schemas": {
+        "core.memories": "All memory content (observations, patterns, decisions, summaries, worklogs, strategic)",
+        "vault.documents": "Indexed vault file chunks for semantic search"
+      },
+      "features": ["Vector similarity search via pgvector halfvec", "Namespaced document IDs", "JSONB metadata filtering", "Automatic indexing of vault .md files"]
     },
     "todoist_api": {
       "purpose": "Todoist API access via official SDK for task management (local stdio, no session drops)",
@@ -783,8 +745,8 @@
       "steps": ["Say '/jarvis-recall [topic]'", "Review semantic matches with relevance scores", "Drill into relevant results"]
     },
     "memory_management": {
-      "description": "Review and promote auto-captured observations",
-      "steps": ["Say '/jarvis-promote' to browse Tier 2 content", "Preview items of interest", "Promote valuable observations to permanent vault files", "Check health with '/jarvis-memory-stats'"]
+      "description": "Review auto-captured observations and memory health",
+      "steps": ["Say '/jarvis-memory-stats' to check memory system health", "Use '/jarvis-recall' to search for specific content", "Review observations and patterns via jarvis_retrieve"]
     },
     "worklog_review": {
       "description": "Review what you worked on today or this week",
@@ -809,7 +771,7 @@
       },
       "volumes": {
         "/vault": "User's Obsidian/markdown vault",
-        "/config": "~/.jarvis/ (config.json + ChromaDB + state)"
+        "/config": "~/.jarvis/ (config.json + state)"
       },
       "env_vars": ["JARVIS_HOME", "JARVIS_VAULT_PATH", "TODOIST_API_TOKEN", "JARVIS_AUTOCRLF"],
       "management": "~/.jarvis/jarvis-docker.sh {start|stop|restart|logs|status|update}",
@@ -826,7 +788,7 @@
       "Keep strategic memories updated — they're Jarvis's long-term context at .jarvis/strategic/",
       "Use specific entry types (incident-log, learning, idea) for better categorization",
       "Use /jarvis-recall for semantic search — finds related content by meaning, not just keywords",
-      "Auto-extract passively captures observations from your conversations — review with /jarvis-promote",
+      "Auto-extract passively captures observations from your conversations — review with /jarvis-memory-stats",
       "Worklog entries auto-track what you work on — review with /jarvis-worklog to see your day's activity"
     ],
     "performance": [
@@ -843,7 +805,7 @@
       "JARVIS protocol commits don't use Co-Authored-By — they use protocol tags",
       "Sensitive dirs (documents/, people/) require explicit user permission per access",
       "Todoist uses jarvis-ingested label for idempotency — don't remove it manually",
-      "ChromaDB upsert merges metadata — to fully replace, delete then re-add",
+      "PostgreSQL upsert merges JSONB metadata — to fully replace, delete then re-add",
       "Observations get project context (dir, branch) automatically via the Stop hook"
     ]
   }

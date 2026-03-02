@@ -6,7 +6,7 @@ import pytest
 
 from tools.query import query_vault, semantic_context
 from tools.staleness import MTIME_TOLERANCE
-from tools.tier2 import tier2_write
+from tools.content import content_write
 
 
 class TestQueryVaultStaleness:
@@ -14,7 +14,7 @@ class TestQueryVaultStaleness:
 
     def _write_obs_with_mtimes(self, file_mtimes: dict, content: str = "Test observation"):
         """Helper: write an observation with file_mtimes metadata."""
-        return tier2_write(
+        return content_write(
             content=content,
             content_type="observation",
             importance_score=0.8,
@@ -61,7 +61,7 @@ class TestQueryVaultStaleness:
 
     def test_no_mtimes_metadata(self, mock_config):
         """Observations without file_mtimes metadata are unaffected."""
-        tier2_write(
+        content_write(
             content="Observation without file tracking",
             content_type="observation",
             importance_score=0.8,
@@ -106,7 +106,7 @@ class TestSemanticContextStaleness:
         f.write_text("v1 implementation")
         mtimes = {str(f): f.stat().st_mtime}
 
-        tier2_write(
+        content_write(
             content="Semantic context staleness test observation",
             content_type="observation",
             importance_score=0.9,
@@ -135,7 +135,7 @@ class TestSemanticContextStaleness:
 
         mtimes = {str(fresh): fresh.stat().st_mtime, str(stale): stale.stat().st_mtime}
 
-        tier2_write(
+        content_write(
             content="Multi-file staleness tracking test",
             content_type="observation",
             importance_score=0.9,

@@ -1,4 +1,4 @@
-"""Tests for commit.py git commit operations (obsidian — no ChromaDB reindexing)."""
+"""Tests for commit.py git commit operations (obsidian — no vault reindexing)."""
 
 import os
 

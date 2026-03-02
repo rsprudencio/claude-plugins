@@ -347,14 +347,14 @@ class TestPromotion:
             title="Recurring bug: config, error, handling, repeated",
         )
 
-        with patch("tools.patterns.tier2_list") as mock_list:
+        with patch("tools.patterns.content_list") as mock_list:
             mock_list.return_value = {"success": True, "documents": []}
-            with patch("tools.patterns.tier2_write") as mock_write:
+            with patch("tools.patterns.content_write") as mock_write:
                 mock_write.return_value = {"success": True, "id": "pattern::test"}
                 result = promote_candidate(candidate, merge_threshold=0.7)
 
         assert result["success"]
-        # Check tier2_write was called with expected args
+        # Check content_write was called with expected args
         call_kwargs = mock_write.call_args[1]
         assert call_kwargs["content_type"] == "pattern"
         assert call_kwargs["source"] == "pattern-detection"
@@ -385,15 +385,15 @@ class TestPromotion:
             },
         }
 
-        with patch("tools.patterns.tier2_list") as mock_list:
+        with patch("tools.patterns.content_list") as mock_list:
             mock_list.return_value = {"success": True, "documents": [existing_doc]}
-            with patch("tools.patterns.tier2_write") as mock_write:
+            with patch("tools.patterns.content_write") as mock_write:
                 result = promote_candidate(candidate, merge_threshold=0.7)
 
         assert result["success"]
         assert result["action"] == "merged"
         assert result["existing_id"] == "pattern::existing-bug"
-        # tier2_write should NOT have been called (dedup)
+        # content_write should NOT have been called (dedup)
         mock_write.assert_not_called()
 
     def test_no_promote_below_threshold(self, mock_config):
@@ -451,9 +451,9 @@ class TestPromotion:
 
         with patch("tools.patterns._fetch_recent_observations") as mock_fetch:
             mock_fetch.return_value = []
-            with patch("tools.patterns.tier2_list") as mock_list:
+            with patch("tools.patterns.content_list") as mock_list:
                 mock_list.return_value = {"success": True, "documents": []}
-                with patch("tools.patterns.tier2_write") as mock_write:
+                with patch("tools.patterns.content_write") as mock_write:
                     mock_write.return_value = {"success": True, "id": "pattern::test"}
                     result = scan_once(config)
 
@@ -541,9 +541,9 @@ class TestScanPipeline:
 
         with patch("tools.patterns._fetch_recent_observations") as mock_fetch:
             mock_fetch.return_value = observations
-            with patch("tools.patterns.tier2_list") as mock_list:
+            with patch("tools.patterns.content_list") as mock_list:
                 mock_list.return_value = {"success": True, "documents": []}
-                with patch("tools.patterns.tier2_write") as mock_write:
+                with patch("tools.patterns.content_write") as mock_write:
                     mock_write.return_value = {"success": True, "id": "pattern::test"}
                     result = scan_once(config)
 
@@ -556,7 +556,7 @@ class TestScanPipeline:
         recent = (now - timedelta(minutes=5)).isoformat()
         old = (now - timedelta(minutes=30)).isoformat()
 
-        with patch("tools.patterns.tier2_list") as mock_list:
+        with patch("tools.patterns.content_list") as mock_list:
             mock_list.return_value = {
                 "success": True,
                 "documents": [

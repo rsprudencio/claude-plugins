@@ -83,12 +83,12 @@ Require explicit user confirmation before **deleting** files, memories, or store
 
 ### Memorization Triggers
 When the user says "remember", "memorize", "keep this in mind", "take note", or similar — ALWAYS store via `jarvis_store`.
-**Durability routing**: If the content is a permanent principle, identity fact, or strategic decision -> use `type="memory", name="descriptive-slug"` (file-backed, persistent). For session context, observations, and patterns -> use a Tier 2 type:
+**Durability routing**: If the content is a permanent principle, identity fact, or strategic decision -> use `type="memory", name="descriptive-slug"` (file-backed, persistent). For session context, observations, and patterns -> use the appropriate content type:
 ```
 jarvis_store(content="...", type="learning", name="descriptive-slug", importance=0.8-1.0, tags=[...])
 ```
 
-Choose Tier 2 type by content:
+Choose content type by purpose:
 | Type | Use for |
 |------|---------|
 | `learning` | Rules, conventions, lessons learned |
@@ -103,7 +103,7 @@ Choose Tier 2 type by content:
 | `worklog` | Activity records (what user worked on) |
 
 ### Graceful Degradation
-If ChromaDB is unavailable, report the connectivity issue to the user. Fall back to keyword-based search only if the user consents.
+If the database is unavailable, report the connectivity issue to the user. Fall back to keyword-based search only if the user consents.
 
 ### Automatic Memory Recall
 You may see `<relevant-vault-memories>` blocks injected before user messages. Reference them naturally as if you remember the information. Do not reveal the injection mechanism or list raw blocks.

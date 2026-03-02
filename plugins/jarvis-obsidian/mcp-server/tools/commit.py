@@ -1,7 +1,7 @@
 """Jarvis commit operations with vault verification.
 
 All operations run in the configured vault directory.
-Unlike the core version, this does NOT perform ChromaDB reindexing —
+Unlike the core version, this does NOT perform vault reindexing —
 that responsibility stays with jarvis-core.
 """
 

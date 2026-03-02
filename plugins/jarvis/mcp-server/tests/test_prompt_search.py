@@ -24,12 +24,30 @@ from prompt_search import _should_skip_prompt, _extract_prompt, _format_memories
 
 
 def _seed_docs(db, ids, documents, metadatas):
-    """Seed documents into InMemoryDB with mock embeddings."""
+    """Seed documents into InMemoryDB with mock embeddings.
+
+    Routes vault:: IDs to vault_rows, others to core_rows.
+    """
     from tools.embedding import get_embedding_service
 
     emb = get_embedding_service()
     for doc_id, doc, meta in zip(ids, documents, metadatas):
-        db.upsert(doc_id, doc, emb.encode(doc), meta)
+        if doc_id.startswith("vault::"):
+            m = dict(meta)
+            db.upsert_vault(
+                doc_id, doc, emb.encode(doc),
+                parent_file=m.pop("parent_file", doc_id.replace("vault::", "")),
+                directory=m.pop("directory", ""),
+                vault_type=m.pop("vault_type", "document"),
+                title=m.pop("title", ""),
+                chunk_index=m.pop("chunk_index", 0),
+                chunk_total=m.pop("chunk_total", 1),
+                chunk_heading=m.pop("chunk_heading", ""),
+                importance_score=m.pop("importance_score", 0.5),
+                metadata=m,
+            )
+        else:
+            db.upsert(doc_id, doc, emb.encode(doc), meta)
 
 
 # --- Prompt Filtering Tests ---
@@ -315,7 +333,7 @@ class TestSemanticContext:
     """Tests for semantic_context() query function."""
 
     def test_empty_collection(self, mock_config):
-        """Returns empty matches for empty ChromaDB collection."""
+        """Returns empty matches for empty database."""
         from tools.query import semantic_context
 
         result = semantic_context("What are my goals?")
@@ -343,18 +361,16 @@ class TestSemanticContext:
             ],
             metadatas=[
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "notes",
                     "title": "Goals",
-                    "importance": "high",
+                    "importance_score": 0.8,
                 },
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "notes",
                     "title": "Recipes",
-                    "importance": "low",
+                    "importance_score": 0.3,
                 },
             ],
         )
@@ -373,12 +389,11 @@ class TestSemanticContext:
         docs = [f"Document about career goals topic {i}" for i in range(10)]
         metas = [
             {
-                "type": "vault",
                 "vault_type": "note",
-                "namespace": "vault::",
+                
                 "directory": "notes",
                 "title": f"Doc {i}",
-                "importance": "medium",
+                "importance_score": 0.5,
             }
             for i in range(10)
         ]
@@ -408,25 +423,22 @@ class TestSemanticContext:
             ],
             metadatas=[
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "notes",
                     "title": "Safe",
-                    "importance": "medium",
+                    "importance_score": 0.5,
                 },
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "documents",
                     "title": "Sensitive",
-                    "importance": "high",
+                    "importance_score": 0.8,
                 },
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "people",
                     "title": "Contact",
-                    "importance": "high",
+                    "importance_score": 0.8,
                 },
             ],
         )
@@ -449,12 +461,11 @@ class TestSemanticContext:
             documents=[long_content],
             metadatas=[
                 {
-                    "type": "vault",
                     "vault_type": "note",
-                    "namespace": "vault::",
+                    
                     "directory": "notes",
                     "title": "Long",
-                    "importance": "high",
+                    "importance_score": 0.8,
                 },
             ],
         )
@@ -466,8 +477,8 @@ class TestSemanticContext:
             # Reference content is just the path, not the full document
             assert len(match["content"]) < 200
 
-    def test_tier2_shown_in_full(self, mock_config):
-        """Tier 2 items use full display mode with complete content."""
+    def test_core_shown_in_full(self, mock_config):
+        """Core memory items use full display mode with complete content."""
         from tools.query import semantic_context
 
         obs_content = (
@@ -478,7 +489,7 @@ class TestSemanticContext:
             ids=["obs::1234567890"],
             documents=[obs_content],
             metadatas=[
-                {"type": "observation", "namespace": "obs::", "importance": "high"},
+                {"category": "observation", "importance_score": 0.8},
             ],
         )
 
@@ -504,20 +515,18 @@ class TestSemanticContext:
             ],
             metadatas=[
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "notes",
                     "title": "Goals",
-                    "importance": "high",
+                    "importance_score": 0.8,
                     "parent_file": "notes/goals.md",
                     "chunk_heading": "Career",
                 },
                 {
-                    "type": "vault",
                     "vault_type": "note",
                     "directory": "notes",
                     "title": "Goals",
-                    "importance": "medium",
+                    "importance_score": 0.5,
                     "parent_file": "notes/goals.md",
                     "chunk_heading": "Hobbies",
                 },
@@ -529,8 +538,8 @@ class TestSemanticContext:
         sources = [m["source"] for m in result["matches"]]
         assert sources.count("notes/goals.md") <= 1
 
-    def test_budget_split_mixed_tiers(self, mock_config):
-        """Budget splits 50/50 between tier2 (full) and vault (reference) content."""
+    def test_budget_split_mixed_schemas(self, mock_config):
+        """Budget splits 50/50 between core (full) and vault (reference) content."""
         from tools.query import semantic_context
 
         # Add 5 vault files (~120 chars each as references = 600 chars)
@@ -540,18 +549,16 @@ class TestSemanticContext:
         ]
         vault_metas = [
             {
-                "type": "vault",
                 "vault_type": "note",
-                "namespace": "vault::",
                 "directory": "notes",
                 "title": f"Goal {i}",
-                "importance": "high",
+                "importance_score": 0.8,
                 "parent_file": f"notes/goal{i}.md",
             }
             for i in range(5)
         ]
 
-        # Add 3 tier2 observations (~300 chars each = 900 chars)
+        # Add 3 core observations (~300 chars each = 900 chars)
         obs_ids = [f"obs::{1770000000000 + i}" for i in range(3)]
         obs_docs = [
             f"User career preference observation number {i}: "
@@ -559,7 +566,7 @@ class TestSemanticContext:
             for i in range(3)
         ]
         obs_metas = [
-            {"type": "observation", "namespace": "obs::", "importance": "high"}
+            {"category": "observation", "importance_score": 0.8}
             for _ in range(3)
         ]
 
@@ -572,40 +579,39 @@ class TestSemanticContext:
 
         # Budget=2000: half=1000 per side
         # Vault side: 1000/120 ≈ 8 refs (enough for all 5)
-        # Tier2 side: 1000/~300 ≈ 3 obs (enough for all 3)
+        # Core side: 1000/~300 ≈ 3 obs (enough for all 3)
         result = semantic_context("career goals leadership", budget=2000, threshold=0.0)
         matches = result["matches"]
 
         vault_matches = [m for m in matches if m.get("display_mode") == "reference"]
-        tier2_matches = [m for m in matches if m.get("display_mode") == "full"]
+        core_matches = [m for m in matches if m.get("display_mode") == "full"]
 
-        # Both tiers should be represented
+        # Both schemas should be represented
         assert len(vault_matches) > 0, "Expected vault references in results"
-        assert len(tier2_matches) > 0, "Expected tier2 full content in results"
+        assert len(core_matches) > 0, "Expected core full content in results"
 
         # Budget tracking should report usage for both halves
         budget_used = result.get("budget_used", {})
-        assert budget_used.get("tier2", 0) > 0, "Expected tier2 budget usage"
+        assert budget_used.get("core", 0) > 0, "Expected core budget usage"
         assert budget_used.get("vault", 0) > 0, "Expected vault budget usage"
-        assert budget_used["tier2"] + budget_used["vault"] <= 2000
+        assert budget_used["core"] + budget_used["vault"] <= 2000
 
     def test_budget_overflow_from_empty_half(self, mock_config):
         """Unused budget from one half overflows to the other."""
         from tools.query import semantic_context
 
-        # Add ONLY vault files (no tier2) — all budget should be available for vault
+        # Add ONLY vault files (no core) — all budget should be available for vault
         vault_ids = [f"vault::notes/item{i}.md" for i in range(50)]
         vault_docs = [
             f"Important career topic and leadership content {i}" for i in range(50)
         ]
         vault_metas = [
             {
-                "type": "vault",
                 "vault_type": "note",
-                "namespace": "vault::",
+                
                 "directory": "notes",
                 "title": f"Item {i}",
-                "importance": "high",
+                "importance_score": 0.8,
                 "parent_file": f"notes/item{i}.md",
             }
             for i in range(50)
@@ -620,7 +626,7 @@ class TestSemanticContext:
             m for m in result["matches"] if m.get("display_mode") == "reference"
         ]
 
-        # Should get more than 5 (the non-overflow limit) because tier2 half is unused
+        # Should get more than 5 (the non-overflow limit) because core half is unused
         assert (
             len(vault_matches) > 5
         ), f"Expected >5 vault refs with overflow, got {len(vault_matches)}"

@@ -546,13 +546,9 @@ class TestRerankingConfig:
 class TestQueryVaultReranking:
     """Tests for reranking integration in query_vault."""
 
-    def _reset_chromadb(self, mock_config):
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_rerank_db")}
-        )
+    def _reset_db(self, mock_config):
+        """Reset database state for reranking tests."""
+        pass  # InMemoryDB auto-resets via mock_config fixture
 
     def _index_test_files(self, mock_config):
         from tools.memory import index_vault
@@ -576,7 +572,7 @@ class TestQueryVaultReranking:
 
     def test_reranking_metadata_present(self, mock_config):
         """When reranking succeeds, response includes reranking metadata."""
-        self._reset_chromadb(mock_config)
+        self._reset_db(mock_config)
         self._index_test_files(mock_config)
 
         from tools.query import query_vault
@@ -597,19 +593,13 @@ class TestQueryVaultReranking:
             assert "alpha" in result["reranking"]
             assert "candidates" in result["reranking"]
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_reranking_disabled_no_metadata(self, mock_config):
         """When reranking is disabled, no reranking metadata in response."""
-        self._reset_chromadb(mock_config)
+        self._reset_db(mock_config)
         self._index_test_files(mock_config)
         mock_config.set(
-            memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_db"),
-                "reranking": {"enabled": False},
-            }
+            memory={"reranking": {"enabled": False}}
         )
 
         from tools.query import query_vault
@@ -618,13 +608,10 @@ class TestQueryVaultReranking:
         assert result["success"] is True
         assert "reranking" not in result
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_reranking_fallback_no_metadata(self, mock_config):
         """When reranking fails gracefully, no metadata in response."""
-        self._reset_chromadb(mock_config)
+        self._reset_db(mock_config)
         self._index_test_files(mock_config)
 
         from tools.query import query_vault
@@ -634,19 +621,13 @@ class TestQueryVaultReranking:
             assert result["success"] is True
             assert "reranking" not in result
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_fetch_count_increased_with_reranking(self, mock_config):
         """When reranking enabled, fetch_count should use candidate_count."""
-        self._reset_chromadb(mock_config)
+        self._reset_db(mock_config)
         self._index_test_files(mock_config)
         mock_config.set(
-            memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_fetch_db"),
-                "reranking": {"enabled": True, "candidate_count": 50},
-            }
+            memory={"reranking": {"enabled": True, "candidate_count": 50}}
         )
 
         from tools.query import query_vault
@@ -656,19 +637,13 @@ class TestQueryVaultReranking:
             result = query_vault("test", n_results=5)
             assert result["success"] is True
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_reranking_uses_top_k(self, mock_config):
         """When reranking succeeds, result count uses top_k from config."""
-        self._reset_chromadb(mock_config)
+        self._reset_db(mock_config)
         self._index_test_files(mock_config)
         mock_config.set(
-            memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_rerank_topk_db"),
-                "reranking": {"enabled": True, "top_k": 2},
-            }
+            memory={"reranking": {"enabled": True, "top_k": 2}}
         )
 
         from tools.query import query_vault
@@ -687,6 +662,3 @@ class TestQueryVaultReranking:
             # Should be capped by top_k=2
             assert len(result["results"]) <= 2
 
-        import tools.memory as mem
-
-        mem._chroma_client = None

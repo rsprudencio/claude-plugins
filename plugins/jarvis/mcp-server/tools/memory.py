@@ -4,8 +4,9 @@ Provides bulk and incremental indexing of vault .md files into PostgreSQL
 with pgvector. Embeddings are generated explicitly via EmbeddingService
 (granite-embedding-small-english-r2, 384d, ONNX backend).
 
-All documents are stored in the unified 'jarvis' table with namespaced
-IDs (vault:: prefix) and JSONB metadata.
+All documents are stored in the vault.documents table with proper columns
+for vault-specific fields (parent_file, directory, vault_type, etc.).
+Remaining flexible metadata goes into a JSONB column.
 """
 
 import gc
@@ -22,7 +23,7 @@ from .config import get_verified_vault_path, get_chunking_config, get_scoring_co
 from .chunking import chunk_document
 from .scoring import compute_importance
 from .secret_scan import scan_for_secrets
-from .namespaces import vault_id, NAMESPACE_VAULT, ContentType
+from .namespaces import vault_id
 from .paths import get_path, get_relative_path, is_sensitive_path, SENSITIVE_PATHS
 from .format_support import (
     detect_format,
@@ -31,7 +32,7 @@ from .format_support import (
     extract_title,
     INDEXABLE_EXTENSIONS,
 )
-from .schema import execute_query, execute_write, metadata_to_jsonb
+from .schema import execute_query, metadata_to_jsonb
 
 logger = logging.getLogger("jarvis-core")
 
@@ -39,6 +40,12 @@ _BATCH_SIZE = 10
 
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
+
+# Fields that are proper columns in vault.documents (not JSONB)
+_VAULT_COLUMNS = frozenset({
+    "parent_file", "directory", "vault_type", "title",
+    "chunk_index", "chunk_total", "chunk_heading", "importance_score",
+})
 
 
 def _sanitize_timestamp(value, default: str) -> str:
@@ -81,27 +88,29 @@ def _extract_title_for_file(content: str, filename: str) -> str:
 
 
 def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
-    """Build metadata dict with universal + vault-specific fields.
+    """Build metadata dict for a vault document.
 
-    Universal fields: type, namespace, created_at, updated_at, source
-    Vault-specific: directory, vault_type, title, tags, importance, has_frontmatter
+    Returns a flat dict where keys matching _VAULT_COLUMNS will be extracted
+    to proper SQL columns by _upsert_batch(). Remaining keys go to JSONB.
+
+    Column fields: parent_file, directory, vault_type, title,
+                   chunk_index, chunk_total, chunk_heading, importance_score
+    JSONB fields: tags, sentiment, has_frontmatter, user, etc.
     """
     directory = relative_path.split("/")[0] if "/" in relative_path else ""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Universal fields
     meta = {
-        "type": ContentType.VAULT,
-        "namespace": NAMESPACE_VAULT,
-        "tier": "file",
+        # Column fields (extracted by _upsert_batch)
+        "directory": directory,
+        "chunk_index": 0,
+        "chunk_total": 1,
+        "chunk_heading": "",
+        # JSONB fields
         "source": "vault-index",
         "created_at": _sanitize_timestamp(frontmatter.get("created"), now_iso),
         "updated_at": _sanitize_timestamp(frontmatter.get("modified"), now_iso),
-        # Vault-specific
-        "directory": directory,
         "has_frontmatter": "true" if frontmatter else "false",
-        "chunk_index": 0,
-        "chunk_total": 1,
     }
 
     # Vault type: from frontmatter 'type' or inferred from directory
@@ -117,13 +126,13 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
         vault_type = type_map.get(directory, directory or "document")
     meta["vault_type"] = vault_type
 
-    # Optional fields from frontmatter
+    # Optional fields from frontmatter (→ JSONB)
     for key in ("tags", "sentiment"):
         if key in frontmatter:
             meta[key] = str(frontmatter[key])
+
+    # Importance score (→ column)
     if "importance" in frontmatter:
-        meta["importance"] = str(frontmatter["importance"])
-        # Also populate importance_score (normalize categorical for old files)
         _CATEGORICAL_MAP = {
             "critical": 0.95,
             "high": 0.8,
@@ -132,17 +141,16 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
         }
         raw = frontmatter["importance"]
         if isinstance(raw, str) and raw.lower() in _CATEGORICAL_MAP:
-            meta["importance_score"] = str(_CATEGORICAL_MAP[raw.lower()])
+            meta["importance_score"] = _CATEGORICAL_MAP[raw.lower()]
         else:
             try:
-                meta["importance_score"] = str(max(0.0, min(1.0, float(raw))))
+                meta["importance_score"] = max(0.0, min(1.0, float(raw)))
             except (ValueError, TypeError):
-                meta["importance_score"] = "0.5"
+                meta["importance_score"] = 0.5
     else:
-        meta["importance"] = "0.5"
-        meta["importance_score"] = "0.5"
+        meta["importance_score"] = 0.5
 
-    # Multi-user attribution
+    # Multi-user attribution (→ JSONB)
     from jarvis_common.auth import get_current_user
 
     user = get_current_user()
@@ -153,13 +161,22 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
 
 
 def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
-    """Check if a file should be skipped during indexing."""
+    """Check if a file should be skipped during indexing.
+
+    DAR F17: Excludes .jarvis/strategic/ directory to prevent duplicate
+    retrieval with memory_crud dual-write entries.
+    """
     parts = Path(relative_path).parts
     if not parts:
         return True
     top_dir = parts[0]
     if top_dir in _SKIP_DIRS:
         return True
+
+    # DAR F17: Skip strategic memory directory (indexed via memory_crud)
+    if top_dir == ".jarvis" and len(parts) > 1 and parts[1] == "strategic":
+        return True
+
     if not include_sensitive:
         # Check against configurable sensitive path names
         sensitive_dirs = {get_relative_path(name) for name in SENSITIVE_PATHS}
@@ -171,8 +188,8 @@ def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
 def _delete_existing_chunks(relative_path: str) -> int:
     """Delete all existing chunks for a file before re-indexing.
 
-    Handles both chunked docs (parent_file metadata) and legacy
-    single-doc format (vault::{path} ID).
+    Deletes from vault.documents using the parent_file column
+    and legacy single-doc vault::path IDs.
 
     Returns number of deleted documents.
     """
@@ -183,16 +200,16 @@ def _delete_existing_chunks(relative_path: str) -> int:
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            # Delete chunks by parent_file metadata
+            # Delete chunks by parent_file column
             cur.execute(
-                "DELETE FROM jarvis WHERE metadata->>'parent_file' = %s",
+                "DELETE FROM vault.documents WHERE parent_file = %s",
                 (relative_path,),
             )
             deleted += cur.rowcount
 
             # Also delete legacy single-doc ID if it exists
             legacy_id = vault_id(relative_path)
-            cur.execute("DELETE FROM jarvis WHERE id = %s", (legacy_id,))
+            cur.execute("DELETE FROM vault.documents WHERE id = %s", (legacy_id,))
             deleted += cur.rowcount
 
             conn.commit()
@@ -263,8 +280,24 @@ def _index_single_file(
     return ids, docs, metas, chunk_result.total
 
 
+def _split_columns_metadata(meta: dict) -> tuple:
+    """Split a flat metadata dict into (columns_dict, jsonb_dict).
+
+    Column fields go into vault.documents columns directly.
+    Everything else goes into the JSONB metadata column.
+    """
+    columns = {}
+    jsonb = {}
+    for key, value in meta.items():
+        if key in _VAULT_COLUMNS:
+            columns[key] = value
+        else:
+            jsonb[key] = value
+    return columns, jsonb
+
+
 def _upsert_batch(ids: list, docs: list, metas: list) -> None:
-    """Embed and upsert a batch of documents into PostgreSQL."""
+    """Embed and upsert a batch of documents into vault.documents."""
     if not ids:
         return
 
@@ -278,21 +311,46 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             for doc_id, doc, meta, emb in zip(ids, docs, metas, embeddings):
+                columns, jsonb = _split_columns_metadata(meta)
                 cur.execute(
-                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
-                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
+                    """INSERT INTO vault.documents
+                       (id, document, embedding,
+                        parent_file, directory, vault_type, title,
+                        chunk_index, chunk_total, chunk_heading,
+                        importance_score, metadata,
+                        created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec,
+                               %s, %s, %s, %s,
+                               %s, %s, %s,
+                               %s, %s::jsonb,
                                COALESCE(%s::timestamptz, now()),
                                COALESCE(%s::timestamptz, now()))
                        ON CONFLICT (id) DO UPDATE SET
                            document = EXCLUDED.document,
                            embedding = EXCLUDED.embedding,
+                           parent_file = EXCLUDED.parent_file,
+                           directory = EXCLUDED.directory,
+                           vault_type = EXCLUDED.vault_type,
+                           title = EXCLUDED.title,
+                           chunk_index = EXCLUDED.chunk_index,
+                           chunk_total = EXCLUDED.chunk_total,
+                           chunk_heading = EXCLUDED.chunk_heading,
+                           importance_score = EXCLUDED.importance_score,
                            metadata = EXCLUDED.metadata,
                            updated_at = EXCLUDED.updated_at""",
                     (
                         doc_id,
                         doc,
                         emb,
-                        metadata_to_jsonb(meta),
+                        columns.get("parent_file", ""),
+                        columns.get("directory", ""),
+                        columns.get("vault_type", "document"),
+                        columns.get("title", ""),
+                        columns.get("chunk_index", 0),
+                        columns.get("chunk_total", 1),
+                        columns.get("chunk_heading", ""),
+                        columns.get("importance_score", 0.5),
+                        metadata_to_jsonb(jsonb),
                         meta.get("created_at"),
                         meta.get("updated_at"),
                     ),
@@ -337,7 +395,7 @@ def index_vault(
     if not force:
         try:
             rows = execute_query(
-                "SELECT id, metadata->>'parent_file' AS parent_file FROM jarvis"
+                "SELECT id, parent_file FROM vault.documents"
             )
             for row in rows:
                 parent = row.get("parent_file")
@@ -453,8 +511,10 @@ def index_vault(
         logger.error("Final batch upsert failed: %s", e)
         errors.append({"file": "final_batch", "error": str(e)})
 
-    # Get total count
-    count_result = execute_query("SELECT count(*) AS cnt FROM jarvis", fetch="one")
+    # Get total count from vault.documents
+    count_result = execute_query(
+        "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+    )
     total = count_result["cnt"] if count_result else 0
 
     duration = round(time.time() - start, 2)

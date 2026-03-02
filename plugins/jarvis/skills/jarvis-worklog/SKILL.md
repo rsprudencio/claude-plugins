@@ -22,7 +22,7 @@ Determine time range from input:
 Use `jarvis_retrieve` to list worklog entries:
 
 ```
-jarvis_retrieve(list_type="tier2", type_filter="worklog")
+jarvis_retrieve(list_type="content", type_filter="worklog")
 ```
 
 Filter results by `created_at` metadata within the requested date range.

@@ -27,7 +27,12 @@ from tools.namespaces import (
     NAMESPACE_DECISION,
     NAMESPACE_WORKLOG,
     ALL_TYPES,
+    CONTENT_TYPES,
     TIER2_TYPES,
+    VALID_CATEGORIES,
+    SCHEMA_CORE,
+    SCHEMA_VAULT,
+    schema_for_id,
 )
 
 
@@ -356,34 +361,18 @@ class TestConstants:
         assert "learning" in ALL_TYPES
         assert "decision" in ALL_TYPES
 
-    def test_tier2_types(self):
-        assert len(TIER2_TYPES) == 10
-        assert "vault" not in TIER2_TYPES
-        assert "memory" not in TIER2_TYPES
-        assert "observation" in TIER2_TYPES
-        assert "learning" in TIER2_TYPES
-        assert "decision" in TIER2_TYPES
+    def test_content_types_excludes_vault(self):
+        """CONTENT_TYPES = all types except vault."""
+        assert len(CONTENT_TYPES) == 11
+        assert "vault" not in CONTENT_TYPES
+        assert "memory" in CONTENT_TYPES
+        assert "observation" in CONTENT_TYPES
+        assert "learning" in CONTENT_TYPES
+        assert "decision" in CONTENT_TYPES
 
-
-class TestTierConstants:
-    """Tests for tier-related constants."""
-
-    def test_tier_constants(self):
-        from tools.namespaces import TIER_FILE, TIER_CHROMADB
-
-        assert TIER_FILE == "file"
-        assert TIER_CHROMADB == "chromadb"
-
-    def test_tier_prefixes(self):
-        from tools.namespaces import TIER_1_PREFIXES, TIER_2_PREFIXES
-
-        assert "vault::" in TIER_1_PREFIXES
-        assert "memory::" in TIER_1_PREFIXES
-        assert "obs::" in TIER_2_PREFIXES
-        assert "pattern::" in TIER_2_PREFIXES
-        assert "summary::" in TIER_2_PREFIXES
-        assert "learning::" in TIER_2_PREFIXES
-        assert "decision::" in TIER_2_PREFIXES
+    def test_tier2_types_is_alias_for_content_types(self):
+        """TIER2_TYPES is a backward compatibility alias."""
+        assert TIER2_TYPES is CONTENT_TYPES
 
 
 class TestNewNamespaceConstants:
@@ -412,50 +401,78 @@ class TestNewNamespaceConstants:
         assert "decision" in ALL_TYPES
 
 
-class TestGetTier:
-    """Tests for get_tier function."""
+class TestSchemaConstants:
+    """Tests for schema routing constants and function."""
 
-    def test_tier1_vault(self):
-        from tools.namespaces import get_tier, TIER_FILE
+    def test_schema_constants(self):
+        assert SCHEMA_CORE == "core"
+        assert SCHEMA_VAULT == "vault"
 
-        assert get_tier("vault::notes/test.md") == TIER_FILE
+    def test_schema_for_vault_id(self):
+        assert schema_for_id("vault::notes/test.md") == SCHEMA_VAULT
 
-    def test_tier1_memory(self):
-        from tools.namespaces import get_tier, TIER_FILE
+    def test_schema_for_observation_id(self):
+        assert schema_for_id("obs::12345") == SCHEMA_CORE
 
-        assert get_tier("memory::global::test") == TIER_FILE
+    def test_schema_for_pattern_id(self):
+        assert schema_for_id("pattern::test-pattern") == SCHEMA_CORE
 
-    def test_tier2_observation(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
+    def test_schema_for_memory_id(self):
+        assert schema_for_id("memory::global::test") == SCHEMA_CORE
 
-        assert get_tier("obs::12345") == TIER_CHROMADB
+    def test_schema_for_content_ids(self):
+        assert schema_for_id("rel::a::b") == SCHEMA_CORE
+        assert schema_for_id("hint::topic::0") == SCHEMA_CORE
+        assert schema_for_id("plan::test-plan") == SCHEMA_CORE
+        assert schema_for_id("learning::1738857000000") == SCHEMA_CORE
+        assert schema_for_id("decision::use-python") == SCHEMA_CORE
+        assert schema_for_id("worklog::1738857000000") == SCHEMA_CORE
 
-    def test_tier2_pattern(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
+    def test_bare_path_defaults_to_core(self):
+        """Bare paths (no prefix) default to SCHEMA_CORE."""
+        assert schema_for_id("notes/test.md") == SCHEMA_CORE
 
-        assert get_tier("pattern::test-pattern") == TIER_CHROMADB
 
-    def test_tier2_new_namespaces(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
+class TestParsedIdSchema:
+    """Tests for schema field in ParsedId."""
 
-        assert get_tier("rel::a::b") == TIER_CHROMADB
-        assert get_tier("hint::topic::0") == TIER_CHROMADB
-        assert get_tier("plan::test-plan") == TIER_CHROMADB
+    def test_vault_id_has_schema_vault(self):
+        parsed = parse_id("vault::notes/test.md")
+        assert parsed.schema == SCHEMA_VAULT
 
-    def test_tier2_learning(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
+    def test_observation_id_has_schema_core(self):
+        parsed = parse_id("obs::12345")
+        assert parsed.schema == SCHEMA_CORE
 
-        assert get_tier("learning::1738857000000") == TIER_CHROMADB
+    def test_memory_id_has_schema_core(self):
+        parsed = parse_id("memory::global::test")
+        assert parsed.schema == SCHEMA_CORE
 
-    def test_tier2_decision(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
+    def test_bare_path_has_schema_vault(self):
+        parsed = parse_id("notes/test.md")
+        assert parsed.schema == SCHEMA_VAULT
 
-        assert get_tier("decision::use-python") == TIER_CHROMADB
 
-    def test_bare_path_defaults_to_tier1(self):
-        from tools.namespaces import get_tier, TIER_FILE
+class TestValidCategories:
+    """Tests for VALID_CATEGORIES tuple."""
 
-        assert get_tier("notes/test.md") == TIER_FILE
+    def test_valid_categories_contents(self):
+        assert "observation" in VALID_CATEGORIES
+        assert "pattern" in VALID_CATEGORIES
+        assert "learning" in VALID_CATEGORIES
+        assert "decision" in VALID_CATEGORIES
+        assert "summary" in VALID_CATEGORIES
+        assert "code" in VALID_CATEGORIES
+        assert "relationship" in VALID_CATEGORIES
+        assert "hint" in VALID_CATEGORIES
+        assert "plan" in VALID_CATEGORIES
+        assert "worklog" in VALID_CATEGORIES
+        assert "memory" in VALID_CATEGORIES
+        assert len(VALID_CATEGORIES) == 11
+
+    def test_vault_not_in_valid_categories(self):
+        """Vault is not a valid category for core.memories."""
+        assert "vault" not in VALID_CATEGORIES
 
 
 class TestNewIdGenerators:
@@ -498,50 +515,22 @@ class TestNewIdGenerators:
         assert plan_id("Phase 1 Implementation") == "plan::phase-1-implementation"
 
 
-class TestParsedIdTier:
-    """Tests for tier field in ParsedId."""
-
-    def test_vault_id_has_tier_file(self):
-        from tools.namespaces import parse_id, TIER_FILE
-
-        parsed = parse_id("vault::notes/test.md")
-        assert parsed.tier == TIER_FILE
-
-    def test_observation_id_has_tier_chromadb(self):
-        from tools.namespaces import parse_id, TIER_CHROMADB
-
-        parsed = parse_id("obs::12345")
-        assert parsed.tier == TIER_CHROMADB
-
-    def test_bare_path_has_tier_file(self):
-        from tools.namespaces import parse_id, TIER_FILE
-
-        parsed = parse_id("notes/test.md")
-        assert parsed.tier == TIER_FILE
-
-
 class TestParseIdNewNamespaces:
     """Tests for parsing new namespace IDs."""
 
     def test_parse_relationship_id(self):
-        from tools.namespaces import parse_id
-
         parsed = parse_id("rel::alice::bob")
         assert parsed.namespace == "rel"
         assert parsed.full_prefix == "rel::"
         assert parsed.content_id == "alice::bob"
 
     def test_parse_hint_id(self):
-        from tools.namespaces import parse_id
-
         parsed = parse_id("hint::git-workflow::0")
         assert parsed.namespace == "hint"
         assert parsed.full_prefix == "hint::"
         assert parsed.content_id == "git-workflow::0"
 
     def test_parse_plan_id(self):
-        from tools.namespaces import parse_id
-
         parsed = parse_id("plan::phase-1")
         assert parsed.namespace == "plan"
         assert parsed.full_prefix == "plan::"
@@ -587,15 +576,8 @@ class TestWorklogId:
     def test_worklog_in_all_types(self):
         assert "worklog" in ALL_TYPES
 
-    def test_worklog_in_tier2_types(self):
-        assert "worklog" in TIER2_TYPES
+    def test_worklog_in_content_types(self):
+        assert "worklog" in CONTENT_TYPES
 
-    def test_tier2_prefix_includes_worklog(self):
-        from tools.namespaces import TIER_2_PREFIXES
-
-        assert "worklog::" in TIER_2_PREFIXES
-
-    def test_get_tier_worklog(self):
-        from tools.namespaces import get_tier, TIER_CHROMADB
-
-        assert get_tier("worklog::1738857000000") == TIER_CHROMADB
+    def test_schema_for_worklog(self):
+        assert schema_for_id("worklog::1738857000000") == SCHEMA_CORE

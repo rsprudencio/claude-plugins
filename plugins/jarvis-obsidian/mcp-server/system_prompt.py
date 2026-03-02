@@ -44,7 +44,7 @@ Vault exploration uses `jarvis-obsidian:jarvis-explorer-agent`.
 ## Important
 - **Never add Co-Authored-By lines** — JARVIS protocol tags handle attribution
 - **Use descriptions verbatim** — Do not expand or embellish commit messages
-- ChromaDB indexing is handled by jarvis-core, not this server
+- Vault indexing is handled by jarvis-core, not this server
 </jarvis-obsidian-instructions>
 
 ## Runtime

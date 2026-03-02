@@ -1,10 +1,10 @@
-"""Tier 2 content CRUD operations backed by PostgreSQL + pgvector.
+"""Content CRUD operations backed by PostgreSQL + pgvector.
 
-Tier 2 stores auto-generated, ephemeral content in the unified jarvis table
-without file backing. Content types: observation, pattern, summary,
-relationship, hint, plan, learning, decision, worklog.
+Stores memory content in the core.memories table with proper columns
+for classification (category, scope, source, importance_score).
 
-Tier 2 content can be promoted to Tier 1 (file-backed) via the promotion module.
+Content types: observation, pattern, summary, relationship, hint,
+plan, learning, decision, worklog, memory.
 """
 
 import logging
@@ -12,9 +12,10 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from .schema import execute_query, execute_write, metadata_to_jsonb
+from .schema import execute_query, execute_write, metadata_to_jsonb, jsonb_to_metadata
 from .namespaces import (
     ContentType,
+    VALID_CATEGORIES,
     observation_id,
     pattern_id,
     summary_id,
@@ -69,7 +70,7 @@ _TYPE_MAP = {
 }
 
 
-def tier2_write(
+def content_write(
     content: str,
     content_type: str,
     name: Optional[str] = None,
@@ -80,11 +81,11 @@ def tier2_write(
     extra_metadata: Optional[dict] = None,
     skip_secret_scan: bool = False,
 ) -> dict:
-    """Write Tier 2 content to PostgreSQL with embedding.
+    """Write content to core.memories with proper column values.
 
     Args:
         content: Document content (markdown)
-        content_type: Type of content (observation, pattern, summary, etc.)
+        content_type: Category (observation, pattern, summary, etc.)
         name: Required for pattern/plan/decision, optional for others
         importance_score: Importance score 0.0-1.0 (default 0.5)
         source: Source of content (default "auto-extract")
@@ -138,20 +139,18 @@ def tier2_write(
     type_const, namespace, id_gen = _TYPE_MAP[content_type]
 
     if content_type == "observation":
-        doc_id = id_gen()  # Auto-generates timestamp
+        doc_id = id_gen()
     elif content_type == "pattern":
         doc_id = id_gen(name)
     elif content_type == "summary":
-        doc_id = id_gen(session_id)  # Uses session_id if provided
+        doc_id = id_gen(session_id)
     elif content_type == "code":
-        # For code, name should be "file_path::symbol"
         if name and "::" in name:
             file_path, symbol = name.split("::", 1)
             doc_id = id_gen(file_path, symbol)
         else:
             doc_id = id_gen(name or "unknown", "__module__")
     elif content_type == "relationship":
-        # For relationship, name should be "entity_a::entity_b"
         if name and "::" in name:
             entity_a, entity_b = name.split("::", 1)
             doc_id = id_gen(entity_a, entity_b)
@@ -161,7 +160,6 @@ def tier2_write(
                 "error": "relationship type requires name in format 'entity_a::entity_b'",
             }
     elif content_type == "hint":
-        # For hint, name should be "topic::seq"
         if name and "::" in name:
             topic, seq_str = name.split("::", 1)
             doc_id = id_gen(topic, int(seq_str))
@@ -170,28 +168,27 @@ def tier2_write(
     elif content_type == "plan":
         doc_id = id_gen(name)
     elif content_type == "learning":
-        doc_id = id_gen()  # Auto-generates timestamp
+        doc_id = id_gen()
     elif content_type == "decision":
         doc_id = id_gen(name)
     elif content_type == "worklog":
-        doc_id = id_gen()  # Auto-generates timestamp
+        doc_id = id_gen()
     else:
         return {"success": False, "error": f"Unknown content_type: {content_type}"}
 
-    # Build metadata
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    metadata = {
-        "type": type_const,
-        "namespace": namespace,
-        "tier": "chromadb",
-        "promoted": "false",
-        "retrieval_count": "0",
-        "importance_score": str(importance_score),
-        "source": source,
-        "created_at": now_iso,
-        "updated_at": now_iso,
-    }
+    # Determine scope from extra_metadata
+    scope = "global"
+    project = None
+    if extra_metadata:
+        if extra_metadata.get("scope") in ("global", "project"):
+            scope = extra_metadata["scope"]
+        if extra_metadata.get("project"):
+            project = extra_metadata["project"]
+        if extra_metadata.get("project_dir"):
+            project = project or extra_metadata["project_dir"]
 
+    # Build remaining metadata (everything NOT in columns)
+    metadata = {}
     if tags:
         metadata["tags"] = ",".join(tags)
     if session_id:
@@ -199,7 +196,13 @@ def tier2_write(
     if name:
         metadata["name"] = name
     if extra_metadata:
-        metadata.update(extra_metadata)
+        # Copy extra_metadata but skip fields that are now columns
+        for k, v in extra_metadata.items():
+            if k not in ("scope", "project", "source", "importance_score",
+                         "retrieval_count", "status", "superseded_by",
+                         "type", "tier", "namespace", "promoted",
+                         "promoted_at", "original_tier2_id", "category"):
+                metadata[k] = v
 
     # Multi-user attribution
     from jarvis_common.auth import get_current_user
@@ -213,11 +216,10 @@ def tier2_write(
         from .embedding import get_embedding_service
         from .schema import _get_pool
 
-        # Idempotency for retry/replay pipelines. If the same ingest_event_id
-        # was already written, return existing ID without creating duplicates.
+        # Idempotency for retry/replay pipelines
         if ingest_event_id:
             existing = execute_query(
-                "SELECT id FROM jarvis WHERE metadata->>'ingest_event_id' = %s LIMIT 1",
+                "SELECT id FROM core.memories WHERE metadata->>'ingest_event_id' = %s LIMIT 1",
                 (ingest_event_id,),
                 fetch="one",
             )
@@ -234,27 +236,43 @@ def tier2_write(
         service = get_embedding_service()
         embedding = service.encode(content)
 
-        # Upsert into jarvis table
+        now = datetime.now(timezone.utc)
+        now_ts = now
+
+        # Insert into core.memories with proper columns
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
-                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
-                               COALESCE(%s::timestamptz, now()),
-                               COALESCE(%s::timestamptz, now()))
+                    """INSERT INTO core.memories
+                       (id, document, embedding, category, scope, project,
+                        source, importance_score, retrieval_count, status,
+                        metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s, %s, %s,
+                               %s, %s, 0.0, 'active',
+                               %s::jsonb, %s, %s)
                        ON CONFLICT (id) DO UPDATE SET
                            document = EXCLUDED.document,
                            embedding = EXCLUDED.embedding,
+                           category = EXCLUDED.category,
+                           scope = EXCLUDED.scope,
+                           project = EXCLUDED.project,
+                           source = EXCLUDED.source,
+                           importance_score = EXCLUDED.importance_score,
                            metadata = EXCLUDED.metadata,
                            updated_at = EXCLUDED.updated_at""",
                     (
                         doc_id,
                         content,
                         embedding,
+                        content_type,
+                        scope,
+                        project,
+                        source,
+                        importance_score,
                         metadata_to_jsonb(metadata),
-                        metadata.get("created_at"),
-                        metadata.get("updated_at"),
+                        now_ts,
+                        now_ts,
                     ),
                 )
                 conn.commit()
@@ -266,7 +284,7 @@ def tier2_write(
             "importance_score": importance_score,
         }
 
-        # Post-write conflict detection (all Tier 2 types)
+        # Post-write conflict detection
         try:
             from .conflict import detect_conflicts
 
@@ -279,39 +297,35 @@ def tier2_write(
 
         return result
     except Exception as e:
-        logger.error(f"tier2_write failed: {e}")
+        logger.error(f"content_write failed: {e}")
         return {"success": False, "error": str(e)}
 
 
-def tier2_read(doc_id: str) -> dict:
-    """Read Tier 2 content from PostgreSQL and increment retrieval count.
+def content_read(doc_id: str) -> dict:
+    """Read content from core.memories and increment retrieval count.
 
     Args:
         doc_id: Document ID to read
 
     Returns:
-        Result dict with success, found, id, content, metadata
+        Result dict with success, found, id, content, metadata, and column values
     """
     try:
-        from .schema import _get_pool, jsonb_to_metadata
+        from .schema import _get_pool
 
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 # Atomic read + increment retrieval count
                 cur.execute(
-                    """UPDATE jarvis
-                       SET metadata = jsonb_set(
-                           jsonb_set(metadata, '{retrieval_count}',
-                               to_jsonb((COALESCE((metadata->>'retrieval_count')::float, 0) + 1)::text)),
-                           '{updated_at}', to_jsonb(%s::text)),
+                    """UPDATE core.memories
+                       SET retrieval_count = retrieval_count + 1,
                            updated_at = now()
-                       WHERE id = %s
-                       RETURNING id, document, metadata""",
-                    (
-                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        doc_id,
-                    ),
+                       WHERE id = %s AND status = 'active'
+                       RETURNING id, document, category, scope, project,
+                                 source, importance_score, retrieval_count,
+                                 status, superseded_by, metadata""",
+                    (doc_id,),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -323,16 +337,23 @@ def tier2_read(doc_id: str) -> dict:
                 "id": doc_id,
             }
 
-        metadata = jsonb_to_metadata(row[2])
+        metadata = jsonb_to_metadata(row[10])
         return {
             "success": True,
             "found": True,
             "id": row[0],
             "content": row[1],
+            "category": row[2],
+            "scope": row[3],
+            "project": row[4],
+            "source": row[5],
+            "importance_score": row[6],
+            "retrieval_count": row[7],
+            "status": row[8],
             "metadata": metadata,
         }
     except Exception as e:
-        logger.error(f"tier2_read failed: {e}")
+        logger.error(f"content_read failed: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -344,17 +365,17 @@ VALID_SORT_OPTIONS = (
     "none",
 )
 
-# Map sort_by values to SQL ORDER BY clauses
+# Map sort_by values to SQL ORDER BY clauses (column-based)
 _SORT_SQL = {
-    "importance_desc": "ORDER BY (metadata->>'importance_score')::float DESC NULLS LAST",
-    "importance_asc": "ORDER BY (metadata->>'importance_score')::float ASC NULLS LAST",
+    "importance_desc": "ORDER BY importance_score DESC NULLS LAST",
+    "importance_asc": "ORDER BY importance_score ASC NULLS LAST",
     "created_at_desc": "ORDER BY created_at DESC",
     "created_at_asc": "ORDER BY created_at ASC",
     "none": "",
 }
 
 
-def tier2_list(
+def content_list(
     content_type: Optional[str] = None,
     min_importance: Optional[float] = None,
     source: Optional[str] = None,
@@ -363,16 +384,15 @@ def tier2_list(
     session_id: Optional[str] = None,
     include_content: bool = True,
 ) -> dict:
-    """List Tier 2 documents with optional filtering and sorting.
+    """List content from core.memories with column-based filtering.
 
     Args:
-        content_type: Filter by content type (observation, pattern, etc.)
+        content_type: Filter by category (observation, pattern, etc.)
         min_importance: Minimum importance score (0.0-1.0)
         source: Filter by source (e.g., "auto-extract")
         limit: Maximum number of results (default 20)
-        sort_by: Sort order. One of: importance_desc (default),
-                 importance_asc, created_at_desc, created_at_asc, none
-        session_id: Filter by session_id (useful for dedup within a session)
+        sort_by: Sort order
+        session_id: Filter by session_id
         include_content: Include document text in results (default True)
 
     Returns:
@@ -387,8 +407,8 @@ def tier2_list(
                 f"Valid options: {', '.join(VALID_SORT_OPTIONS)}",
             }
 
-        # Build SQL WHERE clause
-        conditions = ["metadata->>'tier' = 'chromadb'"]
+        # Build SQL WHERE clause using columns
+        conditions = ["status = 'active'"]
         params = []
 
         if content_type:
@@ -398,12 +418,11 @@ def tier2_list(
                     "error": f"Invalid content_type '{content_type}'. "
                     f"Valid types: {', '.join(VALID_CONTENT_TYPES)}",
                 }
-            type_const, _, _ = _TYPE_MAP[content_type]
-            conditions.append("metadata->>'type' = %s")
-            params.append(type_const)
+            conditions.append("category = %s")
+            params.append(content_type)
 
         if source:
-            conditions.append("metadata->>'source' = %s")
+            conditions.append("source = %s")
             params.append(source)
 
         if session_id:
@@ -411,31 +430,35 @@ def tier2_list(
             params.append(session_id)
 
         if min_importance is not None:
-            conditions.append("(metadata->>'importance_score')::float >= %s")
+            conditions.append("importance_score >= %s")
             params.append(min_importance)
 
         where_clause = " AND ".join(conditions)
         order_clause = _SORT_SQL.get(sort_by, "")
 
-        # First get total count (without limit)
-        count_sql = f"SELECT count(*) AS cnt FROM jarvis WHERE {where_clause}"
+        # Get total count
+        count_sql = f"SELECT count(*) AS cnt FROM core.memories WHERE {where_clause}"
         count_result = execute_query(count_sql, tuple(params), fetch="one")
         total = count_result["cnt"] if count_result else 0
 
-        # Then fetch the actual results with limit
-        select_cols = "id, metadata" + (", document" if include_content else "")
-        fetch_sql = f"SELECT {select_cols} FROM jarvis WHERE {where_clause} {order_clause} LIMIT %s"
+        # Fetch results
+        select_cols = "id, category, scope, project, source, importance_score, metadata"
+        if include_content:
+            select_cols += ", document"
+        fetch_sql = f"SELECT {select_cols} FROM core.memories WHERE {where_clause} {order_clause} LIMIT %s"
         rows = execute_query(fetch_sql, tuple(params) + (limit,))
 
         docs = []
         for row in rows:
-            from .schema import jsonb_to_metadata
-
             entry = {
                 "id": row["id"],
+                "category": row["category"],
+                "scope": row.get("scope", "global"),
+                "source": row.get("source", "auto-extract"),
+                "importance_score": row.get("importance_score", 0.5),
                 "metadata": jsonb_to_metadata(row["metadata"]),
             }
-            if include_content:
+            if include_content and "document" in row:
                 entry["content"] = row["document"]
             docs.append(entry)
 
@@ -446,15 +469,19 @@ def tier2_list(
             "returned": len(docs),
         }
     except Exception as e:
-        logger.error(f"tier2_list failed: {e}")
+        logger.error(f"content_list failed: {e}")
         return {"success": False, "error": str(e)}
 
 
-def tier2_delete(doc_id: str) -> dict:
-    """Delete Tier 2 content from PostgreSQL.
+def content_delete(doc_id: str, hard: bool = False) -> dict:
+    """Delete content from core.memories.
+
+    Soft delete by default (sets status='deleted', deleted_at=now()).
+    Hard delete removes the row entirely.
 
     Args:
         doc_id: Document ID to delete
+        hard: If True, permanently delete. If False, soft delete.
 
     Returns:
         Result dict with success, id, deleted
@@ -465,7 +492,15 @@ def tier2_delete(doc_id: str) -> dict:
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM jarvis WHERE id = %s", (doc_id,))
+                if hard:
+                    cur.execute("DELETE FROM core.memories WHERE id = %s", (doc_id,))
+                else:
+                    cur.execute(
+                        """UPDATE core.memories
+                           SET status = 'deleted', deleted_at = now(), updated_at = now()
+                           WHERE id = %s""",
+                        (doc_id,),
+                    )
                 deleted = cur.rowcount > 0
                 conn.commit()
 
@@ -483,19 +518,20 @@ def tier2_delete(doc_id: str) -> dict:
             "deleted": True,
         }
     except Exception as e:
-        logger.error(f"tier2_delete failed: {e}")
+        logger.error(f"content_delete failed: {e}")
         return {"success": False, "error": str(e)}
 
 
-def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
-    """Update existing tier2 document by ID with re-embedding.
+def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
+    """Update existing content by ID with re-embedding.
 
-    Unlike tier2_write which generates new IDs, this updates in-place.
+    Unlike content_write which generates new IDs, this updates in-place.
+    Extracts column values from metadata for proper storage.
 
     Args:
         doc_id: Existing document ID
         content: Updated content
-        metadata: Updated metadata dict
+        metadata: Updated metadata dict (may contain column values)
 
     Returns:
         Result dict with success, doc_id, updated
@@ -504,29 +540,63 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         from .embedding import get_embedding_service
         from .schema import _get_pool
 
-        metadata["updated_at"] = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        # Extract column values from metadata
+        category = metadata.pop("type", None) or metadata.pop("category", "observation")
+        if category not in VALID_CATEGORIES:
+            category = "observation"
+        scope = metadata.pop("scope", "global")
+        if scope not in ("global", "project"):
+            scope = "global"
+        project = metadata.pop("project", None)
+        source = metadata.pop("source", "auto-extract")
+        importance_score = 0.5
+        raw_imp = metadata.pop("importance_score", None)
+        if raw_imp is not None:
+            try:
+                importance_score = max(0.0, min(1.0, float(raw_imp)))
+            except (ValueError, TypeError):
+                pass
+
+        # Clean out old tier/namespace fields from metadata
+        for old_key in ("tier", "namespace", "promoted", "promoted_at",
+                        "original_tier2_id", "retrieval_count", "status",
+                        "superseded_by"):
+            metadata.pop(old_key, None)
 
         # Re-embed the updated content
         service = get_embedding_service()
         embedding = service.encode(content)
 
+        now = datetime.now(timezone.utc)
+
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
-                       VALUES (%s, %s, %s::halfvec, %s::jsonb, now(), now())
+                    """INSERT INTO core.memories
+                       (id, document, embedding, category, scope, project,
+                        source, importance_score, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s, %s, %s, %s, %s,
+                               %s::jsonb, now(), now())
                        ON CONFLICT (id) DO UPDATE SET
                            document = EXCLUDED.document,
                            embedding = EXCLUDED.embedding,
+                           category = EXCLUDED.category,
+                           scope = EXCLUDED.scope,
+                           project = EXCLUDED.project,
+                           source = EXCLUDED.source,
+                           importance_score = EXCLUDED.importance_score,
                            metadata = EXCLUDED.metadata,
                            updated_at = EXCLUDED.updated_at""",
                     (
                         doc_id,
                         content,
                         embedding,
+                        category,
+                        scope,
+                        project,
+                        source,
+                        importance_score,
                         metadata_to_jsonb(metadata),
                     ),
                 )
@@ -534,5 +604,13 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
 
         return {"success": True, "doc_id": doc_id, "updated": True}
     except Exception as e:
-        logger.error(f"tier2_upsert failed: {e}")
+        logger.error(f"content_upsert failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+# Backward compatibility aliases — will be removed in v3.1
+tier2_write = content_write
+tier2_read = content_read
+tier2_list = content_list
+tier2_delete = content_delete
+tier2_upsert = content_upsert

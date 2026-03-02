@@ -1,6 +1,6 @@
 ---
 name: jarvis-recall
-description: Semantic search over vault content using ChromaDB. Use when user says "Jarvis, recall X", "/jarvis-recall X", "what did we decide about X", "find notes about X", or asks to search vault semantically.
+description: Semantic search over vault content. Use when user says "Jarvis, recall X", "/jarvis-recall X", "what did we decide about X", "find notes about X", or asks to search vault semantically.
 user_invocable: true
 ---
 
@@ -32,7 +32,7 @@ Call `mcp__plugin_jarvis_core__jarvis_retrieve` with:
 
 ### 3. Present results
 
-Format results clearly, handling both Tier 1 (file-backed) and Tier 2 (ephemeral) results:
+Format results clearly, handling both vault files and auto-generated content:
 
 ```
 Found N results for "[query]":
@@ -55,15 +55,12 @@ Found N results for "[query]":
 ...
 ```
 
-**Tier 2 results**: When `tier == "chromadb"`, show `Source: [type] (auto-generated)` instead of `Path:`. These are ephemeral documents (observations, patterns, summaries).
+**Auto-generated results**: When `schema == "core"`, show `Source: [type] (auto-generated)` instead of `Path:`. These are auto-generated documents (observations, patterns, summaries) stored in the core schema. Vault documents have `schema: "vault"` and show their file path.
 
-### 4. Offer to read or promote
+### 4. Offer to read full content
 
 ```
 Want me to read any of these in full? (reply with the number)
-
-[If any Tier 2 results are shown:]
-Want me to save any Tier 2 items permanently? (reply with number to promote)
 ```
 
 ## Filtering (Optional)

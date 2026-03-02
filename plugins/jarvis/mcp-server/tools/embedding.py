@@ -376,7 +376,7 @@ def get_embedding_service() -> EmbeddingService:
     """Get or create singleton EmbeddingService with config-based invalidation.
 
     Recreates the service if embedding config changes (model, dimensions, etc.).
-    Same singleton + cache-key pattern as the ChromaDB client and PG pool.
+    Same singleton + cache-key pattern as the PG pool.
     """
     global _service, _service_cache_key
     from .config import get_embedding_config

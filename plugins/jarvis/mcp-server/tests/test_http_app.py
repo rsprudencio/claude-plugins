@@ -126,7 +126,7 @@ def test_hook_prompt_context_success(client, monkeypatch):
             "matches": [{"source": "notes/a.md", "relevance": 0.8}],
             "query_ms": 5,
             "total_searched": 10,
-            "budget_used": {"tier2": 10, "vault": 20, "total": 8000},
+            "budget_used": {"core": 10, "vault": 20, "total": 8000},
             "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
         },
     )

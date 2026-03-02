@@ -1,11 +1,11 @@
-"""Pattern detection: background scan of Tier 2 observations for recurring themes.
+"""Pattern detection: background scan of observations for recurring themes.
 
 Analyses recent observations for token-set similarity, clusters them into
 in-memory candidates, and promotes candidates that exceed a frequency threshold
-to durable ``pattern::`` entries in the unified ChromaDB collection.
+to durable ``pattern::`` entries in core.memories.
 
 The detection loop runs as a background asyncio task alongside the MCP server.
-All ChromaDB operations are synchronous, so each scan is offloaded to a thread
+All database operations are synchronous, so each scan is offloaded to a thread
 via ``asyncio.to_thread`` to keep the event loop responsive.
 """
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .tier2 import tier2_write, tier2_list
+from .content import content_write, content_list
 
 logger = logging.getLogger("jarvis-core")
 
@@ -418,11 +418,11 @@ def cleanup_candidates(max_candidates: int, expiry_days: int) -> int:
 def _find_existing_pattern_match(
     signature: frozenset, merge_threshold: float
 ) -> Optional[str]:
-    """Check if a similar pattern already exists in ChromaDB.
+    """Check if a similar pattern already exists in core.memories.
 
     Returns the existing pattern's doc ID if Jaccard >= merge_threshold, else None.
     """
-    result = tier2_list(content_type="pattern", limit=100, sort_by="none")
+    result = content_list(content_type="pattern", limit=100, sort_by="none")
     if not result.get("success") or not result.get("documents"):
         return None
 
@@ -438,7 +438,7 @@ def _find_existing_pattern_match(
 
 
 def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> dict:
-    """Promote a candidate to a durable pattern:: entry in ChromaDB.
+    """Promote a candidate to a durable pattern:: entry in core.memories.
 
     Checks for existing similar patterns first (dedup). If a match is found,
     the existing pattern is not duplicated — we return a note about the merge.
@@ -473,7 +473,7 @@ def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> di
     # Slugify title for name
     slug = re.sub(r"[^a-z0-9]+", "-", candidate.title.lower()).strip("-")[:60]
 
-    result = tier2_write(
+    result = content_write(
         content=description,
         content_type="pattern",
         name=slug,
@@ -502,7 +502,7 @@ def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> di
 
 def _fetch_recent_observations(lookback_minutes: int) -> list:
     """Fetch observations created within the lookback window."""
-    result = tier2_list(
+    result = content_list(
         content_type="observation",
         limit=100,
         sort_by="created_at_desc",
@@ -586,7 +586,7 @@ async def pattern_detection_loop():
     """Background loop that periodically scans for patterns.
 
     Runs alongside the MCP server via asyncio.gather(). Each scan is offloaded
-    to a thread since ChromaDB operations are synchronous.
+    to a thread since database operations are synchronous.
     """
     from .config import get_pattern_detection_config
 

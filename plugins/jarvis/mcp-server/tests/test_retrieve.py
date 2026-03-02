@@ -2,7 +2,7 @@
 
 import pytest
 from tools.retrieve import retrieve
-from tools.tier2 import tier2_write
+from tools.content import content_write
 
 
 class TestRetrieveRouting:
@@ -27,7 +27,7 @@ class TestRetrieveRouting:
 
     def test_all_four_conflict(self, mock_config):
         """Error when all routing params provided."""
-        result = retrieve(query="q", id="i", name="n", list_type="tier2")
+        result = retrieve(query="q", id="i", name="n", list_type="content")
         assert not result["success"]
 
 
@@ -36,11 +36,9 @@ class TestRetrieveQuery:
 
     def test_query_routes_to_semantic_search(self, mock_config):
         """Query parameter triggers semantic search."""
-        # Write something to search for
-        tier2_write(content="ChromaDB is a vector database", content_type="observation")
+        content_write(content="PostgreSQL is a vector database", content_type="observation")
 
         result = retrieve(query="vector database")
-        # May or may not find results depending on embeddings, but should not error
         assert isinstance(result, dict)
 
     def test_query_with_filter(self, mock_config):
@@ -56,9 +54,9 @@ class TestRetrieveQuery:
 class TestRetrieveById:
     """Test ID-based read routing."""
 
-    def test_tier2_id_routes_to_tier2_read(self, mock_config):
-        """obs:: ID routes to tier2_read with retrieval count increment."""
-        write_result = tier2_write(
+    def test_content_id_routes_to_content_read(self, mock_config):
+        """obs:: ID routes to content_read with retrieval count increment."""
+        write_result = content_write(
             content="Test observation",
             content_type="observation",
         )
@@ -68,11 +66,11 @@ class TestRetrieveById:
         assert result["success"]
         assert result["found"]
         assert result["content"] == "Test observation"
-        assert result["metadata"]["retrieval_count"] == "1.0"
+        assert result["retrieval_count"] == 1.0
 
-    def test_tier2_id_increments_count(self, mock_config):
+    def test_content_id_increments_count(self, mock_config):
         """Multiple reads increment retrieval count."""
-        write_result = tier2_write(
+        write_result = content_write(
             content="Counter test",
             content_type="observation",
         )
@@ -81,11 +79,11 @@ class TestRetrieveById:
         retrieve(id=doc_id)
         retrieve(id=doc_id)
         result = retrieve(id=doc_id)
-        assert result["metadata"]["retrieval_count"] == "3.0"
+        assert result["retrieval_count"] == 3.0
 
-    def test_pattern_id_routes_to_tier2_read(self, mock_config):
-        """pattern:: ID routes to tier2_read."""
-        write_result = tier2_write(
+    def test_pattern_id_routes_to_content_read(self, mock_config):
+        """pattern:: ID routes to content_read."""
+        write_result = content_write(
             content="Pattern content",
             content_type="pattern",
             name="test-pattern",
@@ -96,14 +94,12 @@ class TestRetrieveById:
         assert result["found"]
 
     def test_vault_id_routes_to_doc_read(self, mock_config):
-        """vault:: ID routes to doc_read (Tier 1)."""
-        # This may not find indexed content since no indexing,
-        # but should route correctly without error
+        """vault:: ID routes to doc_read."""
         result = retrieve(id="vault::notes/nonexistent.md")
         assert isinstance(result, dict)
 
-    def test_nonexistent_tier2_id(self, mock_config):
-        """Reading nonexistent tier2 doc returns found=False."""
+    def test_nonexistent_content_id(self, mock_config):
+        """Reading nonexistent content doc returns found=False."""
         result = retrieve(id="obs::nonexistent")
         assert result["success"]
         assert not result["found"]
@@ -116,7 +112,6 @@ class TestRetrieveByName:
         """Name parameter routes to memory_read."""
         from tools.store import store
 
-        # Create a memory first
         store(content="Memory content", type="memory", name="retrieve-test")
 
         result = retrieve(name="retrieve-test")
@@ -133,37 +128,44 @@ class TestRetrieveByName:
 class TestRetrieveList:
     """Test list operations routing."""
 
-    def test_list_tier2(self, mock_config):
-        """list_type='tier2' routes to tier2_list."""
+    def test_list_content(self, mock_config):
+        """list_type='content' routes to content_list."""
         import time
 
-        tier2_write(content="Obs 1", content_type="observation")
-        time.sleep(0.01)  # Avoid timestamp-based ID collision
-        tier2_write(content="Obs 2", content_type="observation")
+        content_write(content="Obs 1", content_type="observation")
+        time.sleep(0.01)
+        content_write(content="Obs 2", content_type="observation")
 
-        result = retrieve(list_type="tier2")
+        result = retrieve(list_type="content")
         assert result["success"]
         assert result["total"] >= 2
 
-    def test_list_tier2_with_filter(self, mock_config):
-        """list_type='tier2' with type_filter."""
-        tier2_write(content="Obs", content_type="observation")
-        tier2_write(content="Pat", content_type="pattern", name="p1")
+    def test_list_tier2_alias(self, mock_config):
+        """list_type='tier2' is a deprecated alias for 'content'."""
+        content_write(content="Obs", content_type="observation")
 
-        result = retrieve(list_type="tier2", type_filter="observation")
+        result = retrieve(list_type="tier2")
+        assert result["success"]
+
+    def test_list_content_with_filter(self, mock_config):
+        """list_type='content' with type_filter."""
+        content_write(content="Obs", content_type="observation")
+        content_write(content="Pat", content_type="pattern", name="p1")
+
+        result = retrieve(list_type="content", type_filter="observation")
         assert result["success"]
         for doc in result["documents"]:
-            assert doc["metadata"]["type"] == "observation"
+            assert doc["category"] == "observation"
 
-    def test_list_tier2_with_min_importance(self, mock_config):
-        """list_type='tier2' with min_importance filter."""
-        tier2_write(content="Low", content_type="observation", importance_score=0.3)
-        tier2_write(content="High", content_type="observation", importance_score=0.9)
+    def test_list_content_with_min_importance(self, mock_config):
+        """list_type='content' with min_importance filter."""
+        content_write(content="Low", content_type="observation", importance_score=0.3)
+        content_write(content="High", content_type="observation", importance_score=0.9)
 
-        result = retrieve(list_type="tier2", min_importance=0.8)
+        result = retrieve(list_type="content", min_importance=0.8)
         assert result["success"]
         for doc in result["documents"]:
-            assert float(doc["metadata"]["importance_score"]) >= 0.8
+            assert doc["importance_score"] >= 0.8
 
     def test_list_memory(self, mock_config):
         """list_type='memory' routes to memory_list."""
@@ -177,19 +179,19 @@ class TestRetrieveList:
         assert "Invalid list_type" in result["error"]
 
     def test_session_id_filter(self, mock_config):
-        """list_type='tier2' with session_id filters results."""
+        """list_type='content' with session_id filters results."""
         import time
 
-        tier2_write(
+        content_write(
             content="Session A", content_type="observation", session_id="sess-aaa"
         )
-        time.sleep(0.01)  # Avoid timestamp-based ID collision
-        tier2_write(
+        time.sleep(0.01)
+        content_write(
             content="Session B", content_type="observation", session_id="sess-bbb"
         )
 
         result = retrieve(
-            list_type="tier2", session_id="sess-aaa", include_content=True
+            list_type="content", session_id="sess-aaa", include_content=True
         )
         assert result["success"]
         assert result["total"] >= 1
@@ -198,42 +200,37 @@ class TestRetrieveList:
         assert "Session B" not in contents
 
     def test_sort_by_passthrough(self, mock_config):
-        """sort_by parameter passes through to tier2_list."""
-        tier2_write(content="Low", content_type="observation", importance_score=0.3)
-        tier2_write(content="High", content_type="observation", importance_score=0.9)
+        """sort_by parameter passes through to content_list."""
+        content_write(content="Low", content_type="observation", importance_score=0.3)
+        content_write(content="High", content_type="observation", importance_score=0.9)
 
-        result = retrieve(list_type="tier2", sort_by="importance_asc")
+        result = retrieve(list_type="content", sort_by="importance_asc")
         assert result["success"]
         if result["total"] >= 2:
-            scores = [
-                float(d["metadata"]["importance_score"]) for d in result["documents"]
-            ]
+            scores = [d["importance_score"] for d in result["documents"]]
             assert scores == sorted(scores)
 
 
 class TestRetrieveIncludeContent:
     """Test include_content passthrough in retrieve()."""
 
-    def test_tier2_default_excludes_content(self, mock_config):
-        """retrieve(list_type='tier2') defaults include_content=False."""
-        tier2_write(content="Tier2 default test", content_type="observation")
+    def test_content_default_excludes_content(self, mock_config):
+        """retrieve(list_type='content') defaults include_content=False."""
+        content_write(content="Content default test", content_type="observation")
 
-        result = retrieve(list_type="tier2")
+        result = retrieve(list_type="content")
         assert result["success"]
-        # retrieve passes include_content=False to _list_content,
-        # but _list_content passes it to tier2_list which defaults True internally.
-        # However, retrieve's default is False, so tier2_list receives False.
         for doc in result["documents"]:
             assert "content" not in doc
 
-    def test_tier2_include_content_true(self, mock_config):
-        """retrieve(list_type='tier2', include_content=True) includes content."""
-        tier2_write(content="Tier2 visible", content_type="observation")
+    def test_content_include_content_true(self, mock_config):
+        """retrieve(list_type='content', include_content=True) includes content."""
+        content_write(content="Content visible", content_type="observation")
 
-        result = retrieve(list_type="tier2", include_content=True)
+        result = retrieve(list_type="content", include_content=True)
         assert result["success"]
         found = any(
-            doc.get("content") == "Tier2 visible" for doc in result["documents"]
+            doc.get("content") == "Content visible" for doc in result["documents"]
         )
         assert found, "Expected content when include_content=True"
 

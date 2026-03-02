@@ -56,7 +56,7 @@ AskUserQuestion:
         - label: "Statusline"
           description: "Install or update the Claude Code statusline"
         - label: "Advanced settings"
-          description: "Promotion thresholds, vault paths, memory tuning"
+          description: "Vault paths, memory tuning, per-prompt search"
       multiSelect: false
 ```
 
@@ -277,8 +277,6 @@ AskUserQuestion:
     - question: "Which advanced area?"
       header: "Advanced"
       options:
-        - label: "Promotion thresholds"
-          description: "When tier 2 content gets promoted to vault files"
         - label: "Vault directory paths"
           description: "Where journals, notes, inbox, etc. are stored"
         - label: "Memory system"
@@ -288,20 +286,6 @@ AskUserQuestion:
         - label: "Back to main menu"
       multiSelect: false
 ```
-
-#### Promotion thresholds
-
-Show current values and let user adjust:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `importance_threshold` | 0.85 | Auto-promote score threshold |
-| `retrieval_count_threshold` | 3 | Promote after N retrievals |
-| `age_importance_days` | 30 | Age-based promotion trigger |
-| `age_importance_score` | 0.7 | Importance threshold for aged content |
-| `on_promoted_file_deleted` | "remove" | What happens when promoted file is deleted |
-
-Always offer "Reset to defaults" as an option.
 
 #### Vault directory paths
 
@@ -317,10 +301,6 @@ Show all vault-relative paths with current vs default:
 | `inbox_todoist` | `inbox/todoist` | ... |
 | `templates` | `templates` | ... |
 | `strategic` | `.jarvis/strategic` | ... |
-| `observations_promoted` | `.jarvis/memories/observations` | ... |
-| `patterns_promoted` | `.jarvis/memories/patterns` | ... |
-| `learnings_promoted` | `.jarvis/memories/learnings` | ... |
-| `decisions_promoted` | `.jarvis/memories/decisions` | ... |
 
 Let user change specific paths. All paths are relative to vault root.
 
@@ -359,7 +339,7 @@ Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jar
 |---------|---------|-------------|
 | `enabled` | true | Master switch for automatic memory recall |
 | `threshold` | 0.5 | Minimum relevance score (0.4=aggressive, 0.5=balanced, 0.6=conservative) |
-| `budget` | 8000 | Total character budget for injection (split 50/50 between tier2 and vault) |
+| `budget` | 8000 | Total character budget for injection (split 50/50 between auto-generated content and vault documents) |
 
 Offer presets:
 - "Balanced" (default) -> `threshold: 0.5, budget: 8000`
@@ -400,13 +380,6 @@ mode:                 background
 min_turn_chars:       200
 max_transcript_lines: 500
 debug:                false
-
-=== Promotion ===
-importance_threshold:        0.85
-retrieval_count_threshold:   3
-age_importance_days:         30
-age_importance_score:        0.7
-on_promoted_file_deleted:    remove
 
 === Replication ===
 mode:                 disabled
@@ -498,7 +471,6 @@ Changed:
 
 Quick Start:
   /jarvis-recall <query>  - Search vault semantically
-  /jarvis-promote         - Review & promote observations
   /jarvis-settings    - Update configuration anytime
   $ jarvis            - Launch from terminal (if shell configured)
 ```

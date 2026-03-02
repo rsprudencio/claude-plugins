@@ -161,7 +161,7 @@ class TestMemoryWrite:
 class TestMemoryRead:
     """Tests for memory_read handler."""
 
-    def test_read_from_chromadb(self, mock_config):
+    def test_read_from_database(self, mock_config):
         
 
         memory_write(name="read-test", content="# Read Test\n\nContent here.")
@@ -176,7 +176,7 @@ class TestMemoryRead:
     def test_read_file_fallback(self, mock_config):
         
 
-        # Write file directly (bypass ChromaDB)
+        # Write file directly (bypass database)
         from tools.memory_files import resolve_memory_path, write_memory_file
 
         path, _ = resolve_memory_path("file-only", scope="global")
@@ -369,26 +369,28 @@ class TestIntegrationCycle:
 
 
 
-class TestMemoryTierMetadata:
-    """Tests for tier field in memory metadata."""
+class TestMemoryCategoryColumn:
+    """Tests for category column in core.memories."""
 
-    def test_memory_write_includes_tier(self, mock_config):
-        """Test that memory_write includes tier='file' in metadata."""
+    def test_memory_write_has_category_memory(self, mock_config):
+        """Test that memory_write sets category='memory' in core.memories."""
         from tools.namespaces import global_memory_id
 
         result = memory_write(
-            name="test-tier-memory", content="Testing tier metadata in memories"
+            name="test-cat-memory", content="Testing category column in memories"
         )
         assert result["success"] is True
 
-        # Verify tier in metadata via InMemoryDB
-        doc_id = global_memory_id("test-tier-memory")
-        row = mock_config.db.get(doc_id)
+        # Verify category column via InMemoryDB
+        doc_id = global_memory_id("test-cat-memory")
+        row = mock_config.db.get_core(doc_id)
         assert row is not None
-        assert row["metadata"]["tier"] == "file"
+        assert row["category"] == "memory"
+        # tier should NOT be in metadata
+        assert "tier" not in row["metadata"]
 
         # Cleanup
-        memory_delete(name="test-tier-memory", confirm=True)
+        memory_delete(name="test-cat-memory", confirm=True)
 
 
 

@@ -48,7 +48,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
             "matches": [{"source": "notes/a.md", "relevance": 0.82}],
             "query_ms": 7.2,
             "total_searched": 4,
-            "budget_used": {"tier2": 200, "vault": 300, "total": 1200},
+            "budget_used": {"core": 200, "vault": 300, "total": 1200},
         }
     )
     monkeypatch.setattr(hook_endpoints, "semantic_context", semantic)
@@ -79,12 +79,12 @@ def test_ingest_auto_extract_observation_dedup_threshold(monkeypatch):
     )
     monkeypatch.setattr(
         hook_endpoints,
-        "tier2_list",
+        "content_list",
         lambda **kwargs: {"success": True, "documents": []},
     )
 
     write = MagicMock(return_value={"success": True, "id": "obs::new"})
-    monkeypatch.setattr(hook_endpoints, "tier2_write", write)
+    monkeypatch.setattr(hook_endpoints, "content_write", write)
 
     payload = {
         "observations": [{"content": "Same idea", "importance_score": 0.6, "tags": []}],
@@ -109,16 +109,16 @@ def test_ingest_auto_extract_worklog_dedup_by_session(monkeypatch):
         "query_vault",
         lambda **kwargs: {"success": True, "results": []},
     )
-    tier2_list = MagicMock(
+    content_list = MagicMock(
         return_value={
             "success": True,
             "documents": [{"content": "Adding docker support to jarvis plugin"}],
         }
     )
-    monkeypatch.setattr(hook_endpoints, "tier2_list", tier2_list)
+    monkeypatch.setattr(hook_endpoints, "content_list", content_list)
 
     write = MagicMock(return_value={"success": True, "id": "worklog::123"})
-    monkeypatch.setattr(hook_endpoints, "tier2_write", write)
+    monkeypatch.setattr(hook_endpoints, "content_write", write)
 
     payload = {
         "observations": [],
@@ -134,7 +134,7 @@ def test_ingest_auto_extract_worklog_dedup_by_session(monkeypatch):
     result = hook_endpoints.ingest_auto_extract(payload)
 
     assert result["worklog"]["status"] == "duplicate"
-    tier2_list.assert_called_once_with(
+    content_list.assert_called_once_with(
         content_type="worklog",
         session_id="session-42",
         sort_by="created_at_desc",
@@ -143,7 +143,7 @@ def test_ingest_auto_extract_worklog_dedup_by_session(monkeypatch):
 
 
 def test_ingest_event_id_passthrough(monkeypatch):
-    """ingest_event_id is forwarded into tier2_write extra_metadata."""
+    """ingest_event_id is forwarded into content_write extra_metadata."""
     monkeypatch.setattr(
         hook_endpoints,
         "query_vault",
@@ -151,19 +151,19 @@ def test_ingest_event_id_passthrough(monkeypatch):
     )
     monkeypatch.setattr(
         hook_endpoints,
-        "tier2_list",
+        "content_list",
         lambda **kwargs: {"success": True, "documents": []},
     )
 
     calls = []
 
-    def _fake_tier2_write(**kwargs):
+    def _fake_content_write(**kwargs):
         calls.append(kwargs)
         content_type = kwargs["content_type"]
         doc_id = "obs::1" if content_type == "observation" else "worklog::1"
         return {"success": True, "id": doc_id}
 
-    monkeypatch.setattr(hook_endpoints, "tier2_write", _fake_tier2_write)
+    monkeypatch.setattr(hook_endpoints, "content_write", _fake_content_write)
 
     payload = {
         "observations": [

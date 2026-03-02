@@ -1,7 +1,8 @@
 """Vault memory querying for semantic search.
 
-Provides query, read, and stats operations against the PostgreSQL jarvis table
-with pgvector embeddings. Uses explicit embedding via EmbeddingService.
+Provides query, read, and stats operations across core.memories and
+vault.documents schemas with pgvector embeddings. Uses per-schema CTEs
+with UNION ALL for cross-schema search (DAR F5: preserves HNSW index usage).
 
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
@@ -14,7 +15,7 @@ from typing import Optional
 
 from .schema import execute_query, jsonb_to_metadata, metadata_to_jsonb
 from .paths import get_path, SENSITIVE_PATHS
-from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
+from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
 from .expansion import expand_query as _expand_query
 from .config import get_expansion_config, get_per_prompt_config, get_reranking_config, get_staleness_config
 from .format_support import detect_format
@@ -139,57 +140,94 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
     return truncated + "..."
 
 
-def _build_filter_sql(
+def _build_core_filter(
     filter_dict: Optional[dict] = None, user: Optional[str] = None
 ) -> tuple:
-    """Build SQL WHERE conditions from a filter dict.
-
-    Translates the metadata schema where:
-    - 'type' is the universal content type (vault, memory, observation, etc.)
-    - 'vault_type' is the vault-entry type (note, journal, work, etc.)
-
-    When users filter by type with a vault-entry value (note, journal, etc.),
-    we transparently map to vault_type. When they use a content type value
-    (vault, memory, etc.), we use the universal type field.
-
-    The optional ``user`` parameter adds a metadata filter for multi-user
-    isolation — only documents attributed to that user are returned.
+    """Build WHERE conditions for core.memories using columns.
 
     Returns:
         Tuple of (conditions_list, params_list) for SQL WHERE clause.
     """
+    conditions = ["status = 'active'"]
+    params = []
+
     if not filter_dict:
         filter_dict = {}
 
+    # Multi-user filter (opt-in, stored in JSONB)
+    if user and user != "anonymous":
+        conditions.append("metadata->>'user' = %s")
+        params.append(user)
+
+    if "type" in filter_dict and filter_dict["type"]:
+        type_val = filter_dict["type"]
+        if type_val in ALL_TYPES:
+            # Map to category column
+            conditions.append("category = %s")
+            params.append(type_val)
+        # Non-content types (note, journal, etc.) don't exist in core — skip
+
+    if "importance" in filter_dict and filter_dict["importance"]:
+        try:
+            imp_val = float(filter_dict["importance"])
+            conditions.append("importance_score >= %s")
+            params.append(imp_val)
+        except (ValueError, TypeError):
+            pass
+
+    if "tags" in filter_dict and filter_dict["tags"]:
+        tag = filter_dict["tags"].split(",")[0].strip()
+        conditions.append("metadata->>'tags' LIKE %s")
+        params.append(f"%{tag}%")
+
+    return conditions, params
+
+
+def _build_vault_filter(
+    filter_dict: Optional[dict] = None, user: Optional[str] = None
+) -> tuple:
+    """Build WHERE conditions for vault.documents using columns.
+
+    Returns:
+        Tuple of (conditions_list, params_list) for SQL WHERE clause.
+    """
     conditions = []
     params = []
 
-    # Multi-user filter (opt-in)
+    if not filter_dict:
+        filter_dict = {}
+
+    # Multi-user filter (opt-in, stored in JSONB)
     if user and user != "anonymous":
         conditions.append("metadata->>'user' = %s")
         params.append(user)
 
     if "directory" in filter_dict and filter_dict["directory"]:
-        conditions.append("metadata->>'directory' = %s")
+        # directory is a proper column now
+        conditions.append("directory = %s")
         params.append(filter_dict["directory"])
 
     if "type" in filter_dict and filter_dict["type"]:
         type_val = filter_dict["type"]
         if type_val in ALL_TYPES:
-            # Universal content type (vault, memory, observation, etc.)
-            conditions.append("metadata->>'type' = %s")
-            params.append(type_val)
+            # Content type filter — vault is always 'vault', so if they filter
+            # for a non-vault content type, exclude vault entirely
+            if type_val != "vault":
+                conditions.append("1 = 0")  # no match
         else:
             # Vault-entry type (note, journal, work, etc.)
-            conditions.append("metadata->>'vault_type' = %s")
+            conditions.append("vault_type = %s")
             params.append(type_val)
 
     if "importance" in filter_dict and filter_dict["importance"]:
-        conditions.append("metadata->>'importance' = %s")
-        params.append(filter_dict["importance"])
+        try:
+            imp_val = float(filter_dict["importance"])
+            conditions.append("importance_score >= %s")
+            params.append(imp_val)
+        except (ValueError, TypeError):
+            pass
 
     if "tags" in filter_dict and filter_dict["tags"]:
-        # Tags stored as comma-separated string; use LIKE for substring match
         tag = filter_dict["tags"].split(",")[0].strip()
         conditions.append("metadata->>'tags' LIKE %s")
         params.append(f"%{tag}%")
@@ -203,14 +241,49 @@ def _display_path(doc_id: str) -> str:
     return parsed.content_id
 
 
+def _format_core_result(row: dict) -> dict:
+    """Format a core.memories row into a result dict.
+
+    Promotes columns (category, scope, source, importance_score) to
+    top-level keys. Remaining metadata stays in 'metadata'.
+    """
+    meta = jsonb_to_metadata(row.get("metadata", {}))
+    # Add promoted column values to metadata for downstream compat
+    meta["category"] = row.get("category", "observation")
+    meta["scope"] = row.get("scope", "global")
+    meta["source"] = row.get("source", "auto-extract")
+    meta["importance_score"] = str(row.get("importance_score", 0.5))
+    meta["type"] = row.get("category", "observation")
+    return meta
+
+
+def _format_vault_result(row: dict) -> dict:
+    """Format a vault.documents row into a result dict.
+
+    Promotes columns (parent_file, directory, vault_type, etc.) to
+    metadata dict for downstream compat.
+    """
+    meta = jsonb_to_metadata(row.get("metadata", {}))
+    meta["parent_file"] = row.get("parent_file", "")
+    meta["directory"] = row.get("directory", "")
+    meta["vault_type"] = row.get("vault_type", "document")
+    meta["title"] = row.get("title", "")
+    meta["chunk_index"] = str(row.get("chunk_index", 0))
+    meta["chunk_total"] = str(row.get("chunk_total", 1))
+    meta["chunk_heading"] = row.get("chunk_heading", "")
+    meta["importance_score"] = str(row.get("importance_score", 0.5))
+    meta["type"] = "vault"
+    return meta
+
+
 def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
-    """Batch increment retrieval counts for Tier 2 documents.
+    """Batch increment retrieval counts for core.memories documents.
 
     Best-effort operation: errors are logged but don't block query response.
-    Only updates Tier 2 documents (Tier 1 doesn't track retrieval counts).
+    Only updates core.memories (vault documents don't track retrieval counts).
 
-    Uses a single SQL UPDATE for all IDs (much more efficient than ChromaDB's
-    individual get+upsert pattern).
+    Uses a single SQL UPDATE with column-level increment (much more efficient
+    than the old JSONB string extraction pattern).
 
     Args:
         doc_ids: List of document IDs to increment
@@ -223,26 +296,21 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
     try:
         from .schema import _get_pool
 
-        # Filter to only Tier 2 IDs
-        tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
-        if not tier2_ids:
+        # Filter to only core (non-vault) IDs
+        core_ids = [doc_id for doc_id in doc_ids
+                    if schema_for_id(doc_id) == SCHEMA_CORE]
+        if not core_ids:
             return
-
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                # Batch update retrieval counts using ANY() for efficiency
                 cur.execute(
-                    """UPDATE jarvis
-                       SET metadata = jsonb_set(
-                           jsonb_set(metadata, '{retrieval_count}',
-                               to_jsonb((COALESCE((metadata->>'retrieval_count')::float, 0) + %s)::text)),
-                           '{updated_at}', to_jsonb(%s::text)),
+                    """UPDATE core.memories
+                       SET retrieval_count = retrieval_count + %s,
                            updated_at = now()
-                       WHERE id = ANY(%s)""",
-                    (increment, now_iso, tier2_ids),
+                       WHERE id = ANY(%s) AND status = 'active'""",
+                    (increment, core_ids),
                 )
                 conn.commit()
 
@@ -253,6 +321,75 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
         logger.warning(f"Failed to increment retrieval counts: {e}")
 
 
+def _cross_schema_search(query_embedding, fetch_count: int,
+                         filter_dict: Optional[dict] = None,
+                         user: Optional[str] = None) -> list:
+    """Execute per-schema search across core + vault.
+
+    DAR F5: Each query uses its own HNSW index via ORDER BY ... LIMIT.
+    Results are merged in Python by distance.
+
+    Args:
+        query_embedding: The query embedding vector
+        fetch_count: Max results per schema
+        filter_dict: Optional metadata filter dict
+        user: Optional user filter for multi-user isolation
+
+    Returns list of row dicts with _schema column ('core' or 'vault').
+    """
+    from .schema import _get_pool
+
+    # Build schema-specific filters
+    core_conditions, core_params = _build_core_filter(filter_dict, user)
+    vault_conditions, vault_params = _build_vault_filter(filter_dict, user)
+
+    pool = _get_pool()
+    rows = []
+
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            # Core query
+            core_where = " AND ".join(core_conditions)
+            cur.execute(
+                f"""SELECT id, document, metadata,
+                           category, scope, source, importance_score,
+                           embedding <=> %s::halfvec AS distance,
+                           'core' AS _schema
+                    FROM core.memories
+                    WHERE {core_where}
+                    ORDER BY embedding <=> %s::halfvec ASC
+                    LIMIT %s""",
+                tuple([query_embedding] + core_params + [query_embedding, fetch_count]),
+            )
+            columns = [desc.name for desc in cur.description]
+            for row_data in cur.fetchall():
+                rows.append(dict(zip(columns, row_data)))
+
+            # Vault query
+            vault_where = " AND ".join(vault_conditions) if vault_conditions else None
+            vault_where_clause = f"WHERE {vault_where}" if vault_where else ""
+            cur.execute(
+                f"""SELECT id, document, metadata,
+                           parent_file, directory, vault_type, title,
+                           chunk_index, chunk_total, chunk_heading,
+                           importance_score,
+                           embedding <=> %s::halfvec AS distance,
+                           'vault' AS _schema
+                    FROM vault.documents
+                    {vault_where_clause}
+                    ORDER BY embedding <=> %s::halfvec ASC
+                    LIMIT %s""",
+                tuple([query_embedding] + vault_params + [query_embedding, fetch_count]),
+            )
+            columns = [desc.name for desc in cur.description]
+            for row_data in cur.fetchall():
+                rows.append(dict(zip(columns, row_data)))
+
+    # Sort merged results by distance
+    rows.sort(key=lambda r: float(r.get("distance", 999)))
+    return rows
+
+
 def query_vault(
     query: str,
     n_results: int = 5,
@@ -260,6 +397,9 @@ def query_vault(
     user: Optional[str] = None,
 ) -> dict:
     """Semantic search across vault memory.
+
+    Searches both core.memories and vault.documents using per-schema CTEs
+    for optimal HNSW index usage.
 
     Args:
         query: Natural language search query
@@ -274,10 +414,17 @@ def query_vault(
     from .schema import _get_pool
 
     try:
-        count_result = execute_query(
-            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        # Check total across both schemas
+        core_count = execute_query(
+            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            fetch="one",
         )
-        total = count_result["cnt"] if count_result else 0
+        vault_count = execute_query(
+            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+        )
+        total = (core_count["cnt"] if core_count else 0) + (
+            vault_count["cnt"] if vault_count else 0
+        )
     except Exception as e:
         return {"success": False, "error": f"Database unavailable: {e}"}
 
@@ -291,9 +438,6 @@ def query_vault(
         }
 
     n_results = min(max(1, n_results), 20)
-
-    # Build filter conditions
-    filter_conditions, filter_params = _build_filter_sql(filter, user=user)
 
     # Query expansion
     expansion_config = get_expansion_config()
@@ -315,43 +459,32 @@ def query_vault(
         fetch_count = min(n_results * 3, 60, total)
 
     try:
-        # Build the similarity search query
-        where_clause = ""
-        params = [query_embedding]
-        if filter_conditions:
-            where_clause = "WHERE " + " AND ".join(filter_conditions)
-            params.extend(filter_params)
-        params.append(fetch_count)
-
-        sql = f"""SELECT id, document, metadata,
-                         embedding <=> %s::halfvec AS distance
-                  FROM jarvis
-                  {where_clause}
-                  ORDER BY distance ASC
-                  LIMIT %s"""
-
-        pool = _get_pool()
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, tuple(params))
-                columns = [desc.name for desc in cur.description]
-                rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        rows = _cross_schema_search(
+            query_embedding, fetch_count, filter_dict=filter, user=user
+        )
     except Exception as e:
         return {"success": False, "error": f"Query failed: {e}"}
 
     # Build raw result entries with relevance scores
     raw_entries = []
     for row in rows:
-        meta = jsonb_to_metadata(row["metadata"])
+        schema = row.get("_schema", "vault")
+
+        if schema == "core":
+            meta = _format_core_result(row)
+        else:
+            meta = _format_vault_result(row)
+
         distance = float(row["distance"])
         importance = meta.get("importance", "medium")
         updated_at = meta.get("updated_at")
 
-        # Use numeric importance_score if available
+        # Use numeric importance_score
         imp_score = None
-        if "importance_score" in meta:
+        imp_str = meta.get("importance_score")
+        if imp_str:
             try:
-                imp_score = float(meta["importance_score"])
+                imp_score = float(imp_str)
             except (ValueError, TypeError):
                 pass
 
@@ -360,7 +493,6 @@ def query_vault(
         # Determine parent file for chunk dedup
         parent_file = meta.get("parent_file")
         if not parent_file:
-            # Legacy: strip #chunk-N from ID
             parsed = parse_id(row["id"])
             parent_file = parsed.content_id
 
@@ -371,6 +503,7 @@ def query_vault(
                 "relevance": relevance,
                 "document": row["document"],
                 "metadata": meta,
+                "_schema": schema,
             }
         )
 
@@ -428,11 +561,11 @@ def query_vault(
         tags = meta.get("tags", "")
         chunk_heading = meta.get("chunk_heading", "")
 
-        tier = get_tier(doc_id)
-        if tier == TIER_FILE:
-            source = "file"
+        schema = entry.get("_schema", "vault")
+        if schema == "vault":
+            source = "vault"
         else:
-            source = meta.get("type", "chromadb")
+            source = meta.get("category", meta.get("type", "memory"))
 
         result_entry = {
             "rank": rank,
@@ -444,7 +577,7 @@ def query_vault(
             "relevance": round(entry["relevance"], 3),
             "preview": preview,
             "tags": tags,
-            "tier": tier,
+            "schema": schema,
             "source": source,
         }
         if chunk_heading:
@@ -457,7 +590,7 @@ def query_vault(
         results.append(result_entry)
         all_ids.append(doc_id)
 
-    # Increment retrieval counts for Tier 2 results (best-effort, non-blocking)
+    # Increment retrieval counts for core results (best-effort, non-blocking)
     _increment_retrieval_counts(all_ids)
 
     response = {
@@ -494,17 +627,17 @@ def semantic_context(
 ) -> dict:
     """Search vault memories for per-prompt context injection.
 
-    Optimized for automatic, per-message use. Differs from query_vault():
+    Searches both core.memories and vault.documents. Differs from query_vault():
     - Applies minimum relevance threshold (filters low-scoring results)
-    - Budget-based allocation: tier2 content shown in full, vault as references
+    - Budget-based allocation: core content shown in full, vault as references
     - Fractionally increments retrieval counts (configurable, default 0.01)
     - Filters out sensitive directories (documents/, people/)
     - Returns query_ms timing for performance monitoring
     - Silently returns empty on any error (graceful degradation)
 
     Budget strategy:
-    - Total budget is split 50/50 between tier2 and vault
-    - Tier 2 items (observations, learnings, etc.) are shown with full content
+    - Total budget is split 50/50 between core and vault
+    - Core items (observations, learnings, etc.) are shown with full content
     - Vault items are shown as references (file path + heading, ~120 chars)
     - Each half gets a guaranteed budget; unused budget overflows to the other
     - Results are processed in relevance order, highest first
@@ -527,10 +660,16 @@ def semantic_context(
         from .embedding import get_embedding_service
         from .schema import _get_pool
 
-        count_result = execute_query(
-            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        core_count = execute_query(
+            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            fetch="one",
         )
-        total = count_result["cnt"] if count_result else 0
+        vault_count = execute_query(
+            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+        )
+        total = (core_count["cnt"] if core_count else 0) + (
+            vault_count["cnt"] if vault_count else 0
+        )
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
@@ -553,19 +692,7 @@ def semantic_context(
     fetch_count = min(100, total)
 
     try:
-        pool = _get_pool()
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT id, document, metadata,
-                              embedding <=> %s::halfvec AS distance
-                       FROM jarvis
-                       ORDER BY distance ASC
-                       LIMIT %s""",
-                    (query_embedding, fetch_count),
-                )
-                columns = [desc.name for desc in cur.description]
-                rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        rows = _cross_schema_search(query_embedding, fetch_count)
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": total}
 
@@ -574,7 +701,13 @@ def semantic_context(
     skipped_sensitive = 0
 
     for row in rows:
-        meta = jsonb_to_metadata(row["metadata"])
+        schema = row.get("_schema", "vault")
+
+        if schema == "core":
+            meta = _format_core_result(row)
+        else:
+            meta = _format_vault_result(row)
+
         distance = float(row["distance"])
 
         # Filter sensitive directories
@@ -583,7 +716,8 @@ def semantic_context(
             skipped_sensitive += 1
             continue
 
-        # Filter superseded Tier 2 entries
+        # Filter superseded core entries (enforced by active_memories view,
+        # but also check metadata for safety)
         if meta.get("status") == "superseded":
             continue
 
@@ -591,9 +725,10 @@ def semantic_context(
         updated_at = meta.get("updated_at")
 
         imp_score = None
-        if "importance_score" in meta:
+        imp_str = meta.get("importance_score")
+        if imp_str:
             try:
-                imp_score = float(meta["importance_score"])
+                imp_score = float(imp_str)
             except (ValueError, TypeError):
                 pass
 
@@ -616,6 +751,7 @@ def semantic_context(
                 "relevance": relevance,
                 "document": row["document"],
                 "metadata": meta,
+                "_schema": schema,
             }
         )
 
@@ -641,13 +777,13 @@ def semantic_context(
     # Each item tries its own half first, overflows to the other
     VAULT_REF_COST = 120  # estimated chars for "See: path + heading"
     half = budget // 2
-    tier2_remaining = half
+    core_remaining = half
     vault_remaining = half
     selected = []
 
     for entry in deduped:
-        ns = entry["metadata"].get("namespace", "")
-        is_vault = ns == "vault::"
+        schema = entry.get("_schema", "vault")
+        is_vault = schema == "vault"
 
         if is_vault:
             cost = VAULT_REF_COST
@@ -655,15 +791,15 @@ def semantic_context(
                 vault_remaining -= cost
                 entry["display_mode"] = "reference"
                 selected.append(entry)
-            elif tier2_remaining >= cost:
-                tier2_remaining -= cost
+            elif core_remaining >= cost:
+                core_remaining -= cost
                 entry["display_mode"] = "reference"
                 selected.append(entry)
         else:
             content_len = len(entry["document"] or "")
             cost = max(content_len, 50)  # minimum 50 chars cost
-            if tier2_remaining >= cost:
-                tier2_remaining -= cost
+            if core_remaining >= cost:
+                core_remaining -= cost
                 entry["display_mode"] = "full"
                 selected.append(entry)
             elif vault_remaining >= cost:
@@ -692,7 +828,7 @@ def semantic_context(
                 ref_text += f" (section: {chunk_heading})"
             content = ref_text
         else:
-            # Tier 2: full content, no truncation
+            # Core memory: full content, no truncation
             entry_fmt = _detect_format_from_entry(entry)
             content = (
                 _extract_preview(entry["document"], max_len=10000, fmt=entry_fmt)
@@ -722,7 +858,7 @@ def semantic_context(
         "total_searched": total,
         "skipped_sensitive": skipped_sensitive,
         "budget_used": {
-            "tier2": half - tier2_remaining,
+            "core": half - core_remaining,
             "vault": half - vault_remaining,
             "total": budget,
         },
@@ -738,6 +874,8 @@ def semantic_context(
 def doc_read(ids: list, include_metadata: bool = True) -> dict:
     """Read specific documents from PostgreSQL by ID.
 
+    Routes by ID prefix: vault:: → vault.documents, else → core.memories.
+
     Accepts both namespaced IDs (vault::notes/my-note.md) and bare paths
     (notes/my-note.md). Bare paths are automatically prefixed with vault::.
 
@@ -752,41 +890,65 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
         return {"success": False, "error": "No IDs provided"}
 
     # Normalize IDs: bare paths get vault:: prefix
-    lookup_ids = []
+    vault_ids = []
+    core_ids = []
     id_map = {}  # lookup_id -> original_id (for display)
+
     for doc_id in ids:
-        if "::" in doc_id:
-            lookup_ids.append(doc_id)
-            id_map[doc_id] = doc_id
-        else:
+        if "::" not in doc_id:
             namespaced = f"vault::{doc_id}"
-            lookup_ids.append(namespaced)
             id_map[namespaced] = doc_id
+            vault_ids.append(namespaced)
+        elif doc_id.startswith("vault::"):
+            id_map[doc_id] = doc_id
+            vault_ids.append(doc_id)
+        else:
+            id_map[doc_id] = doc_id
+            core_ids.append(doc_id)
+
+    found = []
+    found_ids = set()
 
     try:
-        select_cols = "id, document" + (", metadata" if include_metadata else "")
-        sql = f"SELECT {select_cols} FROM jarvis WHERE id = ANY(%s)"
-        rows = execute_query(sql, (lookup_ids,))
+        # Read vault documents
+        if vault_ids:
+            meta_cols = ", metadata, parent_file, directory, vault_type, title, chunk_index, chunk_total, chunk_heading, importance_score" if include_metadata else ""
+            sql = f"SELECT id, document{meta_cols} FROM vault.documents WHERE id = ANY(%s)"
+            rows = execute_query(sql, (vault_ids,))
+            for row in rows:
+                entry = {
+                    "id": row["id"],
+                    "path": _display_path(row["id"]),
+                    "document": row["document"],
+                }
+                if include_metadata:
+                    entry["metadata"] = _format_vault_result(row)
+                found.append(entry)
+                found_ids.add(row["id"])
+
+        # Read core memories
+        if core_ids:
+            meta_cols = ", metadata, category, scope, source, importance_score" if include_metadata else ""
+            sql = f"SELECT id, document{meta_cols} FROM core.memories WHERE id = ANY(%s)"
+            rows = execute_query(sql, (core_ids,))
+            for row in rows:
+                entry = {
+                    "id": row["id"],
+                    "path": _display_path(row["id"]),
+                    "document": row["document"],
+                }
+                if include_metadata:
+                    entry["metadata"] = _format_core_result(row)
+                found.append(entry)
+                found_ids.add(row["id"])
+
     except Exception as e:
         return {"success": False, "error": f"Read failed: {e}"}
 
-    found = []
-    found_ids = {row["id"] for row in rows}
-
-    not_found = []
-    for lid in lookup_ids:
-        if lid not in found_ids:
-            not_found.append(id_map.get(lid, lid))
-
-    for row in rows:
-        entry = {
-            "id": row["id"],
-            "path": _display_path(row["id"]),
-            "document": row["document"],
-        }
-        if include_metadata and "metadata" in row:
-            entry["metadata"] = jsonb_to_metadata(row["metadata"])
-        found.append(entry)
+    all_lookup_ids = vault_ids + core_ids
+    not_found = [
+        id_map.get(lid, lid) for lid in all_lookup_ids if lid not in found_ids
+    ]
 
     return {
         "success": True,
@@ -798,6 +960,8 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
 def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     """Get memory system health and statistics.
 
+    Queries both core.memories and vault.documents.
+
     Args:
         sample_size: Number of sample entries to peek
         detailed: Include per-type/namespace breakdowns and storage size
@@ -806,10 +970,16 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
         Stats dict with count, samples, type distribution
     """
     try:
-        count_result = execute_query(
-            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        core_count = execute_query(
+            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            fetch="one",
         )
-        total = count_result["cnt"] if count_result else 0
+        vault_count = execute_query(
+            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+        )
+        core_total = core_count["cnt"] if core_count else 0
+        vault_total = vault_count["cnt"] if vault_count else 0
+        total = core_total + vault_total
     except Exception as e:
         return {"success": False, "error": f"Database unavailable: {e}"}
 
@@ -821,66 +991,94 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
             "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool.",
         }
 
-    sample_size = min(max(1, sample_size), total)
+    # Peek at samples from both schemas
+    samples = []
+    half_sample = max(1, sample_size // 2)
 
     try:
-        peek_rows = execute_query(
-            "SELECT id, metadata FROM jarvis LIMIT %s", (sample_size,)
+        # Core samples
+        core_rows = execute_query(
+            "SELECT id, metadata, category FROM core.memories WHERE status = 'active' LIMIT %s",
+            (half_sample,),
         )
+        for row in core_rows:
+            meta = jsonb_to_metadata(row.get("metadata", {}))
+            samples.append(
+                {
+                    "id": row["id"],
+                    "path": _display_path(row["id"]),
+                    "title": meta.get("title", row["id"]),
+                    "type": row.get("category", meta.get("type", "unknown")),
+                    "schema": "core",
+                }
+            )
+
+        # Vault samples
+        vault_rows = execute_query(
+            "SELECT id, metadata, vault_type, title FROM vault.documents LIMIT %s",
+            (half_sample,),
+        )
+        for row in vault_rows:
+            samples.append(
+                {
+                    "id": row["id"],
+                    "path": _display_path(row["id"]),
+                    "title": row.get("title", row["id"]),
+                    "type": row.get("vault_type", "document"),
+                    "schema": "vault",
+                }
+            )
     except Exception as e:
         return {"success": False, "error": f"Stats failed: {e}"}
-
-    samples = []
-    for row in peek_rows:
-        meta = jsonb_to_metadata(row["metadata"])
-        # Use vault_type for vault entries, fall back to type
-        entry_type = meta.get("vault_type") or meta.get("type", "unknown")
-        samples.append(
-            {
-                "id": row["id"],
-                "path": _display_path(row["id"]),
-                "title": meta.get("title", row["id"]),
-                "type": entry_type,
-            }
-        )
 
     result = {
         "success": True,
         "total_documents": total,
+        "core_documents": core_total,
+        "vault_documents": vault_total,
         "samples": samples,
     }
 
     # Detailed breakdown
     if detailed:
         try:
-            type_rows = execute_query(
-                """SELECT metadata->>'type' AS content_type,
-                          count(*) AS cnt
-                   FROM jarvis
-                   GROUP BY content_type"""
+            # Core breakdown by category
+            cat_rows = execute_query(
+                """SELECT category, count(*) AS cnt
+                   FROM core.memories
+                   WHERE status = 'active'
+                   GROUP BY category"""
             )
-            type_counts = {row["content_type"]: row["cnt"] for row in type_rows}
+            category_counts = {row["category"]: row["cnt"] for row in cat_rows}
 
-            ns_rows = execute_query(
-                """SELECT metadata->>'namespace' AS ns,
-                          count(*) AS cnt
-                   FROM jarvis
-                   GROUP BY ns"""
+            # Vault breakdown by vault_type
+            vt_rows = execute_query(
+                """SELECT vault_type, count(*) AS cnt
+                   FROM vault.documents
+                   GROUP BY vault_type"""
             )
-            namespace_counts = {row["ns"]: row["cnt"] for row in ns_rows}
+            vault_type_counts = {row["vault_type"]: row["cnt"] for row in vt_rows}
 
-            result["type_breakdown"] = type_counts
-            result["namespace_breakdown"] = namespace_counts
+            result["category_breakdown"] = category_counts
+            result["vault_type_breakdown"] = vault_type_counts
 
-            # Storage size (PostgreSQL table + indexes)
-            size_result = execute_query(
-                """SELECT pg_total_relation_size('jarvis') AS total_bytes""",
-                fetch="one",
-            )
-            if size_result:
-                storage_bytes = size_result["total_bytes"]
-                result["storage_bytes"] = storage_bytes
-                result["storage_mb"] = round(storage_bytes / (1024 * 1024), 2)
+            # Storage size (both tables)
+            for table, label in [
+                ("core.memories", "core_storage"),
+                ("vault.documents", "vault_storage"),
+            ]:
+                try:
+                    size_result = execute_query(
+                        f"SELECT pg_total_relation_size('{table}') AS total_bytes",
+                        fetch="one",
+                    )
+                    if size_result:
+                        result[f"{label}_bytes"] = size_result["total_bytes"]
+                        result[f"{label}_mb"] = round(
+                            size_result["total_bytes"] / (1024 * 1024), 2
+                        )
+                except Exception:
+                    pass
 
         except Exception as e:
             result["detailed_error"] = str(e)

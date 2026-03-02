@@ -29,12 +29,6 @@ _VAULT_RELATIVE_DEFAULTS = {
     "people": "people",
     "documents": "documents",
     "strategic": ".jarvis/strategic",
-    "observations_promoted": ".jarvis/memories/observations",
-    "patterns_promoted": ".jarvis/memories/patterns",
-    "summaries_promoted": ".jarvis/memories/summaries",
-    "learnings_promoted": ".jarvis/memories/learnings",
-    "decisions_promoted": ".jarvis/memories/decisions",
-    "worklogs_promoted": ".jarvis/memories/worklogs",
 }
 
 _ABSOLUTE_DEFAULTS = {

@@ -80,10 +80,10 @@ def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
             "prompt_len": len(prompt),
             "query_ms": query_ms,
             "n_results": len(matches),
-            "n_tier2": len(matches) - n_vault,
+            "n_core": len(matches) - n_vault,
             "n_vault": n_vault,
             "scores": [round(s, 3) for s in scores],
-            "budget_tier2_used": budget.get("tier2", 0),
+            "budget_core_used": budget.get("core", 0),
             "budget_vault_used": budget.get("vault", 0),
         }
         with open(TELEMETRY_FILE, "a") as f:
@@ -182,7 +182,7 @@ def _format_memories(matches: list, query_ms: float) -> str:
     """Format search results as XML for injection into Claude's context.
 
     Vault items (display_mode="reference") are shown as compact file pointers.
-    Tier 2 items (display_mode="full") are shown with full content.
+    Core memory items (display_mode="full") are shown with full content.
     """
     if not matches:
         return ""
@@ -267,7 +267,7 @@ def main():
         "debug": False,
         "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
     }
-    result = {"matches": [], "query_ms": 0, "budget_used": {"tier2": 0, "vault": 0}}
+    result = {"matches": [], "query_ms": 0, "budget_used": {"core": 0, "vault": 0}}
     query_ms = 0
 
     if ctx_resp.get("success"):
@@ -292,7 +292,7 @@ def main():
     matches = result.get("matches", [])
 
     if matches:
-        # Format vault/tier2 memories
+        # Format vault/core memories
         output_parts.append(_format_memories(matches, result.get("query_ms", 0)))
 
         # JSONL telemetry (always on, lightweight)
@@ -300,13 +300,13 @@ def main():
 
         if debug:
             n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
-            n_tier2 = len(matches) - n_vault
+            n_core = len(matches) - n_vault
             budget = result.get("budget_used", {})
             sources = " ".join(f'{m["source"]}({m["relevance"]})' for m in matches)
             _debug_log(
                 "FOUND",
-                f"{query_ms}ms | {len(matches)} ({n_tier2}t2+{n_vault}v) | "
-                f"budget t2:{budget.get('tier2', 0)}/v:{budget.get('vault', 0)} | {sources}",
+                f"{query_ms}ms | {len(matches)} ({n_core}c+{n_vault}v) | "
+                f"budget c:{budget.get('core', 0)}/v:{budget.get('vault', 0)} | {sources}",
                 prompt_text,
                 injected=output_parts[0],
             )

@@ -17,7 +17,7 @@ from .config import (
     get_worklog_config,
 )
 from .query import query_vault, semantic_context
-from .tier2 import tier2_list, tier2_write
+from .content import content_list, content_write
 
 _DEDUP_JACCARD_THRESHOLD = 0.7
 _DEDUP_RELEVANCE_THRESHOLD = 0.95
@@ -82,7 +82,7 @@ def _is_duplicate_observation(content: str, threshold: float) -> bool:
 
 def _is_duplicate_worklog(task_summary: str, session_id: str, threshold: float) -> bool:
     """Session-scoped Jaccard dedup for worklogs."""
-    result = tier2_list(
+    result = content_list(
         content_type="worklog",
         session_id=session_id or None,
         sort_by="created_at_desc",
@@ -99,7 +99,7 @@ def _is_duplicate_worklog(task_summary: str, session_id: str, threshold: float) 
 
 def _extract_workstreams(limit: int) -> list[str]:
     """Load known workstream names from recent worklog entries."""
-    result = tier2_list(
+    result = content_list(
         content_type="worklog",
         limit=limit,
         sort_by="created_at_desc",
@@ -174,7 +174,7 @@ def get_prompt_context(prompt: str) -> dict:
         "matches": [],
         "query_ms": 0,
         "total_searched": 0,
-        "budget_used": {"tier2": 0, "vault": 0, "total": budget},
+        "budget_used": {"core": 0, "vault": 0, "total": budget},
         "todoist_prompt_alerts": {
             "enabled": bool(todoist_cfg.get("enabled", False)),
             "max_per_category": _safe_int(todoist_cfg.get("max_per_category"), 3),
@@ -197,7 +197,7 @@ def get_prompt_context(prompt: str) -> dict:
             "total_searched": search.get("total_searched", 0),
             "budget_used": search.get(
                 "budget_used",
-                {"tier2": 0, "vault": 0, "total": budget},
+                {"core": 0, "vault": 0, "total": budget},
             ),
         }
     )
@@ -289,7 +289,7 @@ def ingest_auto_extract(payload: dict) -> dict:
         if ingest_event_id:
             metadata["ingest_event_id"] = ingest_event_id
 
-        write_result = tier2_write(
+        write_result = content_write(
             content=content,
             content_type="observation",
             importance_score=_clamp_importance(raw.get("importance_score"), default=0.5),
@@ -334,7 +334,7 @@ def ingest_auto_extract(payload: dict) -> dict:
                 if ingest_event_id:
                     metadata["ingest_event_id"] = ingest_event_id
 
-                write_result = tier2_write(
+                write_result = content_write(
                     content=task_summary,
                     content_type="worklog",
                     importance_score=0.5,

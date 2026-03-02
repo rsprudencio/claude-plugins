@@ -252,7 +252,7 @@ Return structured JSON with findings:
 
 ## Search Algorithm
 
-### Step 0: Semantic Pre-Search (ChromaDB)
+### Step 0: Semantic Pre-Search
 
 If `search_text` is provided and `mcp__plugin_jarvis_core__jarvis_retrieve` is available:
 
@@ -271,7 +271,7 @@ If `search_text` is provided and `mcp__plugin_jarvis_core__jarvis_retrieve` is a
 
 **If jarvis_retrieve is unavailable or returns empty**: Skip silently, fall back to keyword-only search.
 
-**Note on Tier 2 results**: `jarvis_retrieve` may return both Tier 1 (file-backed, `tier: "file"`) and Tier 2 (ephemeral, `tier: "chromadb"`) results. Tier 2 results are auto-generated observations, patterns, and summaries stored only in ChromaDB. Include them in search results with a note about their ephemeral nature.
+**Note on result schemas**: `jarvis_retrieve` may return results from two schemas: vault documents (`schema: "vault"`) which are indexed file content, and auto-generated content (`schema: "core"`) such as observations, patterns, and summaries. Include both in search results, noting the source for each.
 
 This hybrid approach combines:
 - **Semantic search**: Finds "authentication decisions" even when file says "OAuth choice"
