@@ -100,7 +100,7 @@ class EmbeddingService:
             )
         return vec
 
-    def encode_batch(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
+    def encode_batch(self, texts: list[str], batch_size: int = 8) -> list[list[float]]:
         """Encode multiple texts into vectors. Used for indexing.
 
         Args:

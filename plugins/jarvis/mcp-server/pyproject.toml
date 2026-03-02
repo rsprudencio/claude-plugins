@@ -40,3 +40,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "e2e: End-to-end tests against real PostgreSQL (require E2E_POSTGRES_URL)",
+]

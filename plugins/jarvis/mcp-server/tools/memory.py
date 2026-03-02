@@ -34,7 +34,7 @@ from .schema import execute_query, execute_write, metadata_to_jsonb
 
 logger = logging.getLogger("jarvis-core")
 
-_BATCH_SIZE = 50
+_BATCH_SIZE = 10
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
 
