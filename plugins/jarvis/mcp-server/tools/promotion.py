@@ -1,6 +1,6 @@
 """Tier 2 to Tier 1 promotion for important content.
 
-Promotes ephemeral ChromaDB-only content to durable file-backed storage
+Promotes ephemeral Tier 2 content to durable file-backed storage
 when it meets importance/retrieval thresholds.
 """
 
@@ -12,7 +12,7 @@ from typing import Optional
 from .config import get_promotion_config
 from .file_ops import write_vault_file
 from .format_support import get_write_extension, generate_frontmatter, get_write_format
-from .memory import _get_collection
+from .schema import execute_query, metadata_to_jsonb, jsonb_to_metadata
 from .namespaces import vault_id, parse_id, get_tier, TIER_CHROMADB, TIER_FILE
 from .paths import get_path
 
@@ -23,7 +23,7 @@ def check_promotion_criteria(metadata: dict) -> dict:
     """Check if Tier 2 content meets promotion criteria.
 
     Args:
-        metadata: ChromaDB metadata dict
+        metadata: Document metadata dict
 
     Returns:
         Dict with should_promote (bool), reason (str), criteria_met (list)
@@ -81,12 +81,12 @@ def promote(doc_id: str) -> dict:
     """Promote Tier 2 content to Tier 1 (file-backed).
 
     Process:
-    1. Read content + metadata from ChromaDB
+    1. Read content + metadata from PostgreSQL
     2. Verify it's Tier 2 and not already promoted
     3. Resolve promotion path based on content type
     4. Generate markdown with YAML frontmatter
     5. Write file via write_vault_file (vault boundary safety)
-    6. Delete old ChromaDB entry
+    6. Delete old database entry
     7. Upsert new entry with vault:: ID and tier="file"
 
     Args:
@@ -94,18 +94,23 @@ def promote(doc_id: str) -> dict:
 
     Returns:
         Result dict with success, original_id, promoted_path, vault_id,
-        file_written, chromadb_updated, needs_git_commit
+        file_written, db_updated, needs_git_commit
     """
     try:
-        collection = _get_collection()
+        from .embedding import get_embedding_service
+        from .schema import _get_pool
 
         # Read existing content
-        result = collection.get(ids=[doc_id])
-        if not result["ids"]:
+        row = execute_query(
+            "SELECT id, document, metadata FROM jarvis WHERE id = %s",
+            (doc_id,),
+            fetch="one",
+        )
+        if not row:
             return {"success": False, "error": f"Document not found: {doc_id}"}
 
-        content = result["documents"][0]
-        metadata = result["metadatas"][0]
+        content = row["document"]
+        metadata = jsonb_to_metadata(row["metadata"])
 
         # Verify Tier 2
         tier = get_tier(doc_id)
@@ -235,7 +240,7 @@ def promote(doc_id: str) -> dict:
                 "error": f"Failed to write file: {write_result.get('error')}",
             }
 
-        # Delete old ChromaDB entry + upsert new one in single lock scope
+        # Delete old entry + insert new one with vault:: ID
         new_vault_id = vault_id(relative_path)
 
         new_metadata = {**metadata}
@@ -247,10 +252,33 @@ def promote(doc_id: str) -> dict:
         new_metadata["vault_type"] = content_type  # Vault-specific type
         new_metadata["namespace"] = "vault::"
 
-        collection.delete(ids=[doc_id])
-        collection.upsert(
-            ids=[new_vault_id], documents=[file_content], metadatas=[new_metadata]
-        )
+        # Generate embedding for the promoted content
+        service = get_embedding_service()
+        embedding = service.encode(file_content)
+
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                # Delete old Tier 2 entry
+                cur.execute("DELETE FROM jarvis WHERE id = %s", (doc_id,))
+
+                # Insert new vault entry
+                cur.execute(
+                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s::jsonb, now(), now())
+                       ON CONFLICT (id) DO UPDATE SET
+                           document = EXCLUDED.document,
+                           embedding = EXCLUDED.embedding,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = EXCLUDED.updated_at""",
+                    (
+                        new_vault_id,
+                        file_content,
+                        embedding,
+                        metadata_to_jsonb(new_metadata),
+                    ),
+                )
+                conn.commit()
 
         return {
             "success": True,
@@ -258,7 +286,7 @@ def promote(doc_id: str) -> dict:
             "promoted_path": relative_path,
             "vault_id": new_vault_id,
             "file_written": True,
-            "chromadb_updated": True,
+            "db_updated": True,
             "needs_git_commit": True,
         }
 

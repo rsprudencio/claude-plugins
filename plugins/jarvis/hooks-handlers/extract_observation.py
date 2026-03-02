@@ -1207,10 +1207,6 @@ def _record_file_mtimes(file_paths: list[str]) -> dict[str, float]:
     return mtimes
 
 
-def _serialize_mtimes(mtimes: dict[str, float]) -> str:
-    """Serialize mtimes map to stable JSON string."""
-    return json.dumps(mtimes, sort_keys=True)
-
 
 def _jarvis_state_dir() -> Path:
     """Resolve Jarvis state directory with JARVIS_HOME override."""
@@ -1571,9 +1567,7 @@ def store_worklog(
         "project_path": project_path,
         "git_branch": git_branch,
         "relevant_files": safe_files,
-        "file_mtimes": _serialize_mtimes(_record_file_mtimes(safe_files))
-        if safe_files
-        else "",
+        "file_mtimes": _record_file_mtimes(safe_files) if safe_files else {},
         "session_id": session_id,
         "transcript_line": transcript_line,
     }
@@ -1628,9 +1622,7 @@ def store_observation(
         "project_path": project_path,
         "git_branch": git_branch,
         "relevant_files": safe_files,
-        "file_mtimes": _serialize_mtimes(_record_file_mtimes(safe_files))
-        if safe_files
-        else "",
+        "file_mtimes": _record_file_mtimes(safe_files) if safe_files else {},
         "session_id": session_id,
         "transcript_line": transcript_line,
     }
@@ -1846,10 +1838,10 @@ def main():
         str(path).strip() for path in relevant_files if str(path).strip()
     ]
     absolute_line = turns[-1].get("end_line_idx", -1) if turns else -1
-    file_mtimes_json = (
-        _serialize_mtimes(_record_file_mtimes(safe_relevant_files))
+    file_mtimes = (
+        _record_file_mtimes(safe_relevant_files)
         if safe_relevant_files
-        else ""
+        else {}
     )
 
     payload_observations = []
@@ -1898,7 +1890,7 @@ def main():
             "project_path": project_path,
             "git_branch": git_branch,
             "relevant_files": safe_relevant_files,
-            "file_mtimes": file_mtimes_json,
+            "file_mtimes": file_mtimes,
             "session_id": session_id,
             "transcript_line": absolute_line,
         },

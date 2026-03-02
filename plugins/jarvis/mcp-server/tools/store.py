@@ -8,7 +8,7 @@ Routes writes based on parameters (priority: id -> relative_path -> type):
 - relative_path provided -> vault file create (new, no prior ID)
 - type provided -> create new memory or tier2 content (auto-generate ID)
 
-All .md file writes are auto-indexed to ChromaDB.
+All .md file writes are auto-indexed for semantic search.
 """
 
 import logging
@@ -212,7 +212,7 @@ def _store_vault_file(
             "error": f"Invalid mode: '{mode}'. Use: write, append, edit",
         }
 
-    # Auto-index supported files (.md, .org) to ChromaDB
+    # Auto-index supported files (.md, .org) for semantic search
     if result.get("success") and auto_index and is_indexable(relative_path):
         try:
             from .memory import index_file
@@ -272,7 +272,7 @@ def _store_tier2(
 
 
 def _update_tier2(doc_id, content, importance, tags, source, extra_metadata):
-    """Update existing tier2 content by ID (ChromaDB upsert).
+    """Update existing tier2 content by ID (pgvector upsert).
 
     Reads existing doc, merges updates, upserts back.
     """

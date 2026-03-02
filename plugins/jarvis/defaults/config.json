@@ -10,14 +10,11 @@
   "vault_confirmed": false,
   "configured_at": "__REQUIRED__",
   "memory": {
-    "chroma_url": "",
-    "chroma_host": "localhost",
-    "chroma_port": 8743,
-    "chroma_ssl": false,
-    "chroma_api_key": "",
-    "chroma_auth_header": "X-Chroma-Token",
-    "chroma_headers": {},
-    "chroma_data_path": "~/.jarvis/db",
+    "postgres_url": "postgresql://jarvis:jarvis@localhost:5432/jarvis",
+    "embedding_model": "ibm-granite/granite-embedding-english-r2",
+    "embedding_dimensions": 768,
+    "embedding_device": "cpu",
+    "embedding_backend": "onnx",
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,
@@ -78,12 +75,6 @@
       "enabled": true,
       "penalty": 0.15
     },
-    "telemetry": {
-      "enabled": true,
-      "log_reads": false,
-      "log_writes": true,
-      "probe_interval_seconds": 300
-    },
     "pattern_detection": {
       "enabled": true,
       "scan_interval_seconds": 300,
@@ -93,6 +84,13 @@
       "candidate_expiry_days": 7,
       "lookback_minutes": 10,
       "merge_threshold": 0.7
+    },
+    "replication": {
+      "mode": "disabled",
+      "central_url": "",
+      "node_id": "",
+      "publications": ["jarvis_pub"],
+      "replication_user": "jarvis_repl"
     }
   },
   "promotion": {

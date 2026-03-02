@@ -137,8 +137,8 @@ def _build_common_metadata(context: dict, include_project_dir: bool = False) -> 
         if cleaned:
             meta["relevant_files"] = ",".join(cleaned)
 
-    file_mtimes = _safe_str(context.get("file_mtimes"))
-    if file_mtimes:
+    file_mtimes = context.get("file_mtimes")
+    if isinstance(file_mtimes, dict) and file_mtimes:
         meta["file_mtimes"] = file_mtimes
 
     session_id = _safe_str(context.get("session_id"))

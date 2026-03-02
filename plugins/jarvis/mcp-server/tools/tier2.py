@@ -1,7 +1,8 @@
-"""Tier 2 (ChromaDB-first) content CRUD operations.
+"""Tier 2 content CRUD operations backed by PostgreSQL + pgvector.
 
-Tier 2 stores auto-generated, ephemeral content in ChromaDB without file backing.
-Content types: observation, pattern, summary, relationship, hint, plan.
+Tier 2 stores auto-generated, ephemeral content in the unified jarvis table
+without file backing. Content types: observation, pattern, summary,
+relationship, hint, plan, learning, decision, worklog.
 
 Tier 2 content can be promoted to Tier 1 (file-backed) via the promotion module.
 """
@@ -11,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from .memory import _get_collection
+from .schema import execute_query, execute_write, metadata_to_jsonb
 from .namespaces import (
     ContentType,
     observation_id,
@@ -79,7 +80,7 @@ def tier2_write(
     extra_metadata: Optional[dict] = None,
     skip_secret_scan: bool = False,
 ) -> dict:
-    """Write Tier 2 content to ChromaDB.
+    """Write Tier 2 content to PostgreSQL with embedding.
 
     Args:
         content: Document content (markdown)
@@ -207,28 +208,57 @@ def tier2_write(
     if user != "anonymous":
         metadata["user"] = user
 
-    # Write to ChromaDB
+    # Write to PostgreSQL
     try:
-        collection = _get_collection()
+        from .embedding import get_embedding_service
+        from .schema import _get_pool
+
         # Idempotency for retry/replay pipelines. If the same ingest_event_id
         # was already written, return existing ID without creating duplicates.
         if ingest_event_id:
-            existing = collection.get(
-                where={"ingest_event_id": ingest_event_id},
-                include=[],
+            existing = execute_query(
+                "SELECT id FROM jarvis WHERE metadata->>'ingest_event_id' = %s LIMIT 1",
+                (ingest_event_id,),
+                fetch="one",
             )
-            existing_ids = existing.get("ids", [])
-            if existing_ids:
-                existing_id = sorted(existing_ids)[0]
+            if existing:
                 return {
                     "success": True,
-                    "id": existing_id,
+                    "id": existing["id"],
                     "content_type": content_type,
                     "importance_score": importance_score,
                     "deduplicated": True,
                 }
 
-        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+        # Generate embedding
+        service = get_embedding_service()
+        embedding = service.encode(content)
+
+        # Upsert into jarvis table
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
+                               COALESCE(%s::timestamptz, now()),
+                               COALESCE(%s::timestamptz, now()))
+                       ON CONFLICT (id) DO UPDATE SET
+                           document = EXCLUDED.document,
+                           embedding = EXCLUDED.embedding,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = EXCLUDED.updated_at""",
+                    (
+                        doc_id,
+                        content,
+                        embedding,
+                        metadata_to_jsonb(metadata),
+                        metadata.get("created_at"),
+                        metadata.get("updated_at"),
+                    ),
+                )
+                conn.commit()
+
         result = {
             "success": True,
             "id": doc_id,
@@ -254,7 +284,7 @@ def tier2_write(
 
 
 def tier2_read(doc_id: str) -> dict:
-    """Read Tier 2 content from ChromaDB and increment retrieval count.
+    """Read Tier 2 content from PostgreSQL and increment retrieval count.
 
     Args:
         doc_id: Document ID to read
@@ -263,40 +293,43 @@ def tier2_read(doc_id: str) -> dict:
         Result dict with success, found, id, content, metadata
     """
     try:
-        collection = _get_collection()
-        result = collection.get(ids=[doc_id])
+        from .schema import _get_pool, jsonb_to_metadata
 
-        if not result["ids"]:
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                # Atomic read + increment retrieval count
+                cur.execute(
+                    """UPDATE jarvis
+                       SET metadata = jsonb_set(
+                           jsonb_set(metadata, '{retrieval_count}',
+                               to_jsonb((COALESCE((metadata->>'retrieval_count')::float, 0) + 1)::text)),
+                           '{updated_at}', to_jsonb(%s::text)),
+                           updated_at = now()
+                       WHERE id = %s
+                       RETURNING id, document, metadata""",
+                    (
+                        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        doc_id,
+                    ),
+                )
+                row = cur.fetchone()
+                conn.commit()
+
+        if not row:
             return {
                 "success": True,
                 "found": False,
                 "id": doc_id,
             }
 
-        # Get current retrieval count and increment
-        metadata = result["metadatas"][0]
-        retrieval_count = float(metadata.get("retrieval_count", "0"))
-        retrieval_count += 1
-
-        # Update retrieval count and updated_at
-        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        updated_metadata = {**metadata}
-        updated_metadata["retrieval_count"] = str(retrieval_count)
-        updated_metadata["updated_at"] = now_iso
-
-        # Write back updated metadata
-        collection.upsert(
-            ids=[doc_id],
-            documents=[result["documents"][0]],
-            metadatas=[updated_metadata],
-        )
-
+        metadata = jsonb_to_metadata(row[2])
         return {
             "success": True,
             "found": True,
-            "id": doc_id,
-            "content": result["documents"][0],
-            "metadata": updated_metadata,
+            "id": row[0],
+            "content": row[1],
+            "metadata": metadata,
         }
     except Exception as e:
         logger.error(f"tier2_read failed: {e}")
@@ -310,6 +343,15 @@ VALID_SORT_OPTIONS = (
     "created_at_asc",
     "none",
 )
+
+# Map sort_by values to SQL ORDER BY clauses
+_SORT_SQL = {
+    "importance_desc": "ORDER BY (metadata->>'importance_score')::float DESC NULLS LAST",
+    "importance_asc": "ORDER BY (metadata->>'importance_score')::float ASC NULLS LAST",
+    "created_at_desc": "ORDER BY created_at DESC",
+    "created_at_asc": "ORDER BY created_at ASC",
+    "none": "",
+}
 
 
 def tier2_list(
@@ -337,10 +379,17 @@ def tier2_list(
         Result dict with success, documents, total
     """
     try:
-        collection = _get_collection()
+        # Validate sort_by
+        if sort_by not in VALID_SORT_OPTIONS:
+            return {
+                "success": False,
+                "error": f"Invalid sort_by '{sort_by}'. "
+                f"Valid options: {', '.join(VALID_SORT_OPTIONS)}",
+            }
 
-        # Build where clause for ChromaDB
-        conditions = [{"tier": "chromadb"}]
+        # Build SQL WHERE clause
+        conditions = ["metadata->>'tier' = 'chromadb'"]
+        params = []
 
         if content_type:
             if content_type not in VALID_CONTENT_TYPES:
@@ -350,72 +399,51 @@ def tier2_list(
                     f"Valid types: {', '.join(VALID_CONTENT_TYPES)}",
                 }
             type_const, _, _ = _TYPE_MAP[content_type]
-            conditions.append({"type": type_const})
+            conditions.append("metadata->>'type' = %s")
+            params.append(type_const)
 
         if source:
-            conditions.append({"source": source})
+            conditions.append("metadata->>'source' = %s")
+            params.append(source)
 
         if session_id:
-            conditions.append({"session_id": session_id})
+            conditions.append("metadata->>'session_id' = %s")
+            params.append(session_id)
 
-        # Construct where clause
-        if len(conditions) == 1:
-            where = conditions[0]
-        else:
-            where = {"$and": conditions}
+        if min_importance is not None:
+            conditions.append("(metadata->>'importance_score')::float >= %s")
+            params.append(min_importance)
 
-        # Get all matching documents (ChromaDB doesn't support numeric comparisons)
-        result = collection.get(where=where)
+        where_clause = " AND ".join(conditions)
+        order_clause = _SORT_SQL.get(sort_by, "")
 
-        # Apply min_importance filter in Python
+        # First get total count (without limit)
+        count_sql = f"SELECT count(*) AS cnt FROM jarvis WHERE {where_clause}"
+        count_result = execute_query(count_sql, tuple(params), fetch="one")
+        total = count_result["cnt"] if count_result else 0
+
+        # Then fetch the actual results with limit
+        select_cols = "id, metadata" + (", document" if include_content else "")
+        fetch_sql = f"SELECT {select_cols} FROM jarvis WHERE {where_clause} {order_clause} LIMIT %s"
+        rows = execute_query(fetch_sql, tuple(params) + (limit,))
+
         docs = []
-        for i, doc_id in enumerate(result["ids"]):
-            metadata = result["metadatas"][i]
-
-            # Apply importance filter
-            if min_importance is not None:
-                importance = float(metadata.get("importance_score", "0.5"))
-                if importance < min_importance:
-                    continue
+        for row in rows:
+            from .schema import jsonb_to_metadata
 
             entry = {
-                "id": doc_id,
-                "metadata": metadata,
+                "id": row["id"],
+                "metadata": jsonb_to_metadata(row["metadata"]),
             }
             if include_content:
-                entry["content"] = result["documents"][i]
+                entry["content"] = row["document"]
             docs.append(entry)
-
-        # Validate sort_by
-        if sort_by not in VALID_SORT_OPTIONS:
-            return {
-                "success": False,
-                "error": f"Invalid sort_by '{sort_by}'. "
-                f"Valid options: {', '.join(VALID_SORT_OPTIONS)}",
-            }
-
-        # Sort before applying limit
-        if sort_by == "importance_desc":
-            docs.sort(
-                key=lambda d: float(d["metadata"].get("importance_score", "0.5")),
-                reverse=True,
-            )
-        elif sort_by == "importance_asc":
-            docs.sort(key=lambda d: float(d["metadata"].get("importance_score", "0.5")))
-        elif sort_by == "created_at_desc":
-            docs.sort(key=lambda d: d["metadata"].get("created_at", ""), reverse=True)
-        elif sort_by == "created_at_asc":
-            docs.sort(key=lambda d: d["metadata"].get("created_at", ""))
-        # "none" — no sorting
-
-        # Apply limit
-        limited = docs[:limit] if len(docs) > limit else docs
 
         return {
             "success": True,
-            "documents": limited,
-            "total": len(docs),
-            "returned": len(limited),
+            "documents": docs,
+            "total": total,
+            "returned": len(docs),
         }
     except Exception as e:
         logger.error(f"tier2_list failed: {e}")
@@ -423,7 +451,7 @@ def tier2_list(
 
 
 def tier2_delete(doc_id: str) -> dict:
-    """Delete Tier 2 content from ChromaDB.
+    """Delete Tier 2 content from PostgreSQL.
 
     Args:
         doc_id: Document ID to delete
@@ -432,19 +460,22 @@ def tier2_delete(doc_id: str) -> dict:
         Result dict with success, id, deleted
     """
     try:
-        collection = _get_collection()
+        from .schema import _get_pool
 
-        # Check if exists
-        result = collection.get(ids=[doc_id])
-        if not result["ids"]:
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM jarvis WHERE id = %s", (doc_id,))
+                deleted = cur.rowcount > 0
+                conn.commit()
+
+        if not deleted:
             return {
                 "success": True,
                 "id": doc_id,
                 "deleted": False,
                 "reason": "not found",
             }
-
-        collection.delete(ids=[doc_id])
 
         return {
             "success": True,
@@ -457,7 +488,7 @@ def tier2_delete(doc_id: str) -> dict:
 
 
 def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
-    """Update existing tier2 document by ID (ChromaDB upsert).
+    """Update existing tier2 document by ID with re-embedding.
 
     Unlike tier2_write which generates new IDs, this updates in-place.
 
@@ -470,11 +501,37 @@ def tier2_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         Result dict with success, doc_id, updated
     """
     try:
-        collection = _get_collection()
+        from .embedding import get_embedding_service
+        from .schema import _get_pool
+
         metadata["updated_at"] = datetime.now(timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        collection.upsert(ids=[doc_id], documents=[content], metadatas=[metadata])
+
+        # Re-embed the updated content
+        service = get_embedding_service()
+        embedding = service.encode(content)
+
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s::jsonb, now(), now())
+                       ON CONFLICT (id) DO UPDATE SET
+                           document = EXCLUDED.document,
+                           embedding = EXCLUDED.embedding,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = EXCLUDED.updated_at""",
+                    (
+                        doc_id,
+                        content,
+                        embedding,
+                        metadata_to_jsonb(metadata),
+                    ),
+                )
+                conn.commit()
+
         return {"success": True, "doc_id": doc_id, "updated": True}
     except Exception as e:
         logger.error(f"tier2_upsert failed: {e}")

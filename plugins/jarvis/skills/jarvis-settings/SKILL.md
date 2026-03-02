@@ -21,10 +21,12 @@ Jarvis Configuration
 --------------------
 Vault:        ~/.jarvis/vault/
 File Format:  Markdown (.md)
+PostgreSQL:   postgresql://jarvis:***@localhost:5432/jarvis (ok, 2657 docs)
+Embedding:    granite-small-r2 (384d, onnx)
 Auto-Extract: background (min text: 200 chars)
-Memory DB:    ~/.jarvis/db/ (configurable)
+Replication:  disabled
 Shell:        jarvis command in PATH
-Version:      1.19.0
+Version:      2.3.0
 ```
 
 If config doesn't exist, say: "No config found. Let's set up the basics." and go to Step 2a (first-time flow).
@@ -41,10 +43,16 @@ AskUserQuestion:
       options:
         - label: "Vault path"
           description: "Change where Jarvis stores your knowledge"
+        - label: "PostgreSQL connection"
+          description: "Configure database URL, test connectivity"
+        - label: "Embedding model"
+          description: "View/change embedding model and dimensions"
         - label: "File format"
           description: "Choose Markdown (.md) or Org-mode (.org) for new files"
         - label: "Auto-Extract"
           description: "Configure observation capture from conversations"
+        - label: "Replication"
+          description: "Configure bidirectional sync between instances"
         - label: "Statusline"
           description: "Install or update the Claude Code statusline"
         - label: "Advanced settings"
@@ -59,7 +67,7 @@ If no config exists, skip the menu and walk through essentials:
 1. **Vault path** (Step 3a)
 2. **File format** (Step 3b) - Markdown or Org-mode
 3. **Auto-Extract mode** (Step 3c) - quick preset selection only
-4. **Shell integration** (Step 3f below)
+4. **Shell integration** (Step 3i below)
 4. Write full config with ALL defaults visible
 5. Offer: "Want to explore advanced settings? Or you're good to go."
 
@@ -168,7 +176,100 @@ Preset mapping:
 - "Conservative" -> `min_turn_chars: 500`
 - "Custom" -> Ask for `min_turn_chars` (int)
 
-### 3d. Advanced settings
+### 3d. PostgreSQL connection
+
+Show current connection (mask password) and offer test:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "PostgreSQL configuration?"
+      header: "PostgreSQL"
+      options:
+        - label: "Test connection"
+          description: "Verify connectivity and show doc count"
+        - label: "Change connection URL"
+          description: "Set postgres_url (current: ***@localhost:5432/jarvis)"
+        - label: "Back to main menu"
+      multiSelect: false
+```
+
+**Test connection**: Call `/health` endpoint or use `jarvis_collection_stats` tool to verify PG is reachable. Display: status, doc count, table size.
+
+**Change URL**: Ask for new `postgres_url`. Update `memory.postgres_url` in config. Warn: "Changing the database URL means connecting to a different database. Existing data will not be migrated."
+
+Config key: `memory.postgres_url`
+Env override: `POSTGRES_URL`
+
+### 3e. Embedding model
+
+Show current model and dimensions:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Embedding model configuration? (current: granite-small-r2, 384d)"
+      header: "Embedding"
+      options:
+        - label: "View current"
+          description: "Show model name, dimensions, device, and backend"
+        - label: "Change model"
+          description: "⚠️ Requires re-embedding all content"
+        - label: "Back to main menu"
+      multiSelect: false
+```
+
+**View current**: Read from `get_embedding_config()` and display:
+- Model: `ibm-granite/granite-embedding-small-english-r2`
+- Dimensions: 384
+- Device: cpu
+- Backend: onnx
+
+**Change model**: Warn prominently:
+> ⚠️ Changing the embedding model requires re-embedding ALL stored content.
+> The stored model in jarvis_meta must match the active config.
+> After changing, run: `jarvis-init-db --force-model-record`
+
+Config keys: `memory.embedding_model`, `memory.embedding_dimensions`, `memory.embedding_device`, `memory.embedding_backend`
+Env overrides: `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_DEVICE`, `EMBEDDING_BACKEND`
+
+### 3f. Replication
+
+Show current replication mode:
+
+```
+AskUserQuestion:
+  questions:
+    - question: "Replication configuration? (current: disabled)"
+      header: "Replication"
+      options:
+        - label: "View status"
+          description: "Show publications, subscriptions, and sync state"
+        - label: "Enable as local node"
+          description: "Subscribe to a central Jarvis instance"
+        - label: "Enable as central hub"
+          description: "Accept subscriptions from local nodes"
+        - label: "Disable"
+          description: "Turn off replication"
+        - label: "Back to main menu"
+      multiSelect: false
+```
+
+**View status**: Call `/health` endpoint and display replication section (publications, subscriptions, sync lag).
+
+**Enable as local**: Ask for `central_url`, `node_id`. Update config keys:
+- `memory.replication.mode` -> `"local"`
+- `memory.replication.central_url` -> user input
+- `memory.replication.node_id` -> user input
+
+Then instruct: "Run `jarvis-setup-replication --role local --central-url <URL>` to create the PG subscription."
+
+**Enable as central**: Set `memory.replication.mode` -> `"central"`. Instruct: "Run `jarvis-setup-replication --role central` to create the PG publication and replication user."
+
+Config key: `memory.replication`
+Env overrides: `JARVIS_REPLICATION_MODE`, `JARVIS_CENTRAL_URL`
+
+### 3g. Advanced settings
 
 ```
 AskUserQuestion:
@@ -231,10 +332,11 @@ Let user change specific paths. All paths are relative to vault root.
 | `importance_scoring` | true | Score content importance on write |
 | `recency_boost_days` | 7 | Boost recent content in search results |
 | `default_importance` | 0.5 | Default importance score (0.0–1.0) for new content |
-| `chroma_host` | `localhost` | ChromaDB server hostname |
-| `chroma_port` | `8743` | ChromaDB server port |
-| `chroma_ssl` | `false` | Use HTTPS for ChromaDB connection |
-| `chroma_data_path` | `~/.jarvis/db` | ChromaDB server data directory |
+| `postgres_url` | `postgresql://jarvis:jarvis@localhost:5432/jarvis` | PostgreSQL connection URL |
+| `embedding_model` | `ibm-granite/granite-embedding-small-english-r2` | Sentence-transformer model |
+| `embedding_dimensions` | `384` | Vector dimensions |
+| `embedding_device` | `cpu` | Compute device (cpu/cuda) |
+| `embedding_backend` | `onnx` | Inference backend (onnx/pytorch) |
 
 #### Cross-encoder reranking
 
@@ -268,7 +370,7 @@ Offer presets:
 
 Config key: `memory.per_prompt_search`
 
-### 3e. View full config
+### 3h. View full config
 
 Pretty-print `~/.jarvis/config.json` grouped by section:
 
@@ -280,9 +382,9 @@ vault_confirmed: true
 configured_at:   2026-02-08T10:30:00Z
 
 === Memory ===
-chroma_host:          localhost
-chroma_port:          8743
-chroma_data_path:     ~/.jarvis/db
+postgres_url:         postgresql://jarvis:***@localhost:5432/jarvis
+embedding_model:      ibm-granite/granite-embedding-small-english-r2
+embedding_dimensions: 384
 secret_detection:     true
 importance_scoring:   true
 recency_boost_days:   7
@@ -306,6 +408,11 @@ age_importance_days:         30
 age_importance_score:        0.7
 on_promoted_file_deleted:    remove
 
+=== Replication ===
+mode:                 disabled
+central_url:          (not set)
+node_id:              (not set)
+
 === Vault Paths (relative to vault root) ===
 journal_jarvis:         journal/jarvis
 journal_daily:          journal/daily
@@ -315,7 +422,7 @@ notes:                  notes
 
 Highlight any non-default values with a marker. After viewing, return to main menu.
 
-### 3f. Install jarvis command
+### 3i. Install jarvis command
 
 Check if the `jarvis` executable is already installed and in PATH (`command -v jarvis`).
 
@@ -331,7 +438,7 @@ If not installed or outdated, find the shell script in the plugin distribution a
 
 If old shell function markers exist in RC files (`# Jarvis AI Assistant START` in `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`), offer to clean them up by removing the START/END block.
 
-### 3g. Statusline
+### 3j. Statusline
 
 Install or update the Jarvis statusline for Claude Code. The statusline shows model, MCP servers, cost, duration, context usage, and Jarvis server health.
 

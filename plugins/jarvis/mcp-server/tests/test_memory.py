@@ -7,7 +7,6 @@ from tools.memory import (
     _extract_title_for_file,
     _build_metadata,
     _should_skip,
-    _client_cache_key,
     index_vault,
     index_file,
 )
@@ -61,7 +60,7 @@ class TestExtractTitle:
 
 
 class TestBuildMetadata:
-    """Tests for ChromaDB metadata construction."""
+    """Tests for metadata construction."""
 
     def test_universal_fields_present(self):
         meta = _build_metadata({}, "notes/test.md")
@@ -145,39 +144,6 @@ class TestShouldSkip:
         assert _should_skip("journal/jarvis/2026/01/entry.md", False) is False
 
 
-class TestClientCacheKey:
-    """Tests for _client_cache_key singleton invalidation."""
-
-    def test_same_config_same_key(self):
-        cfg = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
-        assert _client_cache_key(cfg) == _client_cache_key(cfg)
-
-    def test_different_host_different_key(self):
-        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
-        cfg2 = {"host": "remote", "port": 8743, "ssl": False, "headers": {}}
-        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
-
-    def test_different_port_different_key(self):
-        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
-        cfg2 = {"host": "localhost", "port": 9999, "ssl": False, "headers": {}}
-        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
-
-    def test_ssl_change_different_key(self):
-        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
-        cfg2 = {"host": "localhost", "port": 8743, "ssl": True, "headers": {}}
-        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
-
-    def test_headers_change_different_key(self):
-        cfg1 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {}}
-        cfg2 = {"host": "localhost", "port": 8743, "ssl": False, "headers": {"X-Token": "abc"}}
-        assert _client_cache_key(cfg1) != _client_cache_key(cfg2)
-
-    def test_header_order_irrelevant(self):
-        cfg1 = {"host": "h", "port": 1, "ssl": False, "headers": {"A": "1", "B": "2"}}
-        cfg2 = {"host": "h", "port": 1, "ssl": False, "headers": {"B": "2", "A": "1"}}
-        assert _client_cache_key(cfg1) == _client_cache_key(cfg2)
-
-
 class TestIndexVault:
     """Integration tests for bulk vault indexing."""
 
@@ -188,13 +154,6 @@ class TestIndexVault:
 
     def test_index_vault_with_files(self, mock_config):
         """Should index .md files with namespaced IDs."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db")}
-        )
-
         # Create test files
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
@@ -209,29 +168,20 @@ class TestIndexVault:
         assert result["collection_total"] >= 2
 
         # Verify IDs have vault:: prefix
-        collection = mem._get_collection()
-        all_data = collection.get()
-        for doc_id in all_data["ids"]:
+        db = mock_config.db
+        for doc_id in db.rows.keys():
             assert doc_id.startswith("vault::"), f"ID {doc_id} missing vault:: prefix"
 
         # Verify metadata has universal fields
-        for meta in all_data["metadatas"]:
+        for row in db.rows.values():
+            meta = row["metadata"]
             assert meta["type"] == "vault"
             assert meta["namespace"] == "vault::"
             assert "vault_type" in meta
             assert "created_at" in meta
 
-        mem._chroma_client = None
-
     def test_index_vault_skips_templates(self, mock_config):
         """Should skip templates directory."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db2")}
-        )
-
         templates_dir = mock_config.vault_path / "templates"
         templates_dir.mkdir(exist_ok=True)
         (templates_dir / "daily.md").write_text("# Template\n\nContent")
@@ -240,17 +190,8 @@ class TestIndexVault:
         assert result["success"] is True
         assert result["files_skipped"] >= 1
 
-        mem._chroma_client = None
-
     def test_index_vault_includes_dot_directories(self, mock_config):
         """Should index files in dot-prefixed directories like .jarvis/."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db_dotdir")}
-        )
-
         dot_dir = mock_config.vault_path / ".jarvis" / "strategic"
         dot_dir.mkdir(parents=True, exist_ok=True)
         (dot_dir / "test-values.md").write_text("# Test Values\n\nSome strategic content here.")
@@ -259,21 +200,15 @@ class TestIndexVault:
         assert result["success"] is True
         assert result["files_indexed"] >= 1
 
-        collection = mem._get_collection()
-        results = collection.get(where={"parent_file": ".jarvis/strategic/test-values.md"})
-        assert len(results["ids"]) > 0
-
-        mem._chroma_client = None
+        # Verify the file is in the database with correct parent_file
+        matching = [
+            r for r in mock_config.db.rows.values()
+            if r["metadata"].get("parent_file") == ".jarvis/strategic/test-values.md"
+        ]
+        assert len(matching) > 0
 
     def test_index_vault_skips_serena(self, mock_config):
         """Should skip .serena directory (deprecated Serena memories)."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db_serena")}
-        )
-
         serena_dir = mock_config.vault_path / ".serena" / "memories"
         serena_dir.mkdir(parents=True, exist_ok=True)
         (serena_dir / "old-file.md").write_text("# Old Serena Memory\n\nStale content.")
@@ -282,17 +217,8 @@ class TestIndexVault:
         assert result["success"] is True
         assert result["files_skipped"] >= 1
 
-        mem._chroma_client = None
-
     def test_index_vault_skips_files_with_secrets(self, mock_config):
         """Should skip files containing secrets during bulk indexing."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_secret_vault_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "clean.md").write_text("# Clean File\n\nNo secrets here.")
@@ -305,21 +231,12 @@ class TestIndexVault:
         assert result["files_indexed"] >= 1  # clean.md indexed
         assert result["secrets_skipped"] == 1  # has-secret.md skipped
 
-        mem._chroma_client = None
-
 
 class TestIndexFile:
     """Tests for single file indexing."""
 
     def test_index_single_file(self, mock_config):
         """Should index a single file with namespaced ID."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_memory_db3")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "single.md").write_text(
@@ -334,8 +251,6 @@ class TestIndexFile:
         assert result["metadata"]["type"] == "vault"
         assert result["metadata"]["vault_type"] == "note"
 
-        mem._chroma_client = None
-
     def test_index_nonexistent_file(self, mock_config):
         result = index_file("notes/does-not-exist.md")
         assert result["success"] is False
@@ -343,13 +258,6 @@ class TestIndexFile:
 
     def test_index_file_with_secret_skips(self, mock_config):
         """Should refuse to index a file containing secrets."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_secret_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "has-secret.md").write_text(
@@ -361,16 +269,10 @@ class TestIndexFile:
         assert result["error"] == "SECRET_DETECTED"
         assert len(result["detections"]) >= 1
 
-        mem._chroma_client = None
-
     def test_index_file_secret_detection_disabled(self, mock_config):
         """Should index files with secrets when secret_detection is disabled."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
         mock_config.set(
             memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_secret_off_db"),
                 "secret_detection": False,
             }
         )
@@ -385,39 +287,12 @@ class TestIndexFile:
         assert result["success"] is True
         assert result["chunks"] >= 1
 
-        mem._chroma_client = None
-
-
-class TestCollectionCreation:
-    """Tests for ChromaDB collection creation."""
-
-    def test_fresh_install_creates_jarvis(self, mock_config):
-        """If no collection exists, _get_collection() creates 'jarvis'."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_fresh_install_db")}
-        )
-
-        collection = mem._get_collection()
-        assert collection.name == "jarvis"
-
-        mem._chroma_client = None
-
 
 class TestChunkingIntegration:
     """Tests for chunking integration in the indexing pipeline."""
 
     def test_index_file_with_headings_creates_chunks(self, mock_config):
         """A file with H2 headings should produce multiple chunks."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_h2_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         content = (
@@ -432,32 +307,21 @@ class TestChunkingIntegration:
         assert result["success"] is True
         assert result["chunks"] >= 2
 
-        # Verify chunk IDs in collection
-        collection = mem._get_collection()
-        all_data = collection.get(include=["metadatas"])
-        chunk_ids = [i for i in all_data["ids"] if "chunked.md" in i]
+        # Verify chunk IDs in database
+        chunk_ids = [rid for rid in mock_config.db.rows.keys() if "chunked.md" in rid]
         assert len(chunk_ids) >= 2
 
         # Verify chunk metadata
-        for i, doc_id in enumerate(all_data["ids"]):
-            meta = all_data["metadatas"][i]
-            if "chunked.md" in doc_id:
+        for rid, row in mock_config.db.rows.items():
+            if "chunked.md" in rid:
+                meta = row["metadata"]
                 assert "parent_file" in meta
                 assert meta["parent_file"] == "notes/chunked.md"
                 assert "chunk_heading" in meta
-                assert meta["chunk_total"] >= 2
-
-        mem._chroma_client = None
+                assert int(meta["chunk_total"]) >= 2
 
     def test_index_file_without_headings_single_doc(self, mock_config):
         """Short file without headings should produce a single document."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_single_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "short.md").write_text("# Short Note\n\nJust a brief note.")
@@ -467,17 +331,8 @@ class TestChunkingIntegration:
         assert result["chunks"] == 1
         assert result["id"] == "vault::notes/short.md"
 
-        mem._chroma_client = None
-
     def test_index_file_chunk_ids_format(self, mock_config):
         """Multi-chunk IDs should use vault::path#chunk-N format."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_chunk_ids_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         content = (
@@ -490,22 +345,12 @@ class TestChunkingIntegration:
         assert result["success"] is True
         assert result["chunks"] >= 2
 
-        collection = mem._get_collection()
-        all_data = collection.get()
-        for doc_id in all_data["ids"]:
+        multi_ids = [rid for rid in mock_config.db.rows.keys() if "multi.md" in rid]
+        for doc_id in multi_ids:
             assert doc_id.startswith("vault::notes/multi.md#chunk-")
-
-        mem._chroma_client = None
 
     def test_reindex_updates_chunk_count(self, mock_config):
         """Re-indexing a file should clean up old chunks and create new ones."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_reindex_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
 
@@ -515,7 +360,6 @@ class TestChunkingIntegration:
         )
         (notes_dir / "evolving.md").write_text(content_v1)
         result1 = index_file("notes/evolving.md")
-        chunks_v1 = result1["chunks"]
 
         # Re-index: 2 sections
         content_v2 = "\n\n".join(
@@ -525,22 +369,11 @@ class TestChunkingIntegration:
         result2 = index_file("notes/evolving.md")
 
         # Old chunks should be cleaned up
-        collection = mem._get_collection()
-        all_data = collection.get()
-        evolving_ids = [i for i in all_data["ids"] if "evolving.md" in i]
+        evolving_ids = [rid for rid in mock_config.db.rows.keys() if "evolving.md" in rid]
         assert len(evolving_ids) == result2["chunks"]
-
-        mem._chroma_client = None
 
     def test_index_vault_with_chunking(self, mock_config):
         """Bulk indexing should also produce chunks."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_vault_chunk_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         content = (
@@ -554,17 +387,8 @@ class TestChunkingIntegration:
         assert result["files_indexed"] == 1  # 1 file
         assert result["chunks_total"] >= 2  # Multiple chunks from headings
 
-        mem._chroma_client = None
-
     def test_importance_score_in_metadata(self, mock_config):
         """Indexed files should have importance_score float in metadata."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_score_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "scored.md").write_text(
@@ -580,21 +404,12 @@ class TestChunkingIntegration:
         # High frontmatter + "decision"/"architecture" concepts should yield good score
         assert score >= 0.7
 
-        mem._chroma_client = None
-
     def test_per_chunk_importance_scoring(self, mock_config):
         """Chunks should get individual importance scores based on their content."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_perchunk_score_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
-        # Chunk 0: has "architecture decision" concepts → higher score
-        # Chunk 1: generic filler content → lower score
+        # Chunk 0: has "architecture decision" concepts -> higher score
+        # Chunk 1: generic filler content -> lower score
         content = (
             "## Architecture Decision\n\n"
             + "This is a critical architecture decision about the system. " * 30
@@ -605,47 +420,32 @@ class TestChunkingIntegration:
 
         index_file("notes/mixed-importance.md")
 
-        collection = mem._get_collection()
-        all_data = collection.get(include=["metadatas"])
-        # Group scores by heading prefix (chunks may split into continuations)
+        # Group scores by heading prefix
         arch_scores = [
-            float(m["importance_score"])
-            for m in all_data["metadatas"]
-            if m["chunk_heading"].startswith("Architecture Decision")
+            float(r["metadata"]["importance_score"])
+            for r in mock_config.db.rows.values()
+            if r["metadata"].get("chunk_heading", "").startswith("Architecture Decision")
         ]
         shopping_scores = [
-            float(m["importance_score"])
-            for m in all_data["metadatas"]
-            if m["chunk_heading"].startswith("Shopping List")
+            float(r["metadata"]["importance_score"])
+            for r in mock_config.db.rows.values()
+            if r["metadata"].get("chunk_heading", "").startswith("Shopping List")
         ]
         assert len(arch_scores) >= 1
         assert len(shopping_scores) >= 1
         # "architecture decision" concepts should score higher than generic filler
         assert max(arch_scores) > max(shopping_scores)
 
-        mem._chroma_client = None
-
     def test_parent_file_metadata(self, mock_config):
         """All indexed chunks should have parent_file metadata."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_parent_db")}
-        )
-
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "parent-test.md").write_text("# Simple\n\nJust content.")
 
         index_file("notes/parent-test.md")
 
-        collection = mem._get_collection()
-        all_data = collection.get(include=["metadatas"])
-        for meta in all_data["metadatas"]:
-            assert meta.get("parent_file") == "notes/parent-test.md"
-
-        mem._chroma_client = None
+        for row in mock_config.db.rows.values():
+            assert row["metadata"].get("parent_file") == "notes/parent-test.md"
 
 
 class TestTierMetadata:
@@ -653,13 +453,6 @@ class TestTierMetadata:
 
     def test_build_metadata_includes_tier(self, mock_config):
         """Test that _build_metadata includes tier field."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_tier_metadata_db")}
-        )
-
         # Index a file
         test_file = mock_config.vault_path / "notes" / "test-tier.md"
         test_file.parent.mkdir(parents=True, exist_ok=True)
@@ -669,5 +462,3 @@ class TestTierMetadata:
         assert result["success"]
         assert "tier" in result["metadata"]
         assert result["metadata"]["tier"] == "file"
-
-        mem._chroma_client = None

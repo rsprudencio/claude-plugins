@@ -103,7 +103,7 @@ TOOLS = [
                         "plan",
                         "worklog",
                     ],
-                    "description": "Content type for NEW content. 'memory' = strategic (file-backed). Others = ephemeral (ChromaDB).",
+                    "description": "Content type for NEW content. 'memory' = strategic (file-backed). Others = ephemeral (pgvector).",
                 },
                 "name": {
                     "type": "string",
@@ -171,7 +171,7 @@ TOOLS = [
                 "auto_index": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Auto-index .md files to ChromaDB",
+                    "description": "Auto-index .md files for semantic search",
                 },
                 "skip_secret_scan": {
                     "type": "boolean",
@@ -275,6 +275,10 @@ TOOLS = [
                     "default": "importance_desc",
                     "description": "Sort order for tier2 list mode (default: importance_desc)",
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": "Filter tier2 results by session ID",
+                },
                 "user": {
                     "type": "string",
                     "description": "Filter results by user (for multi-user deployments)",
@@ -355,10 +359,10 @@ TOOLS = [
             "required": ["relative_path"],
         },
     ),
-    # Memory operations (ChromaDB semantic indexing)
+    # Memory operations (pgvector semantic indexing)
     Tool(
         name="jarvis_index_vault",
-        description="Bulk index all .md files in the vault into ChromaDB for semantic search.",
+        description="Bulk index all .md files in the vault into PostgreSQL for semantic search.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -379,7 +383,7 @@ TOOLS = [
     ),
     Tool(
         name="jarvis_index_file",
-        description="Index a single vault file into ChromaDB (for incremental indexing after journal creation).",
+        description="Index a single vault file into PostgreSQL (for incremental indexing after journal creation).",
         inputSchema={
             "type": "object",
             "properties": {
@@ -509,7 +513,7 @@ def handle_resolve_path(args: dict) -> dict:
         resolved = get_path(
             name, substitutions=substitutions, ensure_exists=ensure_exists
         )
-        is_vault_relative = name not in {"chroma_data_path", "project_memories_path"}
+        is_vault_relative = name not in {"project_memories_path"}
         result = {
             "success": True,
             "name": name,
@@ -639,14 +643,22 @@ def get_background_tasks():
     ensuring no drift between transport modes.
     """
     from tools.patterns import pattern_detection_loop
-    from tools.chroma_telemetry import health_probe_loop
     from tools.todoist_sync import todoist_sync_loop
 
-    return [pattern_detection_loop(), health_probe_loop(), todoist_sync_loop()]
+    return [pattern_detection_loop(), todoist_sync_loop()]
 
 
 async def main():
     logger.info("Starting Jarvis Core MCP Server")
+
+    # Initialize pgvector schema (idempotent — safe to call every startup)
+    try:
+        from tools.schema import ensure_schema, check_model_consistency
+        ensure_schema()
+        check_model_consistency()
+    except Exception as e:
+        logger.warning("Schema initialization deferred (database may not be ready): %s", e)
+
     async with stdio_server() as (read_stream, write_stream):
         server_task = server.run(
             read_stream, write_stream, server.create_initialization_options()

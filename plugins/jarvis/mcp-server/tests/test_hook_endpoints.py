@@ -186,7 +186,7 @@ def test_ingest_event_id_passthrough(monkeypatch):
             "project_path": "/tmp/project",
             "git_branch": "main",
             "relevant_files": ["a.py"],
-            "file_mtimes": "{\"a.py\":123.4}",
+            "file_mtimes": {"a.py": 123.4},
             "session_id": "s-1",
             "transcript_line": 99,
         },

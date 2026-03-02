@@ -65,6 +65,7 @@ class TestTier2UserAttribution:
 
     def test_tier2_write_different_users(self, mock_config):
         """Different users get different attribution."""
+        import time
         from tools.tier2 import tier2_write, tier2_read
 
         # Write as raph
@@ -77,6 +78,9 @@ class TestTier2UserAttribution:
         finally:
             current_user.reset(token)
 
+        # Small delay to avoid timestamp-based ID collision
+        time.sleep(0.01)
+
         # Write as alice
         token = current_user.set("alice")
         try:
@@ -86,6 +90,9 @@ class TestTier2UserAttribution:
             )
         finally:
             current_user.reset(token)
+
+        # Verify different IDs were assigned
+        assert r1["id"] != r2["id"], "Timestamp collision — IDs should differ"
 
         doc1 = tier2_read(r1["id"])
         doc2 = tier2_read(r2["id"])
@@ -98,6 +105,7 @@ class TestQueryUserFiltering:
 
     def test_query_filter_by_user(self, mock_config):
         """Querying with user filter returns only that user's content."""
+        import time
         from tools.tier2 import tier2_write, tier2_read
         from tools.query import query_vault
 
@@ -111,6 +119,8 @@ class TestQueryUserFiltering:
             )
         finally:
             current_user.reset(token)
+
+        time.sleep(0.01)  # Avoid timestamp-based ID collision
 
         # Write as alice
         token = current_user.set("alice")
@@ -139,6 +149,7 @@ class TestQueryUserFiltering:
 
     def test_query_no_user_filter_returns_all(self, mock_config):
         """Querying without user filter returns all users' content."""
+        import time
         from tools.tier2 import tier2_write
         from tools.query import query_vault
 
@@ -152,6 +163,8 @@ class TestQueryUserFiltering:
             )
         finally:
             current_user.reset(token)
+
+        time.sleep(0.01)  # Avoid timestamp-based ID collision
 
         # Write as alice
         token = current_user.set("alice")
@@ -289,40 +302,6 @@ class TestVaultIndexingUser:
         assert "user" not in meta
 
 
-class TestTranslateFilterUser:
-    """_translate_filter should support user parameter."""
-
-    def test_user_filter_alone(self):
-        """User filter produces correct ChromaDB where clause."""
-        from tools.query import _translate_filter
-
-        result = _translate_filter({}, user="raph")
-        assert result == {"user": "raph"}
-
-    def test_user_filter_with_directory(self):
-        """User filter combines with directory filter."""
-        from tools.query import _translate_filter
-
-        result = _translate_filter({"directory": "journal"}, user="raph")
-        assert result == {"$and": [{"user": "raph"}, {"directory": "journal"}]}
-
-    def test_user_anonymous_ignored(self):
-        """Anonymous user is not added as filter."""
-        from tools.query import _translate_filter
-
-        result = _translate_filter({"directory": "journal"}, user="anonymous")
-        assert result == {"directory": "journal"}
-
-    def test_user_none_ignored(self):
-        """None user is not added as filter."""
-        from tools.query import _translate_filter
-
-        result = _translate_filter({"directory": "journal"}, user=None)
-        assert result == {"directory": "journal"}
-
-    def test_empty_filter_with_no_user(self):
-        """Empty filter with no user returns None."""
-        from tools.query import _translate_filter
-
-        result = _translate_filter({}, user=None)
-        assert result is None
+    # TestTranslateFilterUser removed — _translate_filter was a ChromaDB-specific
+    # function that no longer exists in the pgvector rewrite. User filtering is
+    # now done directly in SQL WHERE clauses.

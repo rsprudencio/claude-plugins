@@ -18,10 +18,17 @@ from tools.conflict import (
     _resolve_log_dir,
 )
 from tools.tier2 import tier2_write
-from tools.memory import _get_collection
 
 
-# ── has_negation_signals ────────────────────────────────────────────────────
+def _seed_doc(db, doc_id, text, metadata):
+    """Plant a document directly in the mock database for testing."""
+    from tools.embedding import get_embedding_service
+
+    emb = get_embedding_service()
+    db.upsert(doc_id, text, emb.encode(text), metadata)
+
+
+# -- has_negation_signals ----------------------------------------------------
 
 
 class TestHasNegationSignals:
@@ -72,16 +79,11 @@ class TestHasNegationSignals:
         assert has_negation_signals("This is a notable achievement") is False
 
     def test_word_boundary_nevermore(self):
-        """'nevermore' should NOT trigger 'never' match — wait, it should
-        because 'never' is word-boundary matched and 'nevermore' starts with 'never'
-        followed by 'more'. \\b matches between 'r' and 'm'. Let's verify."""
-        # 'never' with \b: 'never' in 'nevermore' — \b at start, but 'neverm' is
-        # continuous word chars. Actually \b before 'n' and no \b between 'r' and 'm'
-        # so 'never\b' does NOT match in 'nevermore'.
+        """'nevermore' should NOT trigger 'never' match -- \\b at word boundary."""
         assert has_negation_signals("Quoth the raven nevermore") is False
 
 
-# ── _tokenize ───────────────────────────────────────────────────────────────
+# -- _tokenize ---------------------------------------------------------------
 
 
 class TestTokenize:
@@ -113,7 +115,7 @@ class TestTokenize:
         assert "fg" in tokens
 
 
-# ── find_conflict_candidates ────────────────────────────────────────────────
+# -- find_conflict_candidates ------------------------------------------------
 
 
 class TestFindConflictCandidates:
@@ -128,12 +130,12 @@ class TestFindConflictCandidates:
         assert result == []
 
     def test_no_candidates_dissimilar(self, mock_config):
-        """Write content that is semantically dissimilar — no candidates."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["Python is great for data science and machine learning"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
+        """Write content that is semantically dissimilar -- no candidates."""
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Python is great for data science and machine learning",
+            {"tier": "chromadb", "type": "observation"},
         )
         config = {
             "similarity_threshold": 0.99,  # Very high threshold
@@ -148,12 +150,12 @@ class TestFindConflictCandidates:
         assert result == []
 
     def test_candidate_high_sim_low_jaccard(self, mock_config):
-        """Same topic, different wording → candidate found."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["Use the singleton pattern for database connections"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
+        """Same topic, different wording -> candidate found."""
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use the singleton pattern for database connections",
+            {"tier": "chromadb", "type": "observation"},
         )
         config = {
             "similarity_threshold": 0.3,  # Low threshold to ensure match
@@ -176,16 +178,14 @@ class TestFindConflictCandidates:
 
     def test_skip_already_superseded(self, mock_config):
         """Entries with status=superseded should be skipped."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["Use pattern X for error handling"],
-            metadatas=[
-                {"tier": "chromadb", "type": "observation", "status": "superseded"}
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use pattern X for error handling",
+            {"tier": "chromadb", "type": "observation", "status": "superseded"},
         )
         config = {
-            "similarity_threshold": 0.0,  # Accept everything
+            "similarity_threshold": -2.0,  # Accept everything
             "divergence_threshold": 1.0,  # Accept everything
             "max_candidates": 10,
         }
@@ -198,14 +198,14 @@ class TestFindConflictCandidates:
 
     def test_skip_self(self, mock_config):
         """Should not return self as a candidate."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::self1"],
-            documents=["test content for self-matching"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
+        _seed_doc(
+            mock_config.db,
+            "obs::self1",
+            "test content for self-matching",
+            {"tier": "chromadb", "type": "observation"},
         )
         config = {
-            "similarity_threshold": 0.0,
+            "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
             "max_candidates": 10,
         }
@@ -218,15 +218,15 @@ class TestFindConflictCandidates:
 
     def test_no_candidate_high_sim_high_jaccard(self, mock_config):
         """High similarity + high word overlap = reinforcing, not conflict."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["Always use type hints in Python functions"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Always use type hints in Python functions",
+            {"tier": "chromadb", "type": "observation"},
         )
         config = {
-            "similarity_threshold": 0.0,  # Accept by similarity
-            "divergence_threshold": 0.1,  # Very low divergence threshold — require very different words
+            "similarity_threshold": -2.0,  # Accept by similarity
+            "divergence_threshold": 0.1,  # Very low -- require very different words
             "max_candidates": 10,
         }
         result = find_conflict_candidates(
@@ -235,11 +235,10 @@ class TestFindConflictCandidates:
             config,
         )
         # High jaccard (very similar words) should NOT pass the divergence filter
-        # (jaccard is HIGH, threshold is LOW — filter requires jaccard < threshold)
         assert result == []
 
 
-# ── verify_conflicts_with_llm ──────────────────────────────────────────────
+# -- verify_conflicts_with_llm ----------------------------------------------
 
 
 class TestVerifyConflictsWithLlm:
@@ -266,7 +265,7 @@ class TestVerifyConflictsWithLlm:
         with patch("tools.conflict._call_haiku_raw") as mock_haiku:
             mock_haiku.return_value = None  # API failure
             result = verify_conflicts_with_llm("actually stop X", candidates, config)
-        # Fallback: trust rule-based → return all candidates
+        # Fallback: trust rule-based -> return all candidates
         assert result == ["obs::old1"]
 
     def test_empty_array(self):
@@ -301,48 +300,44 @@ class TestVerifyConflictsWithLlm:
         assert result == ["obs::old1"]  # Only index 0 is valid
 
 
-# ── mark_superseded ─────────────────────────────────────────────────────────
+# -- mark_superseded ---------------------------------------------------------
 
 
 class TestMarkSuperseded:
 
     def test_adds_metadata(self, mock_config):
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["old content"],
-            metadatas=[
-                {"tier": "chromadb", "type": "observation", "source": "auto-extract"}
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "old content",
+            {"tier": "chromadb", "type": "observation", "source": "auto-extract"},
         )
         result = mark_superseded("obs::old1", "obs::new1")
         assert result is True
 
-        updated = collection.get(ids=["obs::old1"])
-        meta = updated["metadatas"][0]
+        row = mock_config.db.get("obs::old1")
+        meta = row["metadata"]
         assert meta["status"] == "superseded"
         assert meta["superseded_by"] == "obs::new1"
         assert "superseded_at" in meta
 
     def test_preserves_other_metadata(self, mock_config):
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["old content"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "source": "auto-extract",
-                    "tags": "foo,bar",
-                    "importance_score": "0.8",
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "old content",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "source": "auto-extract",
+                "tags": "foo,bar",
+                "importance_score": "0.8",
+            },
         )
         mark_superseded("obs::old1", "obs::new1")
 
-        updated = collection.get(ids=["obs::old1"])
-        meta = updated["metadatas"][0]
+        row = mock_config.db.get("obs::old1")
+        meta = row["metadata"]
         assert meta["source"] == "auto-extract"
         assert meta["tags"] == "foo,bar"
         assert meta["importance_score"] == "0.8"
@@ -353,24 +348,22 @@ class TestMarkSuperseded:
         assert result is False
 
 
-# ── Cross-type conflict ─────────────────────────────────────────────────────
+# -- Cross-type conflict -----------------------------------------------------
 
 
 class TestCrossTypeConflict:
 
     def test_observation_vs_pattern(self, mock_config):
         """New observation can supersede an old pattern."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["pattern::use-singleton"],
-            documents=["Use singleton pattern for database connections"],
-            metadatas=[
-                {"tier": "chromadb", "type": "pattern", "namespace": "pattern::"}
-            ],
+        _seed_doc(
+            mock_config.db,
+            "pattern::use-singleton",
+            "Use singleton pattern for database connections",
+            {"tier": "chromadb", "type": "pattern", "namespace": "pattern::"},
         )
         # The candidate finder queries all tier=chromadb, so patterns are included
         config = {
-            "similarity_threshold": 0.0,
+            "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
             "max_candidates": 10,
         }
@@ -385,16 +378,14 @@ class TestCrossTypeConflict:
 
     def test_learning_vs_decision(self, mock_config):
         """New learning can supersede an old decision."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["decision::use-redux"],
-            documents=["Decided to use Redux for state management"],
-            metadatas=[
-                {"tier": "chromadb", "type": "decision", "namespace": "decision::"}
-            ],
+        _seed_doc(
+            mock_config.db,
+            "decision::use-redux",
+            "Decided to use Redux for state management",
+            {"tier": "chromadb", "type": "decision", "namespace": "decision::"},
         )
         config = {
-            "similarity_threshold": 0.0,
+            "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
             "max_candidates": 10,
         }
@@ -407,7 +398,7 @@ class TestCrossTypeConflict:
         assert "decision::use-redux" in ids
 
 
-# ── detect_conflicts orchestrator ───────────────────────────────────────────
+# -- detect_conflicts orchestrator -------------------------------------------
 
 
 class TestDetectConflicts:
@@ -433,11 +424,11 @@ class TestDetectConflicts:
 
     def test_rule_based_pipeline(self, mock_config):
         """Full pipeline: write old entry, write contradicting new entry, verify superseded."""
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::old1"],
-            documents=["Use the factory pattern for creating objects"],
-            metadatas=[{"tier": "chromadb", "type": "observation"}],
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use the factory pattern for creating objects",
+            {"tier": "chromadb", "type": "observation"},
         )
 
         # The detect_conflicts uses config defaults (use_llm=False)
@@ -485,7 +476,7 @@ class TestDetectConflicts:
         mock_mark.assert_called_once_with("obs::old1", "obs::new1")
 
 
-# ── Filter integration tests ───────────────────────────────────────────────
+# -- Filter integration tests -----------------------------------------------
 
 
 class TestFilterSuperseded:
@@ -496,31 +487,28 @@ class TestFilterSuperseded:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::active"],
-            documents=["active observation"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "namespace": "obs::",
-                    "created_at": now,
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::active",
+            "active observation",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "namespace": "obs::",
+                "created_at": now,
+            },
         )
-        collection.upsert(
-            ids=["obs::stale"],
-            documents=["stale observation"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "namespace": "obs::",
-                    "created_at": now,
-                    "status": "superseded",
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::stale",
+            "stale observation",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "namespace": "obs::",
+                "created_at": now,
+                "status": "superseded",
+            },
         )
 
         recent = _fetch_recent_observations(lookback_minutes=60)
@@ -534,31 +522,28 @@ class TestFilterSuperseded:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::active"],
-            documents=["Python error handling best practices"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "namespace": "obs::",
-                    "updated_at": now,
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::active",
+            "Python error handling best practices",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "namespace": "obs::",
+                "updated_at": now,
+            },
         )
-        collection.upsert(
-            ids=["obs::stale"],
-            documents=["Python error handling best practices outdated version"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "namespace": "obs::",
-                    "updated_at": now,
-                    "status": "superseded",
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::stale",
+            "Python error handling best practices outdated version",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "namespace": "obs::",
+                "updated_at": now,
+                "status": "superseded",
+            },
         )
 
         result = semantic_context("Python error handling", threshold=0.0, budget=8000)
@@ -572,18 +557,16 @@ class TestFilterSuperseded:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        collection = _get_collection()
-        collection.upsert(
-            ids=["obs::legacy"],
-            documents=["legacy observation without status field"],
-            metadatas=[
-                {
-                    "tier": "chromadb",
-                    "type": "observation",
-                    "namespace": "obs::",
-                    "created_at": now,
-                }
-            ],
+        _seed_doc(
+            mock_config.db,
+            "obs::legacy",
+            "legacy observation without status field",
+            {
+                "tier": "chromadb",
+                "type": "observation",
+                "namespace": "obs::",
+                "created_at": now,
+            },
         )
 
         recent = _fetch_recent_observations(lookback_minutes=60)
@@ -591,7 +574,7 @@ class TestFilterSuperseded:
         assert "obs::legacy" in ids
 
 
-# ── Conflict log ────────────────────────────────────────────────────────────
+# -- Conflict log ------------------------------------------------------------
 
 
 class TestConflictLog:
@@ -631,7 +614,7 @@ class TestConflictLog:
         assert "reasoning" in record
 
 
-# ── tier2_write integration ─────────────────────────────────────────────────
+# -- tier2_write integration -------------------------------------------------
 
 
 class TestTier2WriteIntegration:

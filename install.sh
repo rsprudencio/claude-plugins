@@ -306,10 +306,6 @@ if [ "$SKIP_CONFIG" != true ]; then
     mkdir -p "$VAULT_PATH"
     ok "Vault directory ready: $VAULT_PATH"
 
-    # Create memory DB directory
-    mkdir -p "$JARVIS_HOME/db"
-    ok "Memory DB directory ready: $JARVIS_HOME/db/"
-
     # Write config from shipped template (SSoT) with user values substituted
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     TEMPLATE="$PLUGIN_DIR/defaults/config.json"
@@ -423,22 +419,50 @@ echo ""
 COMPOSE_FILE="$JARVIS_HOME/docker-compose.yml"
 cat > "$COMPOSE_FILE" << COMPOSEEOF
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=jarvis
+      - POSTGRES_PASSWORD=jarvis
+      - POSTGRES_DB=jarvis
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
+      interval: 5s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    restart: unless-stopped
+
   jarvis:
     image: $DOCKER_IMAGE
     ports:
       - "8741:8741"
       - "8742:8742"
-      - "8743:8743"
+      - "8744:8744"
     volumes:
       - "$VAULT_PATH:/vault"
       - "$JARVIS_HOME:/config"
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
-      - CHROMA_HOST=127.0.0.1
-      - CHROMA_PORT=8743
+      - POSTGRES_URL=postgresql://jarvis:jarvis@postgres:5432/jarvis
       - TODOIST_API_TOKEN=${TODOIST_TOKEN:-}
       - JARVIS_AUTOCRLF=false
+      - JARVIS_REPLICATION_MODE=disabled
+      - JARVIS_CENTRAL_URL=
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
@@ -446,6 +470,9 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+
+volumes:
+  pgdata:
 COMPOSEEOF
 ok "Docker Compose file: $COMPOSE_FILE"
 
@@ -465,7 +492,13 @@ if docker compose -f "$COMPOSE_FILE" up -d 2>&1; then
     if [ "$HEALTH_OK" = true ]; then
         ok "Jarvis MCP server is running"
         HEALTH_RESP=$(curl -sf http://localhost:8741/health 2>/dev/null)
-        info "$HEALTH_RESP"
+        # Parse and display key health info
+        PG_STATUS=$($PYTHON_CMD -c "import json,sys; d=json.loads(sys.argv[1]); pg=d.get('postgres',{}); print(f\"pg:{pg.get('status','?')}({pg.get('doc_count',0)})\")" "$HEALTH_RESP" 2>/dev/null || echo "")
+        if [ -n "$PG_STATUS" ]; then
+            info "Health: $PG_STATUS"
+        else
+            info "$HEALTH_RESP"
+        fi
     else
         warn "Container started but health check failed — check: docker compose -f $COMPOSE_FILE logs"
     fi

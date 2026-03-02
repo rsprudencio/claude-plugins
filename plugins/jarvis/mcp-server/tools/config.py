@@ -25,11 +25,9 @@ from jarvis_common.config import (  # noqa: F401
     verify_config,
     get_verified_vault_path,
     get_file_format,
-    get_chroma_config,
     _as_dict,
     _merge_with_defaults,
     _resolve_jarvis_home,
-    _parse_chroma_url,
 )
 
 
@@ -51,6 +49,75 @@ def _get_memory_section(subsection: str | None = None) -> dict:
 
 # ── Core-specific getters ─────────────────────────────────────────────
 # These are only needed by jarvis-core, not by jarvis-obsidian.
+
+
+def get_embedding_config() -> dict:
+    """Get embedding model configuration with defaults.
+
+    Resolution order: env vars > config file > defaults.
+    """
+    defaults = {
+        "model": "ibm-granite/granite-embedding-english-r2",
+        "dimensions": 768,
+        "device": "cpu",
+        "backend": "onnx",
+    }
+    mem = _get_memory_section()
+    config = {
+        "model": (
+            os.environ.get("EMBEDDING_MODEL")
+            or mem.get("embedding_model", defaults["model"])
+        ),
+        "dimensions": int(
+            os.environ.get("EMBEDDING_DIMENSIONS")
+            or mem.get("embedding_dimensions", defaults["dimensions"])
+        ),
+        "device": (
+            os.environ.get("EMBEDDING_DEVICE")
+            or mem.get("embedding_device", defaults["device"])
+        ),
+        "backend": (
+            os.environ.get("EMBEDDING_BACKEND")
+            or mem.get("embedding_backend", defaults["backend"])
+        ),
+    }
+    return config
+
+
+def get_postgres_config() -> dict:
+    """Get PostgreSQL connection configuration.
+
+    Resolution order: POSTGRES_URL env var > config file > default.
+    """
+    mem = _get_memory_section()
+    url = (
+        os.environ.get("POSTGRES_URL")
+        or mem.get("postgres_url", "postgresql://jarvis:jarvis@localhost:5432/jarvis")
+    )
+    return {"url": url}
+
+
+def get_replication_config() -> dict:
+    """Get replication configuration with defaults.
+
+    Resolution order: env vars > config file > defaults.
+    """
+    defaults = {
+        "mode": "disabled",
+        "central_url": "",
+        "node_id": "",
+        "publications": ["jarvis_pub"],
+        "replication_user": "jarvis_repl",
+    }
+    config = _merge_with_defaults(defaults, _get_memory_section("replication"))
+    # Env var overrides
+    env_mode = os.environ.get("JARVIS_REPLICATION_MODE")
+    if env_mode:
+        config["mode"] = env_mode
+    env_url = os.environ.get("JARVIS_CENTRAL_URL")
+    if env_url:
+        config["central_url"] = env_url
+    return config
 
 
 def get_memory_config() -> dict:
@@ -178,24 +245,6 @@ def get_pattern_detection_config() -> dict:
         "merge_threshold": 0.7,
     }
     return _merge_with_defaults(defaults, _get_memory_section("pattern_detection"))
-
-
-def get_telemetry_config() -> dict:
-    """Get ChromaDB telemetry configuration with defaults."""
-    if os.environ.get("JARVIS_TELEMETRY", "").strip() == "0":
-        return {
-            "enabled": False,
-            "log_reads": False,
-            "log_writes": False,
-            "probe_interval_seconds": 300,
-        }
-    defaults = {
-        "enabled": True,
-        "log_reads": False,
-        "log_writes": True,
-        "probe_interval_seconds": 300,
-    }
-    return _merge_with_defaults(defaults, _get_memory_section("telemetry"))
 
 
 def get_todoist_prompt_alerts_config() -> dict:

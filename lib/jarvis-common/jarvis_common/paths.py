@@ -38,7 +38,6 @@ _VAULT_RELATIVE_DEFAULTS = {
 }
 
 _ABSOLUTE_DEFAULTS = {
-    "chroma_data_path": "~/.jarvis/db",
     "project_memories_path": "~/.jarvis/memories",
 }
 
@@ -63,7 +62,7 @@ def get_path(
     """Resolve a named path to an absolute filesystem path.
 
     Args:
-        name: Path identifier (e.g., "journal_jarvis", "inbox", "chroma_data_path")
+        name: Path identifier (e.g., "journal_jarvis", "inbox", "project_memories_path")
         substitutions: Template variable replacements (e.g., {"YYYY": "2026"})
         ensure_exists: If True, create the directory if it does not exist
 
@@ -175,13 +174,11 @@ def validate_paths_config() -> list:
         "importance_scoring",
         "recency_boost_days",
         "default_importance",
-        "chroma_url",
-        "chroma_host",
-        "chroma_port",
-        "chroma_ssl",
-        "chroma_api_key",
-        "chroma_auth_header",
-        "chroma_headers",
+        "postgres_url",
+        "embedding_model",
+        "embedding_dimensions",
+        "embedding_device",
+        "embedding_backend",
         "auto_extract",
         "per_prompt_search",
         "chunking",
@@ -190,8 +187,9 @@ def validate_paths_config() -> list:
         "reranking",
         "worklog",
         "conflict_detection",
-        "telemetry",
+        "staleness",
         "pattern_detection",
+        "replication",
     }
     for name, value in memory.items():
         if name not in _ABSOLUTE_DEFAULTS and name not in _known_memory_keys:

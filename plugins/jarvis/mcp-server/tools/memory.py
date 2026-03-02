@@ -1,10 +1,11 @@
-"""Vault memory indexing for ChromaDB semantic search.
+"""Vault memory indexing for pgvector semantic search.
 
-Provides bulk and incremental indexing of vault .md files into ChromaDB.
-ChromaDB auto-embeds content using sentence-transformers (all-MiniLM-L6-v2).
+Provides bulk and incremental indexing of vault .md files into PostgreSQL
+with pgvector. Embeddings are generated explicitly via EmbeddingService
+(granite-embedding-small-english-r2, 384d).
 
-All documents are stored in the unified 'jarvis' collection with namespaced
-IDs (vault:: prefix) and enriched metadata.
+All documents are stored in the unified 'jarvis' table with namespaced
+IDs (vault:: prefix) and JSONB metadata.
 """
 
 import glob
@@ -15,8 +16,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-
-import chromadb
 
 from .config import get_verified_vault_path, get_chunking_config, get_scoring_config, get_memory_config
 from .chunking import chunk_document
@@ -31,69 +30,13 @@ from .format_support import (
     extract_title,
     INDEXABLE_EXTENSIONS,
 )
+from .schema import execute_query, execute_write, metadata_to_jsonb
 
 logger = logging.getLogger("jarvis-core")
 
-# Singleton client with cache key for config change detection
-_chroma_client = None
-_chroma_cache_key = None
-_COLLECTION_NAME = "jarvis"
 _BATCH_SIZE = 50
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
-
-
-def _client_cache_key(cfg: dict) -> tuple:
-    """Build a hashable key from connection config for singleton invalidation."""
-    return (
-        cfg["host"],
-        cfg["port"],
-        cfg["ssl"],
-        tuple(sorted(cfg.get("headers", {}).items())),
-    )
-
-
-def _get_client() -> chromadb.ClientAPI:
-    """Get or create singleton ChromaDB HttpClient.
-
-    Recreates the client if connection config has changed (e.g. after
-    /jarvis-settings updates chroma_host). The server handles all
-    write serialization — no application-level locking needed.
-
-    Raises:
-        Exception: If the ChromaDB server is unreachable.
-    """
-    global _chroma_client, _chroma_cache_key
-    from .config import get_chroma_config
-
-    cfg = get_chroma_config()
-    key = _client_cache_key(cfg)
-
-    if _chroma_client is not None and _chroma_cache_key == key:
-        return _chroma_client
-
-    kwargs = {
-        "host": cfg["host"],
-        "port": cfg["port"],
-        "ssl": cfg["ssl"],
-    }
-    if cfg["headers"]:
-        kwargs["headers"] = cfg["headers"]
-    _chroma_client = chromadb.HttpClient(**kwargs)
-    _chroma_cache_key = key
-    logger.info(f"ChromaDB HttpClient connected to {cfg['host']}:{cfg['port']}")
-    return _chroma_client
-
-
-def _get_collection():
-    """Get or create the unified jarvis collection, wrapped with telemetry."""
-    from .chroma_telemetry import InstrumentedCollection
-
-    client = _get_client()
-    collection = client.get_or_create_collection(
-        name=_COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
-    )
-    return InstrumentedCollection(collection)
 
 
 def _parse_frontmatter_for_file(content: str, filename: str) -> dict:
@@ -109,7 +52,7 @@ def _extract_title_for_file(content: str, filename: str) -> str:
 
 
 def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
-    """Build ChromaDB metadata dict with universal + vault-specific fields.
+    """Build metadata dict with universal + vault-specific fields.
 
     Universal fields: type, namespace, created_at, updated_at, source
     Vault-specific: directory, vault_type, title, tags, importance, has_frontmatter
@@ -196,7 +139,7 @@ def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
     return False
 
 
-def _delete_existing_chunks(collection, relative_path: str) -> int:
+def _delete_existing_chunks(relative_path: str) -> int:
     """Delete all existing chunks for a file before re-indexing.
 
     Handles both chunked docs (parent_file metadata) and legacy
@@ -204,31 +147,31 @@ def _delete_existing_chunks(collection, relative_path: str) -> int:
 
     Returns number of deleted documents.
     """
-    deleted = 0
-    # Delete chunks by parent_file metadata
-    try:
-        result = collection.get(where={"parent_file": relative_path}, include=[])
-        if result["ids"]:
-            collection.delete(ids=result["ids"])
-            deleted += len(result["ids"])
-    except Exception:
-        pass
+    from .schema import _get_pool
 
-    # Also delete legacy single-doc ID if it exists
-    legacy_id = vault_id(relative_path)
-    try:
-        result = collection.get(ids=[legacy_id], include=[])
-        if result["ids"]:
-            collection.delete(ids=[legacy_id])
-            deleted += 1
-    except Exception:
-        pass
+    pool = _get_pool()
+    deleted = 0
+
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            # Delete chunks by parent_file metadata
+            cur.execute(
+                "DELETE FROM jarvis WHERE metadata->>'parent_file' = %s",
+                (relative_path,),
+            )
+            deleted += cur.rowcount
+
+            # Also delete legacy single-doc ID if it exists
+            legacy_id = vault_id(relative_path)
+            cur.execute("DELETE FROM jarvis WHERE id = %s", (legacy_id,))
+            deleted += cur.rowcount
+
+            conn.commit()
 
     return deleted
 
 
 def _index_single_file(
-    collection,
     content: str,
     frontmatter: dict,
     relative_path: str,
@@ -239,6 +182,7 @@ def _index_single_file(
     """Index a single file with chunking and scoring.
 
     Returns (chunk_ids, chunk_docs, chunk_metas, chunk_count).
+    Does NOT write to database — caller is responsible for batching.
     """
     metadata = _build_metadata(frontmatter, relative_path)
     metadata["title"] = title
@@ -290,12 +234,49 @@ def _index_single_file(
     return ids, docs, metas, chunk_result.total
 
 
+def _upsert_batch(ids: list, docs: list, metas: list) -> None:
+    """Embed and upsert a batch of documents into PostgreSQL."""
+    if not ids:
+        return
+
+    from .embedding import get_embedding_service
+    from .schema import _get_pool
+
+    service = get_embedding_service()
+    embeddings = service.encode_batch(docs)
+
+    pool = _get_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            for doc_id, doc, meta, emb in zip(ids, docs, metas, embeddings):
+                cur.execute(
+                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
+                               COALESCE(%s::timestamptz, now()),
+                               COALESCE(%s::timestamptz, now()))
+                       ON CONFLICT (id) DO UPDATE SET
+                           document = EXCLUDED.document,
+                           embedding = EXCLUDED.embedding,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = EXCLUDED.updated_at""",
+                    (
+                        doc_id,
+                        doc,
+                        emb,
+                        metadata_to_jsonb(meta),
+                        meta.get("created_at"),
+                        meta.get("updated_at"),
+                    ),
+                )
+            conn.commit()
+
+
 def index_vault(
     force: bool = False,
     directory: Optional[str] = None,
     include_sensitive: bool = False,
 ) -> dict:
-    """Bulk index all .md files in the vault into ChromaDB.
+    """Bulk index all .md files in the vault into PostgreSQL.
 
     Args:
         force: Re-index all files, even already indexed
@@ -310,7 +291,6 @@ def index_vault(
         return {"success": False, "error": error}
 
     start = time.time()
-    collection = _get_collection()
 
     # Determine search path
     search_path = os.path.join(vault_path, directory) if directory else vault_path
@@ -324,13 +304,15 @@ def index_vault(
     existing_files = set()
     if not force:
         try:
-            result = collection.get(include=["metadatas"])
-            for i, doc_id in enumerate(result["ids"]):
-                meta = result["metadatas"][i] if result.get("metadatas") else {}
-                parent = (meta or {}).get("parent_file")
+            rows = execute_query(
+                "SELECT id, metadata->>'parent_file' AS parent_file FROM jarvis"
+            )
+            for row in rows:
+                parent = row.get("parent_file")
                 if parent:
                     existing_files.add(parent)
                 else:
+                    doc_id = row["id"]
                     # Legacy unchunked: extract path from vault::path ID
                     if doc_id.startswith("vault::") and "#chunk-" not in doc_id:
                         existing_files.add(doc_id[7:])
@@ -389,13 +371,12 @@ def index_vault(
 
             # On force re-index, clean up old chunks first
             if force:
-                _delete_existing_chunks(collection, relative)
+                _delete_existing_chunks(relative)
 
             frontmatter = _parse_frontmatter_for_file(content, filepath)
             title = _extract_title_for_file(content, os.path.basename(filepath))
 
             ids, docs, metas, n_chunks = _index_single_file(
-                collection,
                 content,
                 frontmatter,
                 relative,
@@ -412,17 +393,18 @@ def index_vault(
 
             # Flush batch
             if len(batch_ids) >= _BATCH_SIZE:
-                collection.upsert(
-                    ids=batch_ids, documents=batch_docs, metadatas=batch_meta
-                )
+                _upsert_batch(batch_ids, batch_docs, batch_meta)
                 batch_ids, batch_docs, batch_meta = [], [], []
 
         except Exception as e:
             errors.append({"file": relative, "error": str(e)})
 
     # Flush remaining
-    if batch_ids:
-        collection.upsert(ids=batch_ids, documents=batch_docs, metadatas=batch_meta)
+    _upsert_batch(batch_ids, batch_docs, batch_meta)
+
+    # Get total count
+    count_result = execute_query("SELECT count(*) AS cnt FROM jarvis", fetch="one")
+    total = count_result["cnt"] if count_result else 0
 
     duration = round(time.time() - start, 2)
     result = {
@@ -432,7 +414,7 @@ def index_vault(
         "files_skipped": skipped,
         "errors": errors,
         "duration_seconds": duration,
-        "collection_total": collection.count(),
+        "collection_total": total,
     }
     if secrets_skipped:
         result["secrets_skipped"] = secrets_skipped
@@ -440,7 +422,7 @@ def index_vault(
 
 
 def index_file(relative_path: str) -> dict:
-    """Index a single file into ChromaDB with chunking and scoring.
+    """Index a single file into PostgreSQL with chunking and scoring.
 
     Args:
         relative_path: Path relative to vault root
@@ -476,7 +458,6 @@ def index_file(relative_path: str) -> dict:
                     "detections": detections,
                 }
 
-        collection = _get_collection()
         chunking_config = get_chunking_config()
         scoring_config = get_scoring_config()
 
@@ -484,7 +465,6 @@ def index_file(relative_path: str) -> dict:
         title = _extract_title_for_file(content, relative_path)
 
         ids, docs, metas, n_chunks = _index_single_file(
-            collection,
             content,
             frontmatter,
             relative_path,
@@ -494,8 +474,8 @@ def index_file(relative_path: str) -> dict:
         )
 
         # Delete old chunks + upsert new
-        _delete_existing_chunks(collection, relative_path)
-        collection.upsert(ids=ids, documents=docs, metadatas=metas)
+        _delete_existing_chunks(relative_path)
+        _upsert_batch(ids, docs, metas)
 
         return {
             "success": True,
@@ -509,7 +489,7 @@ def index_file(relative_path: str) -> dict:
 
 
 def unindex_file(relative_path: str) -> dict:
-    """Remove a file's chunks from ChromaDB.
+    """Remove a file's chunks from PostgreSQL.
 
     Called when a vault file is deleted to keep the index in sync.
 
@@ -520,8 +500,7 @@ def unindex_file(relative_path: str) -> dict:
         Summary dict with success status and number of chunks removed.
     """
     try:
-        collection = _get_collection()
-        deleted = _delete_existing_chunks(collection, relative_path)
+        deleted = _delete_existing_chunks(relative_path)
         return {"success": True, "deleted_chunks": deleted}
     except Exception as e:
         return {"success": False, "error": str(e)}

@@ -6,8 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "jarvis-common",
     "mcp>=1.0.0",
-    "chromadb>=1.5.0",
     "tokenizers>=0.13.0",
+    "sentence-transformers>=3.0.0",
+    "onnxruntime>=1.17.0",
+    "psycopg[pool]>=3.1.0",
+    "pgvector>=0.3.0",
 ]
 
 [tool.uv.sources]
@@ -21,6 +24,9 @@ dev = [
 
 [project.scripts]
 jarvis-core = "server:main_sync"
+jarvis-init-db = "bin.init_db:main"
+jarvis-setup-replication = "bin.setup_replication:main"
+jarvis-upgrade-embedding = "bin.upgrade_embedding_model:main"
 
 [build-system]
 requires = ["hatchling"]

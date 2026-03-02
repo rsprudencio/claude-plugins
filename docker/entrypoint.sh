@@ -1,19 +1,24 @@
 #!/bin/bash
 # Jarvis MCP Server - Docker Entrypoint
-# Manages ChromaDB server, jarvis-core, jarvis-obsidian, and optionally
-# jarvis-todoist.
+# Manages embedded PostgreSQL (pgvector), jarvis-core, jarvis-obsidian,
+# and optionally jarvis-todoist.
+#
+# PostgreSQL is embedded by default for single-user deployments.
+# Set POSTGRES_URL to use an external database (team/managed deployments).
 
 set -e
 
 CORE_PORT="${JARVIS_CORE_PORT:-8741}"
 TODOIST_PORT="${JARVIS_TODOIST_PORT:-8742}"
-CHROMA_PORT="${CHROMA_PORT:-8743}"
 OBSIDIAN_PORT="${JARVIS_OBSIDIAN_PORT:-8744}"
-CHROMA_DATA="${JARVIS_HOME:-/config}/db"
+# pgdata lives inside the container filesystem by default (not on the bind mount)
+# because macOS VirtioFS doesn't support chown, which PostgreSQL requires.
+# Use PGDATA env var to override (e.g., for a dedicated Docker volume).
+PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 CORE_PID=""
 TODOIST_PID=""
-CHROMA_PID=""
 OBSIDIAN_PID=""
+PG_STARTED=false
 
 # --- Git configuration for mounted vault ---
 if [ -d "/vault" ]; then
@@ -31,7 +36,6 @@ TLS_KEY="${JARVIS_TLS_KEY:-}"
 TLS_ENABLED=false
 
 if [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ]; then
-    # Validate both files exist and are readable
     if [ ! -r "$TLS_CERT" ]; then
         echo "[jarvis] ERROR: TLS cert not readable: ${TLS_CERT}" >&2
         exit 1
@@ -48,7 +52,6 @@ elif [ -n "$TLS_CERT" ] || [ -n "$TLS_KEY" ]; then
 fi
 
 # --- Internal hook token ---
-# Auto-generate if not provided; hook scripts use this to authenticate
 JARVIS_INTERNAL_TOKEN="${JARVIS_INTERNAL_TOKEN:-$(python3 -c 'import secrets; print(secrets.token_hex(32))')}"
 export JARVIS_INTERNAL_TOKEN
 
@@ -64,8 +67,11 @@ cleanup() {
         sleep 1
         timeout=$((timeout - 1))
     done
-    # Stop ChromaDB after jarvis-core is done
-    [ -n "$CHROMA_PID" ] && kill "$CHROMA_PID" 2>/dev/null
+    # Stop PostgreSQL after MCP servers are done
+    if [ "$PG_STARTED" = "true" ]; then
+        echo "[jarvis] Stopping embedded PostgreSQL..."
+        su postgres -c "pg_ctl stop -D '${PGDATA}' -m fast" 2>/dev/null || true
+    fi
     echo "[jarvis] Shutdown complete."
     exit 0
 }
@@ -73,11 +79,9 @@ trap cleanup SIGTERM SIGINT
 
 # --- Check for Todoist token ---
 has_todoist_token() {
-    # Check env var
     if [ -n "$TODOIST_API_TOKEN" ]; then
         return 0
     fi
-    # Check config file
     local config="${JARVIS_HOME:-/config}/config.json"
     if [ -f "$config" ]; then
         python3 -c "
@@ -96,7 +100,7 @@ HEALTH_SCHEME="http"
 CURL_TLS_FLAGS=""
 if [ "$TLS_ENABLED" = "true" ]; then
     HEALTH_SCHEME="https"
-    CURL_TLS_FLAGS="-k"  # Self-signed cert inside container
+    CURL_TLS_FLAGS="-k"
 fi
 
 wait_for_health() {
@@ -117,22 +121,111 @@ wait_for_health() {
     return 1
 }
 
-# --- Start ChromaDB server ---
-echo "[jarvis] Starting ChromaDB server on port ${CHROMA_PORT}..."
-mkdir -p "${CHROMA_DATA}"
-chroma run \
-    --host 0.0.0.0 \
-    --port "${CHROMA_PORT}" \
-    --path "${CHROMA_DATA}" 2>&1 &
-CHROMA_PID=$!
+# --- Embedded PostgreSQL ---
+start_embedded_postgres() {
+    echo "[jarvis] Starting embedded PostgreSQL..."
 
-wait_for_health "http://127.0.0.1:${CHROMA_PORT}/api/v2/heartbeat" "ChromaDB" 30
+    # Ensure data directory exists with correct ownership
+    mkdir -p "${PGDATA}"
+    chown -R postgres:postgres "${PGDATA}"
 
-# Set env vars for jarvis-core HttpClient
-export CHROMA_HOST=127.0.0.1
-export CHROMA_PORT
+    # First-run: initialize database cluster
+    if [ ! -f "${PGDATA}/PG_VERSION" ]; then
+        echo "[jarvis] First run — initializing PostgreSQL data directory..."
+        su postgres -c "initdb -D '${PGDATA}' --encoding=UTF8 --locale=C"
 
-# --- Build TLS args (bash array — safe for paths with spaces) ---
+        # Write postgresql.conf (internal-only, tuned for single-user)
+        cat > "${PGDATA}/postgresql.conf" <<PGCONF
+listen_addresses = '127.0.0.1'
+port = 5432
+wal_level = logical
+shared_buffers = 128MB
+work_mem = 4MB
+maintenance_work_mem = 64MB
+max_connections = 20
+max_replication_slots = 10
+max_wal_senders = 10
+logging_collector = off
+log_destination = 'stderr'
+PGCONF
+
+        # Trust local connections only (PG is not exposed outside container)
+        cat > "${PGDATA}/pg_hba.conf" <<PGHBA
+# TYPE  DATABASE  USER  ADDRESS       METHOD
+local   all       all                 trust
+host    all       all   127.0.0.1/32  trust
+PGHBA
+
+        chown postgres:postgres "${PGDATA}/postgresql.conf" "${PGDATA}/pg_hba.conf"
+    fi
+
+    # Start PostgreSQL
+    su postgres -c "pg_ctl start -D '${PGDATA}' -l '${PGDATA}/postgresql.log' -w -t 30"
+    PG_STARTED=true
+
+    # Wait for pg_isready
+    local i=0
+    while [ $i -lt 30 ]; do
+        if pg_isready -h 127.0.0.1 -p 5432 -q 2>/dev/null; then
+            echo "[jarvis] PostgreSQL is ready"
+            break
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+
+    if [ $i -eq 30 ]; then
+        echo "[jarvis] ERROR: PostgreSQL failed to start within 30s" >&2
+        cat "${PGDATA}/postgresql.log" >&2
+        exit 1
+    fi
+
+    # Create database and run init.sql (idempotent)
+    # Pipe init.sql via stdin so root reads the file (postgres user may lack /app access)
+    su postgres -c "psql -h 127.0.0.1 -p 5432 -tc \"SELECT 1 FROM pg_database WHERE datname='jarvis'\" | grep -q 1" || \
+        su postgres -c "createdb -h 127.0.0.1 -p 5432 jarvis"
+    su postgres -c "psql -h 127.0.0.1 -p 5432 -d jarvis" < /app/init.sql
+
+    echo "[jarvis] Embedded PostgreSQL initialized (database: jarvis)"
+}
+
+# --- Wait for external PostgreSQL ---
+wait_for_external_postgres() {
+    echo "[jarvis] Using external PostgreSQL: ${POSTGRES_URL%%@*}@***"
+    echo "[jarvis] Waiting for PostgreSQL..."
+    local pg_ready=false
+    for i in $(seq 1 30); do
+        if python3 -c "
+import psycopg
+try:
+    conn = psycopg.connect('$POSTGRES_URL', connect_timeout=2)
+    conn.execute('SELECT 1')
+    conn.close()
+except Exception:
+    raise SystemExit(1)
+" 2>/dev/null; then
+            pg_ready=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$pg_ready" = true ]; then
+        echo "[jarvis] PostgreSQL is ready"
+    else
+        echo "[jarvis] ERROR: PostgreSQL not reachable"
+        exit 1
+    fi
+}
+
+# --- Start PostgreSQL (embedded or wait for external) ---
+if [ -z "${POSTGRES_URL}" ]; then
+    start_embedded_postgres
+    export POSTGRES_URL="postgresql://postgres@127.0.0.1:5432/jarvis"
+else
+    wait_for_external_postgres
+fi
+
+# --- Build TLS args ---
 tls_args=()
 if [ "$TLS_ENABLED" = "true" ]; then
     tls_args+=(--ssl-certfile "$TLS_CERT" --ssl-keyfile "$TLS_KEY")

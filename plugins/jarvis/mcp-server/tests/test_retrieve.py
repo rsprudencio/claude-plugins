@@ -135,7 +135,10 @@ class TestRetrieveList:
 
     def test_list_tier2(self, mock_config):
         """list_type='tier2' routes to tier2_list."""
+        import time
+
         tier2_write(content="Obs 1", content_type="observation")
+        time.sleep(0.01)  # Avoid timestamp-based ID collision
         tier2_write(content="Obs 2", content_type="observation")
 
         result = retrieve(list_type="tier2")
@@ -172,6 +175,27 @@ class TestRetrieveList:
         result = retrieve(list_type="bogus")
         assert not result["success"]
         assert "Invalid list_type" in result["error"]
+
+    def test_session_id_filter(self, mock_config):
+        """list_type='tier2' with session_id filters results."""
+        import time
+
+        tier2_write(
+            content="Session A", content_type="observation", session_id="sess-aaa"
+        )
+        time.sleep(0.01)  # Avoid timestamp-based ID collision
+        tier2_write(
+            content="Session B", content_type="observation", session_id="sess-bbb"
+        )
+
+        result = retrieve(
+            list_type="tier2", session_id="sess-aaa", include_content=True
+        )
+        assert result["success"]
+        assert result["total"] >= 1
+        contents = [d["content"] for d in result["documents"]]
+        assert "Session A" in contents
+        assert "Session B" not in contents
 
     def test_sort_by_passthrough(self, mock_config):
         """sort_by parameter passes through to tier2_list."""

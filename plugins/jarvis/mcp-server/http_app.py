@@ -107,22 +107,56 @@ async def _send_401(send, message: str):
 
 
 async def health_response(scope, receive, send):
-    """ASGI response for /health endpoint with ChromaDB and auth status."""
+    """ASGI response for /health endpoint with PostgreSQL and auth status."""
     from jarvis_common.auth import get_auth_config
-    from tools.chroma_telemetry import chromadb_health
-    from tools.config import get_chroma_config
+    from tools.config import get_postgres_config
 
-    cfg = get_chroma_config()
+    cfg = get_postgres_config()
+    # Mask credentials in URL for health display
+    url = cfg["url"]
+    display_url = url.split("@")[-1] if "@" in url else url
+
+    pg_status = "ok"
+    pg_info = {"host": display_url}
+    try:
+        from tools.schema import execute_query
+        count_result = execute_query("SELECT count(*) AS cnt FROM jarvis", fetch="one")
+        pg_info["doc_count"] = count_result["cnt"] if count_result else 0
+    except Exception as e:
+        pg_status = "disconnected"
+        pg_info["error"] = str(e)
+
     data = {
-        "status": "ok",
+        "status": "ok" if pg_status == "ok" else "degraded",
         "server": "jarvis-core",
         "version": _VERSION,
-        "chromadb": {
-            "host": cfg["host"],
-            "port": cfg["port"],
-            **{k: v for k, v in chromadb_health.items() if v is not None},
-        },
+        "postgres": {**pg_info, "status": pg_status},
     }
+
+    # Replication status (only present when enabled)
+    from tools.config import get_replication_config
+    repl_cfg = get_replication_config()
+    if repl_cfg.get("mode") != "disabled":
+        repl_info = {
+            "mode": repl_cfg["mode"],
+            "node_id": repl_cfg.get("node_id", ""),
+        }
+        central = repl_cfg.get("central_url", "")
+        if central:
+            repl_info["central_url"] = central.split("@")[-1] if "@" in central else central
+        # Query subscription status if available
+        try:
+            sub_result = execute_query(
+                "SELECT subname, subenabled FROM pg_subscription LIMIT 5",
+                fetch="all",
+            )
+            repl_info["subscriptions"] = [
+                {"name": r["subname"], "enabled": r["subenabled"]}
+                for r in sub_result
+            ] if sub_result else []
+        except Exception:
+            repl_info["subscriptions"] = []
+        data["replication"] = repl_info
 
     # Auth status (mTLS is a detail of auth, not a separate concern)
     auth_cfg = get_auth_config()
@@ -137,9 +171,6 @@ async def health_response(scope, receive, send):
     else:
         data["auth"] = {"enabled": False}
 
-    # Degrade top-level status if ChromaDB is unhealthy
-    if chromadb_health.get("status") in ("degraded", "disconnected"):
-        data["status"] = "degraded"
     await _json_response(send, data)
 
 
@@ -309,6 +340,20 @@ async def _handle_lifespan(scope, receive, send):
     while True:
         message = await receive()
         if message["type"] == "lifespan.startup":
+            # Initialize pgvector schema (idempotent)
+            try:
+                from tools.schema import ensure_schema, check_model_consistency, ModelMismatchError
+                ensure_schema()
+                try:
+                    check_model_consistency()
+                except ModelMismatchError as mme:
+                    logger.critical("FATAL: %s", mme)
+                    raise SystemExit(1) from mme
+            except SystemExit:
+                raise
+            except Exception as e:
+                logger.warning("Schema initialization deferred: %s", e)
+
             _run_ctx = session_manager.run()
             await _run_ctx.__aenter__()
             _bg_tasks = [asyncio.create_task(t) for t in get_background_tasks()]

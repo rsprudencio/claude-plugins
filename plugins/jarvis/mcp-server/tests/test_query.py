@@ -11,7 +11,6 @@ from tools.query import (
     memory_stats,  # backward-compatible aliases
     _compute_relevance,
     _extract_preview,
-    _translate_filter,
     _display_path,
     _increment_retrieval_counts,
     semantic_context,
@@ -127,53 +126,6 @@ class TestExtractPreview:
         assert "  " not in preview
 
 
-class TestTranslateFilter:
-    """Tests for filter translation to ChromaDB where syntax."""
-
-    def test_none_filter(self):
-        assert _translate_filter(None) is None
-
-    def test_empty_filter(self):
-        assert _translate_filter({}) is None
-
-    def test_single_directory_filter(self):
-        result = _translate_filter({"directory": "journal"})
-        assert result == {"directory": "journal"}
-
-    def test_vault_entry_type_maps_to_vault_type(self):
-        """Entry-type values like 'note' should map to vault_type field."""
-        result = _translate_filter({"type": "note"})
-        assert result == {"vault_type": "note"}
-
-    def test_content_type_maps_to_type(self):
-        """Content-type values like 'vault' should map to universal type field."""
-        result = _translate_filter({"type": "vault"})
-        assert result == {"type": "vault"}
-
-    def test_memory_type_maps_to_type(self):
-        """Content-type 'memory' should map to universal type field."""
-        result = _translate_filter({"type": "memory"})
-        assert result == {"type": "memory"}
-
-    def test_multiple_filters_use_and(self):
-        result = _translate_filter({"directory": "journal", "type": "note"})
-        assert "$and" in result
-        assert {"directory": "journal"} in result["$and"]
-        assert {"vault_type": "note"} in result["$and"]
-
-    def test_tags_filter_uses_contains(self):
-        result = _translate_filter({"tags": "work,python"})
-        assert result == {"tags": {"$contains": "work"}}
-
-    def test_importance_filter(self):
-        result = _translate_filter({"importance": "high"})
-        assert result == {"importance": "high"}
-
-    def test_empty_values_ignored(self):
-        result = _translate_filter({"directory": "", "type": ""})
-        assert result is None
-
-
 class TestDisplayPath:
     """Tests for namespace stripping in display paths."""
 
@@ -192,16 +144,6 @@ class TestDisplayPath:
 
 class TestQueryVault:
     """Integration tests for vault semantic search."""
-
-    def _reset_chromadb(self, mock_config):
-        """Reset ChromaDB singleton for test isolation."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        # Point chroma_data_path at a temp directory via config
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_query_db")}
-        )
 
     def _index_test_files(self, mock_config):
         """Create and index test files."""
@@ -228,7 +170,6 @@ class TestQueryVault:
         index_vault()
 
     def test_query_vault_basic(self, mock_config):
-        self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
 
         result = query_vault("authentication decisions")
@@ -251,12 +192,7 @@ class TestQueryVault:
         for r in result["results"]:
             assert not r["path"].startswith("vault::")
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_query_vault_with_filter(self, mock_config):
-        self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
 
         result = query_vault("authentication", filter={"directory": "notes"})
@@ -265,25 +201,14 @@ class TestQueryVault:
             # All results should be from notes directory
             assert r["path"].startswith("notes/")
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_query_vault_empty(self, mock_config):
-        self._reset_chromadb(mock_config)
         # Don't index anything
-
         result = query_vault("anything")
         assert result["success"] is True
         assert result["results"] == []
         assert "No documents indexed" in result.get("message", "")
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_query_vault_n_results_cap(self, mock_config):
-        self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
 
         # Request more than 20 should be capped
@@ -292,13 +217,8 @@ class TestQueryVault:
         # Should not exceed 20 or total docs (whichever is smaller)
         assert len(result["results"]) <= 20
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_expansion_metadata_in_response(self, mock_config):
         """When query triggers expansion, response should include expansion info."""
-        self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
 
         result = query_vault("auth flow setup")
@@ -306,33 +226,17 @@ class TestQueryVault:
         assert "expansion" in result
         assert len(result["expansion"]["terms_added"]) > 0
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_expansion_disabled_no_metadata(self, mock_config):
         """When query doesn't trigger expansion, no expansion field in response."""
-        self._reset_chromadb(mock_config)
         self._index_test_files(mock_config)
 
         result = query_vault("quantum entanglement")
         assert result["success"] is True
-        # No matching synonyms/intents → no expansion field
+        # No matching synonyms/intents -> no expansion field
         assert "expansion" not in result
-
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_chunk_deduplication(self, mock_config):
         """Multiple chunks from same file should be deduped to best match."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_dedup_db")}
-        )
-
         from tools.memory import index_file
 
         notes_dir = mock_config.vault_path / "notes"
@@ -357,8 +261,6 @@ class TestQueryVault:
         paths = [r["path"] for r in result["results"]]
         assert paths.count("notes/auth-guide.md") == 1
 
-        mem._chroma_client = None
-
     def test_importance_score_affects_relevance(self):
         """Documents with higher importance_score should get relevance boost."""
         low_score = _compute_relevance(0.5, importance_score=0.3)
@@ -375,14 +277,7 @@ class TestQueryVault:
 class TestDocRead:
     """Tests for document read by ID (renamed from memory_read)."""
 
-    def _reset_and_index(self, mock_config):
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_read_db")}
-        )
-
+    def _index_test_file(self, mock_config):
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "read-test.md").write_text("# Read Test\n\nContent for reading.")
@@ -392,7 +287,7 @@ class TestDocRead:
         index_file("notes/read-test.md")
 
     def test_doc_read_basic(self, mock_config):
-        self._reset_and_index(mock_config)
+        self._index_test_file(mock_config)
 
         # Read using bare path (backward compatible)
         result = doc_read(["notes/read-test.md"])
@@ -403,13 +298,9 @@ class TestDocRead:
         assert "Content for reading" in result["documents"][0]["document"]
         assert "metadata" in result["documents"][0]
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_doc_read_with_namespace(self, mock_config):
         """Should also work when called with full namespaced ID."""
-        self._reset_and_index(mock_config)
+        self._index_test_file(mock_config)
 
         result = doc_read(["vault::notes/read-test.md"])
         assert result["success"] is True
@@ -418,21 +309,13 @@ class TestDocRead:
         assert result["documents"][0]["id"] == "vault::notes/read-test.md"
         assert result["documents"][0]["path"] == "notes/read-test.md"
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_doc_read_missing(self, mock_config):
-        self._reset_and_index(mock_config)
+        self._index_test_file(mock_config)
 
         result = doc_read(["notes/read-test.md", "notes/nonexistent.md"])
         assert result["success"] is True
         assert len(result["documents"]) == 1
         assert "notes/nonexistent.md" in result["not_found"]
-
-        import tools.memory as mem
-
-        mem._chroma_client = None
 
     def test_doc_read_no_ids(self):
         result = doc_read([])
@@ -447,14 +330,7 @@ class TestDocRead:
 class TestCollectionStats:
     """Tests for collection statistics (renamed from memory_stats)."""
 
-    def _reset_and_index(self, mock_config):
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_stats_db")}
-        )
-
+    def _index_test_files(self, mock_config):
         notes_dir = mock_config.vault_path / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "stat-note-1.md").write_text(
@@ -469,7 +345,7 @@ class TestCollectionStats:
         index_vault()
 
     def test_collection_stats_basic(self, mock_config):
-        self._reset_and_index(mock_config)
+        self._index_test_files(mock_config)
 
         result = collection_stats()
         assert result["success"] is True
@@ -483,12 +359,8 @@ class TestCollectionStats:
         # Paths should not have vault:: prefix
         assert not sample["path"].startswith("vault::")
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_collection_stats_detailed(self, mock_config):
-        self._reset_and_index(mock_config)
+        self._index_test_files(mock_config)
 
         result = collection_stats(detailed=True)
         assert result["success"] is True
@@ -501,25 +373,12 @@ class TestCollectionStats:
         assert result["type_breakdown"].get("vault", 0) >= 2
         assert result["namespace_breakdown"].get("vault::", 0) >= 2
 
-        import tools.memory as mem
-
-        mem._chroma_client = None
-
     def test_collection_stats_empty(self, mock_config):
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_stats_empty_db")}
-        )
-
         result = collection_stats()
         assert result["success"] is True
         assert result["total_documents"] == 0
         assert result["samples"] == []
         assert "No documents indexed" in result.get("message", "")
-
-        mem._chroma_client = None
 
     def test_backward_compat_alias(self):
         """memory_stats should still work as alias for collection_stats."""
@@ -531,14 +390,6 @@ class TestTierAwareQuery:
 
     def test_query_includes_tier_field(self, mock_config):
         """Test that query results include tier field."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_tier_query_db")}
-        )
-
-        # Index a file
         from tools.memory import index_file
 
         test_file = mock_config.vault_path / "notes" / "test.md"
@@ -556,18 +407,8 @@ class TestTierAwareQuery:
             assert "tier" in res
             assert res["tier"] == "file"  # Vault files are Tier 1
 
-        mem._chroma_client = None
-
     def test_query_includes_source_field(self, mock_config):
         """Test that query results include source field."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_source_query_db")}
-        )
-
-        # Index a file
         from tools.memory import index_file
 
         test_file = mock_config.vault_path / "notes" / "test.md"
@@ -584,17 +425,8 @@ class TestTierAwareQuery:
             assert "source" in res
             assert res["source"] == "file"  # Tier 1 files have source="file"
 
-        mem._chroma_client = None
-
     def test_query_mixed_tier_results(self, mock_config):
         """Test query with both Tier 1 and Tier 2 results."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_mixed_tier_db")}
-        )
-
         # Index a Tier 1 file
         from tools.memory import index_file
 
@@ -621,17 +453,8 @@ class TestTierAwareQuery:
         tiers = {res["tier"] for res in result["results"]}
         assert "file" in tiers or "chromadb" in tiers
 
-        mem._chroma_client = None
-
     def test_query_increments_tier2_retrieval_count(self, mock_config):
         """Test that querying increments Tier 2 retrieval counts."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_retrieval_db")}
-        )
-
         # Add Tier 2 observation
         from tools.tier2 import tier2_write, tier2_read
 
@@ -651,21 +474,12 @@ class TestTierAwareQuery:
         read_result2 = tier2_read(doc_id)
         assert float(read_result2["metadata"]["retrieval_count"]) >= 2
 
-        mem._chroma_client = None
-
 
 class TestIncrementRetrievalCountsFractional:
     """Tests for fractional retrieval count increments."""
 
     def test_fractional_increment(self, mock_config):
         """increment=0.01 adds 0.01 to count."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_frac_inc_db")}
-        )
-
         from tools.tier2 import tier2_write
 
         write_result = tier2_write(
@@ -674,23 +488,13 @@ class TestIncrementRetrievalCountsFractional:
         )
         doc_id = write_result["id"]
 
-        collection = mem._get_collection()
-        _increment_retrieval_counts(collection, [doc_id], increment=0.01)
+        _increment_retrieval_counts([doc_id], increment=0.01)
 
-        result = collection.get(ids=[doc_id])
-        assert result["metadatas"][0]["retrieval_count"] == "0.01"
-
-        mem._chroma_client = None
+        row = mock_config.db.get(doc_id)
+        assert row["metadata"]["retrieval_count"] == "0.01"
 
     def test_rounds_to_two_decimals(self, mock_config):
         """0.01 + 0.01 + 0.01 = 0.03 (no float noise)."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_frac_round_db")}
-        )
-
         from tools.tier2 import tier2_write
 
         write_result = tier2_write(
@@ -699,24 +503,14 @@ class TestIncrementRetrievalCountsFractional:
         )
         doc_id = write_result["id"]
 
-        collection = mem._get_collection()
         for _ in range(3):
-            _increment_retrieval_counts(collection, [doc_id], increment=0.01)
+            _increment_retrieval_counts([doc_id], increment=0.01)
 
-        result = collection.get(ids=[doc_id])
-        assert result["metadatas"][0]["retrieval_count"] == "0.03"
-
-        mem._chroma_client = None
+        row = mock_config.db.get(doc_id)
+        assert row["metadata"]["retrieval_count"] == "0.03"
 
     def test_default_increment_is_one(self, mock_config):
-        """No increment arg → adds 1.0 (backward compat)."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_default_inc_db")}
-        )
-
+        """No increment arg -> adds 1.0 (backward compat)."""
         from tools.tier2 import tier2_write
 
         write_result = tier2_write(
@@ -725,23 +519,13 @@ class TestIncrementRetrievalCountsFractional:
         )
         doc_id = write_result["id"]
 
-        collection = mem._get_collection()
-        _increment_retrieval_counts(collection, [doc_id])
+        _increment_retrieval_counts([doc_id])
 
-        result = collection.get(ids=[doc_id])
-        assert result["metadatas"][0]["retrieval_count"] == "1.0"
-
-        mem._chroma_client = None
+        row = mock_config.db.get(doc_id)
+        assert row["metadata"]["retrieval_count"] == "1.0"
 
     def test_skips_tier1_ids(self, mock_config):
         """Tier 1 (vault::) IDs are not incremented."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
-        mock_config.set(
-            memory={"chroma_data_path": str(mock_config.vault_path / ".test_skip_tier1_db")}
-        )
-
         from tools.memory import index_file
 
         notes_dir = mock_config.vault_path / "notes"
@@ -749,18 +533,15 @@ class TestIncrementRetrievalCountsFractional:
         (notes_dir / "skip-test.md").write_text("# Skip Test\nContent")
         index_file("notes/skip-test.md")
 
-        collection = mem._get_collection()
         # Should not crash on vault:: IDs
         _increment_retrieval_counts(
-            collection, ["vault::notes/skip-test.md"], increment=0.01
+            ["vault::notes/skip-test.md"], increment=0.01
         )
 
         # Verify no retrieval_count was added to tier 1 doc
-        result = collection.get(ids=["vault::notes/skip-test.md"])
-        meta = result["metadatas"][0]
+        row = mock_config.db.get("vault::notes/skip-test.md")
+        meta = row["metadata"]
         assert meta.get("retrieval_count") is None or meta.get("retrieval_count") == "0"
-
-        mem._chroma_client = None
 
 
 class TestSemanticContextFractionalBump:
@@ -768,12 +549,8 @@ class TestSemanticContextFractionalBump:
 
     def test_bumps_fractionally(self, mock_config):
         """semantic_context() calls increment with configured value."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
         mock_config.set(
             memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_sc_frac_db"),
                 "per_prompt_search": {"passive_retrieval_increment": 0.05},
             }
         )
@@ -791,21 +568,14 @@ class TestSemanticContextFractionalBump:
         semantic_context("career goals", threshold=0.0)
 
         # Check retrieval count was bumped
-        collection = mem._get_collection()
-        result = collection.get(ids=[doc_id])
-        count = float(result["metadatas"][0]["retrieval_count"])
+        row = mock_config.db.get(doc_id)
+        count = float(row["metadata"]["retrieval_count"])
         assert count == pytest.approx(0.05, abs=0.001)
 
-        mem._chroma_client = None
-
     def test_no_bump_when_zero(self, mock_config):
-        """passive_retrieval_increment=0 → no increment call."""
-        import tools.memory as mem
-
-        mem._chroma_client = None
+        """passive_retrieval_increment=0 -> no increment call."""
         mock_config.set(
             memory={
-                "chroma_data_path": str(mock_config.vault_path / ".test_sc_zero_db"),
                 "per_prompt_search": {"passive_retrieval_increment": 0},
             }
         )
@@ -821,8 +591,5 @@ class TestSemanticContextFractionalBump:
 
         semantic_context("career goals zero increment", threshold=0.0)
 
-        collection = mem._get_collection()
-        result = collection.get(ids=[doc_id])
-        assert result["metadatas"][0]["retrieval_count"] == "0"
-
-        mem._chroma_client = None
+        row = mock_config.db.get(doc_id)
+        assert row["metadata"]["retrieval_count"] == "0"

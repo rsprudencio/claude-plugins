@@ -98,12 +98,15 @@ def _git_info() -> dict:
 
 
 def _jarvis_health() -> dict:
-    """Quick Jarvis MCP server health check (cached)."""
+    """Quick Jarvis MCP server health check (cached).
+
+    Returns dict with keys: ok, pg_status, doc_count, repl_mode.
+    """
     cached = _read_cache("jarvis.json", JARVIS_CACHE_TTL)
     if cached:
         return cached
 
-    info = {"ok": False}
+    info = {"ok": False, "pg_status": "", "doc_count": 0, "repl_mode": ""}
     try:
         result = subprocess.run(
             ["curl", "-sf", "--max-time", "2", "http://localhost:8741/health"],
@@ -111,7 +114,12 @@ def _jarvis_health() -> dict:
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
-            info = {"ok": data.get("status") == "ok"}
+            info["ok"] = data.get("status") == "ok"
+            pg = data.get("postgres", {})
+            info["pg_status"] = pg.get("status", "")
+            info["doc_count"] = pg.get("doc_count", 0)
+            repl = data.get("replication", {})
+            info["repl_mode"] = repl.get("mode", "")
     except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
         pass
 
@@ -183,9 +191,21 @@ def generate(data: dict) -> str:
     if account:
         parts.append(f"{GREEN}{BOLD}{account}{RESET}")
 
-    # Jarvis branding (only when healthy)
+    # Jarvis branding with PG health (only when healthy)
     if jarvis.get("ok"):
-        parts.append(f"{BOLD}{YELLOW}\u26a1{RESET} {YELLOW}JARVIS{RESET}")
+        jarvis_label = f"{BOLD}{YELLOW}\u26a1{RESET} {YELLOW}JARVIS{RESET}"
+        # Append pg:ok(N) with doc count
+        pg_status = jarvis.get("pg_status", "")
+        doc_count = jarvis.get("doc_count", 0)
+        if pg_status == "ok":
+            jarvis_label += f" {GREEN}pg:ok({doc_count}){RESET}"
+        elif pg_status:
+            jarvis_label += f" {RED}pg:{pg_status}{RESET}"
+        # Replication indicator
+        repl_mode = jarvis.get("repl_mode", "")
+        if repl_mode and repl_mode != "disabled":
+            jarvis_label += f" {CYAN}repl:{repl_mode}{RESET}"
+        parts.append(jarvis_label)
 
     # Session name (from /rename) or truncated session ID
     session_label = data.get("session_name") or (data.get("session_id", "")[:8])

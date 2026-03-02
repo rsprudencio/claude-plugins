@@ -1,7 +1,7 @@
 """Vault memory querying for semantic search.
 
-Provides query, read, and stats operations against the ChromaDB jarvis collection.
-Uses the shared ChromaDB client from tools.memory.
+Provides query, read, and stats operations against the PostgreSQL jarvis table
+with pgvector embeddings. Uses explicit embedding via EmbeddingService.
 
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from .memory import _get_collection
+from .schema import execute_query, jsonb_to_metadata, metadata_to_jsonb
 from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, get_tier, TIER_FILE, TIER_CHROMADB
 from .expansion import expand_query as _expand_query
@@ -26,7 +26,7 @@ def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
 
     Only processes entries in the obs:: namespace (auto-extracted observations).
     Reads file_mtimes from already-fetched metadata and compares against current
-    filesystem state. No additional ChromaDB operations.
+    filesystem state. No additional database operations.
 
     Args:
         raw_entries: List of entry dicts with 'doc_id', 'metadata', 'relevance' keys.
@@ -40,11 +40,11 @@ def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
             continue
 
         meta = entry.get("metadata", {})
-        mtimes_json = meta.get("file_mtimes", "")
-        if not mtimes_json:
+        mtimes_raw = meta.get("file_mtimes")
+        if not mtimes_raw:
             continue
 
-        recorded = deserialize_mtimes(mtimes_json)
+        recorded = deserialize_mtimes(mtimes_raw)
         if not recorded:
             continue
 
@@ -67,10 +67,11 @@ def _compute_relevance(
     updated_at: Optional[str] = None,
     importance_score: Optional[float] = None,
 ) -> float:
-    """Convert ChromaDB cosine distance to relevance score with boosts.
+    """Convert cosine distance to relevance score with boosts.
 
-    ChromaDB cosine distance ranges from 0 (identical) to 2 (opposite).
-    We convert to a 0-1 relevance score and apply importance + recency adjustments.
+    pgvector cosine distance (<=> operator) ranges from 0 (identical)
+    to 2 (opposite). We convert to a 0-1 relevance score and apply
+    importance + recency adjustments.
 
     When importance_score (float 0-1 from scoring module) is available, it
     provides a more nuanced boost than the string importance field.
@@ -138,12 +139,12 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
     return truncated + "..."
 
 
-def _translate_filter(
-    filter_dict: Optional[dict], user: Optional[str] = None
-) -> Optional[dict]:
-    """Translate clean filter dict to ChromaDB where syntax.
+def _build_filter_sql(
+    filter_dict: Optional[dict] = None, user: Optional[str] = None
+) -> tuple:
+    """Build SQL WHERE conditions from a filter dict.
 
-    Handles the metadata schema where:
+    Translates the metadata schema where:
     - 'type' is the universal content type (vault, memory, observation, etc.)
     - 'vault_type' is the vault-entry type (note, journal, work, etc.)
 
@@ -154,45 +155,46 @@ def _translate_filter(
     The optional ``user`` parameter adds a metadata filter for multi-user
     isolation — only documents attributed to that user are returned.
 
-    Input: {"directory": "journal", "type": "note", "importance": "high", "tags": "work"}
-    Output: {"$and": [{"directory": "journal"}, {"vault_type": "note"}, ...]}
+    Returns:
+        Tuple of (conditions_list, params_list) for SQL WHERE clause.
     """
     if not filter_dict:
         filter_dict = {}
 
     conditions = []
+    params = []
 
     # Multi-user filter (opt-in)
     if user and user != "anonymous":
-        conditions.append({"user": user})
+        conditions.append("metadata->>'user' = %s")
+        params.append(user)
 
     if "directory" in filter_dict and filter_dict["directory"]:
-        conditions.append({"directory": filter_dict["directory"]})
+        conditions.append("metadata->>'directory' = %s")
+        params.append(filter_dict["directory"])
 
     if "type" in filter_dict and filter_dict["type"]:
         type_val = filter_dict["type"]
         if type_val in ALL_TYPES:
             # Universal content type (vault, memory, observation, etc.)
-            conditions.append({"type": type_val})
+            conditions.append("metadata->>'type' = %s")
+            params.append(type_val)
         else:
             # Vault-entry type (note, journal, work, etc.)
-            conditions.append({"vault_type": type_val})
+            conditions.append("metadata->>'vault_type' = %s")
+            params.append(type_val)
 
     if "importance" in filter_dict and filter_dict["importance"]:
-        conditions.append({"importance": filter_dict["importance"]})
+        conditions.append("metadata->>'importance' = %s")
+        params.append(filter_dict["importance"])
 
     if "tags" in filter_dict and filter_dict["tags"]:
-        # Tags stored as comma-separated string in metadata
-        # ChromaDB $contains checks if value is substring of stored string
-        conditions.append(
-            {"tags": {"$contains": filter_dict["tags"].split(",")[0].strip()}}
-        )
+        # Tags stored as comma-separated string; use LIKE for substring match
+        tag = filter_dict["tags"].split(",")[0].strip()
+        conditions.append("metadata->>'tags' LIKE %s")
+        params.append(f"%{tag}%")
 
-    if not conditions:
-        return None
-    if len(conditions) == 1:
-        return conditions[0]
-    return {"$and": conditions}
+    return conditions, params
 
 
 def _display_path(doc_id: str) -> str:
@@ -201,18 +203,16 @@ def _display_path(doc_id: str) -> str:
     return parsed.content_id
 
 
-def _increment_retrieval_counts(
-    collection, doc_ids: list, increment: float = 1.0
-) -> None:
+def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
     """Batch increment retrieval counts for Tier 2 documents.
 
     Best-effort operation: errors are logged but don't block query response.
     Only updates Tier 2 documents (Tier 1 doesn't track retrieval counts).
 
-    Acquires the ChromaDB write lock for the upsert operation.
+    Uses a single SQL UPDATE for all IDs (much more efficient than ChromaDB's
+    individual get+upsert pattern).
 
     Args:
-        collection: ChromaDB collection
         doc_ids: List of document IDs to increment
         increment: Amount to add to retrieval_count (default 1.0).
                    Use fractional values (e.g. 0.01) for passive surfacing.
@@ -221,42 +221,32 @@ def _increment_retrieval_counts(
         return
 
     try:
+        from .schema import _get_pool
+
         # Filter to only Tier 2 IDs
         tier2_ids = [doc_id for doc_id in doc_ids if get_tier(doc_id) == TIER_CHROMADB]
         if not tier2_ids:
             return
 
-        # Batch get current data
-        result = collection.get(ids=tier2_ids, include=["documents", "metadatas"])
-
-        # Increment counts
-        updated_ids = []
-        updated_docs = []
-        updated_metas = []
-
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        for i, doc_id in enumerate(result["ids"]):
-            metadata = result["metadatas"][i]
-            retrieval_count = float(metadata.get("retrieval_count", "0"))
-            retrieval_count = round(retrieval_count + increment, 2)
-
-            updated_metadata = {**metadata}
-            updated_metadata["retrieval_count"] = str(retrieval_count)
-            updated_metadata["updated_at"] = now_iso
-
-            updated_ids.append(doc_id)
-            updated_docs.append(result["documents"][i])
-            updated_metas.append(updated_metadata)
-
-        # Batch upsert
-        if updated_ids:
-            collection.upsert(
-                ids=updated_ids, documents=updated_docs, metadatas=updated_metas
-            )
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                # Batch update retrieval counts using ANY() for efficiency
+                cur.execute(
+                    """UPDATE jarvis
+                       SET metadata = jsonb_set(
+                           jsonb_set(metadata, '{retrieval_count}',
+                               to_jsonb((COALESCE((metadata->>'retrieval_count')::float, 0) + %s)::text)),
+                           '{updated_at}', to_jsonb(%s::text)),
+                           updated_at = now()
+                       WHERE id = ANY(%s)""",
+                    (increment, now_iso, tier2_ids),
+                )
+                conn.commit()
 
     except Exception as e:
-        # Log but don't fail query
         import logging
 
         logger = logging.getLogger("jarvis-core")
@@ -280,12 +270,17 @@ def query_vault(
     Returns:
         Formatted results dict with titles, paths, excerpts, relevance scores
     """
-    try:
-        collection = _get_collection()
-    except Exception as e:
-        return {"success": False, "error": f"ChromaDB unavailable: {e}"}
+    from .embedding import get_embedding_service
+    from .schema import _get_pool
 
-    total = collection.count()
+    try:
+        count_result = execute_query(
+            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        )
+        total = count_result["cnt"] if count_result else 0
+    except Exception as e:
+        return {"success": False, "error": f"Database unavailable: {e}"}
+
     if total == 0:
         return {
             "success": True,
@@ -296,12 +291,21 @@ def query_vault(
         }
 
     n_results = min(max(1, n_results), 20)
-    where = _translate_filter(filter, user=user)
+
+    # Build filter conditions
+    filter_conditions, filter_params = _build_filter_sql(filter, user=user)
 
     # Query expansion
     expansion_config = get_expansion_config()
     expansion = _expand_query(query, expansion_config)
     search_text = expansion["expanded"]
+
+    # Embed the query
+    try:
+        service = get_embedding_service()
+        query_embedding = service.encode(search_text)
+    except Exception as e:
+        return {"success": False, "error": f"Embedding failed: {e}"}
 
     # Over-fetch to account for chunk deduplication (and reranking if enabled)
     reranking_config = get_reranking_config()
@@ -311,28 +315,35 @@ def query_vault(
         fetch_count = min(n_results * 3, 60, total)
 
     try:
-        query_params = {
-            "query_texts": [search_text],
-            "n_results": fetch_count,
-        }
-        if where:
-            query_params["where"] = where
+        # Build the similarity search query
+        where_clause = ""
+        params = [query_embedding]
+        if filter_conditions:
+            where_clause = "WHERE " + " AND ".join(filter_conditions)
+            params.extend(filter_params)
+        params.append(fetch_count)
 
-        raw = collection.query(**query_params)
+        sql = f"""SELECT id, document, metadata,
+                         embedding <=> %s::halfvec AS distance
+                  FROM jarvis
+                  {where_clause}
+                  ORDER BY distance ASC
+                  LIMIT %s"""
+
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, tuple(params))
+                columns = [desc.name for desc in cur.description]
+                rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     except Exception as e:
         return {"success": False, "error": f"Query failed: {e}"}
 
     # Build raw result entries with relevance scores
     raw_entries = []
-    ids = raw.get("ids", [[]])[0]
-    distances = raw.get("distances", [[]])[0]
-    documents = raw.get("documents", [[]])[0]
-    metadatas = raw.get("metadatas", [[]])[0]
-
-    for doc_id, distance, document, metadata in zip(
-        ids, distances, documents, metadatas
-    ):
-        meta = metadata or {}
+    for row in rows:
+        meta = jsonb_to_metadata(row["metadata"])
+        distance = float(row["distance"])
         importance = meta.get("importance", "medium")
         updated_at = meta.get("updated_at")
 
@@ -350,15 +361,15 @@ def query_vault(
         parent_file = meta.get("parent_file")
         if not parent_file:
             # Legacy: strip #chunk-N from ID
-            parsed = parse_id(doc_id)
+            parsed = parse_id(row["id"])
             parent_file = parsed.content_id
 
         raw_entries.append(
             {
-                "doc_id": doc_id,
+                "doc_id": row["id"],
                 "parent_file": parent_file,
                 "relevance": relevance,
-                "document": document,
+                "document": row["document"],
                 "metadata": meta,
             }
         )
@@ -447,7 +458,7 @@ def query_vault(
         all_ids.append(doc_id)
 
     # Increment retrieval counts for Tier 2 results (best-effort, non-blocking)
-    _increment_retrieval_counts(collection, all_ids)
+    _increment_retrieval_counts(all_ids)
 
     response = {
         "success": True,
@@ -513,11 +524,16 @@ def semantic_context(
     start = time.time()
 
     try:
-        collection = _get_collection()
+        from .embedding import get_embedding_service
+        from .schema import _get_pool
+
+        count_result = execute_query(
+            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        )
+        total = count_result["cnt"] if count_result else 0
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
-    total = collection.count()
     if total == 0:
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
@@ -526,30 +542,40 @@ def semantic_context(
     expansion = _expand_query(query, expansion_config)
     search_text = expansion["expanded"]
 
+    # Embed the query
+    try:
+        service = get_embedding_service()
+        query_embedding = service.encode(search_text)
+    except Exception:
+        return {"matches": [], "query_ms": 0, "total_searched": total}
+
     # Over-fetch to account for chunk dedup + threshold filtering
     fetch_count = min(100, total)
 
     try:
-        raw = collection.query(
-            query_texts=[search_text],
-            n_results=fetch_count,
-        )
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id, document, metadata,
+                              embedding <=> %s::halfvec AS distance
+                       FROM jarvis
+                       ORDER BY distance ASC
+                       LIMIT %s""",
+                    (query_embedding, fetch_count),
+                )
+                columns = [desc.name for desc in cur.description]
+                rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": total}
 
     # Build raw entries with relevance scores
     raw_entries = []
-    ids = raw.get("ids", [[]])[0]
-    distances = raw.get("distances", [[]])[0]
-    documents = raw.get("documents", [[]])[0]
-    metadatas = raw.get("metadatas", [[]])[0]
-
     skipped_sensitive = 0
 
-    for doc_id, distance, document, metadata in zip(
-        ids, distances, documents, metadatas
-    ):
-        meta = metadata or {}
+    for row in rows:
+        meta = jsonb_to_metadata(row["metadata"])
+        distance = float(row["distance"])
 
         # Filter sensitive directories
         directory = meta.get("directory", "")
@@ -580,15 +606,15 @@ def semantic_context(
         # Determine parent file for chunk dedup
         parent_file = meta.get("parent_file")
         if not parent_file:
-            parsed = parse_id(doc_id)
+            parsed = parse_id(row["id"])
             parent_file = parsed.content_id
 
         raw_entries.append(
             {
-                "doc_id": doc_id,
+                "doc_id": row["id"],
                 "parent_file": parent_file,
                 "relevance": relevance,
-                "document": document,
+                "document": row["document"],
                 "metadata": meta,
             }
         )
@@ -613,7 +639,7 @@ def semantic_context(
 
     # Budget-based selection: process in relevance order
     # Each item tries its own half first, overflows to the other
-    VAULT_REF_COST = 120  # estimated chars for "See: path § heading"
+    VAULT_REF_COST = 120  # estimated chars for "See: path + heading"
     half = budget // 2
     tier2_remaining = half
     vault_remaining = half
@@ -651,9 +677,7 @@ def semantic_context(
         per_prompt_config = get_per_prompt_config()
         passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
-            _increment_retrieval_counts(
-                collection, surfaced_ids, increment=passive_increment
-            )
+            _increment_retrieval_counts(surfaced_ids, increment=passive_increment)
 
     matches = []
     for entry in selected:
@@ -712,7 +736,7 @@ def semantic_context(
 
 
 def doc_read(ids: list, include_metadata: bool = True) -> dict:
-    """Read specific documents from ChromaDB by ID.
+    """Read specific documents from PostgreSQL by ID.
 
     Accepts both namespaced IDs (vault::notes/my-note.md) and bare paths
     (notes/my-note.md). Bare paths are automatically prefixed with vault::.
@@ -727,11 +751,6 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
     if not ids:
         return {"success": False, "error": "No IDs provided"}
 
-    try:
-        collection = _get_collection()
-    except Exception as e:
-        return {"success": False, "error": f"ChromaDB unavailable: {e}"}
-
     # Normalize IDs: bare paths get vault:: prefix
     lookup_ids = []
     id_map = {}  # lookup_id -> original_id (for display)
@@ -744,31 +763,29 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
             lookup_ids.append(namespaced)
             id_map[namespaced] = doc_id
 
-    include = ["documents"]
-    if include_metadata:
-        include.append("metadatas")
-
     try:
-        raw = collection.get(ids=lookup_ids, include=include)
+        select_cols = "id, document" + (", metadata" if include_metadata else "")
+        sql = f"SELECT {select_cols} FROM jarvis WHERE id = ANY(%s)"
+        rows = execute_query(sql, (lookup_ids,))
     except Exception as e:
         return {"success": False, "error": f"Read failed: {e}"}
 
     found = []
-    found_ids = set(raw.get("ids", []))
+    found_ids = {row["id"] for row in rows}
 
     not_found = []
     for lid in lookup_ids:
         if lid not in found_ids:
             not_found.append(id_map.get(lid, lid))
 
-    for i, doc_id in enumerate(raw.get("ids", [])):
+    for row in rows:
         entry = {
-            "id": doc_id,
-            "path": _display_path(doc_id),
-            "document": raw["documents"][i] if raw.get("documents") else None,
+            "id": row["id"],
+            "path": _display_path(row["id"]),
+            "document": row["document"],
         }
-        if include_metadata and raw.get("metadatas"):
-            entry["metadata"] = raw["metadatas"][i]
+        if include_metadata and "metadata" in row:
+            entry["metadata"] = jsonb_to_metadata(row["metadata"])
         found.append(entry)
 
     return {
@@ -789,11 +806,13 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
         Stats dict with count, samples, type distribution
     """
     try:
-        collection = _get_collection()
+        count_result = execute_query(
+            "SELECT count(*) AS cnt FROM jarvis", fetch="one"
+        )
+        total = count_result["cnt"] if count_result else 0
     except Exception as e:
-        return {"success": False, "error": f"ChromaDB unavailable: {e}"}
+        return {"success": False, "error": f"Database unavailable: {e}"}
 
-    total = collection.count()
     if total == 0:
         return {
             "success": True,
@@ -805,22 +824,22 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     sample_size = min(max(1, sample_size), total)
 
     try:
-        peek = collection.peek(limit=sample_size)
+        peek_rows = execute_query(
+            "SELECT id, metadata FROM jarvis LIMIT %s", (sample_size,)
+        )
     except Exception as e:
         return {"success": False, "error": f"Stats failed: {e}"}
 
     samples = []
-    for i, doc_id in enumerate(peek.get("ids", [])):
-        meta = peek["metadatas"][i] if peek.get("metadatas") else {}
+    for row in peek_rows:
+        meta = jsonb_to_metadata(row["metadata"])
         # Use vault_type for vault entries, fall back to type
-        entry_type = (meta or {}).get("vault_type") or (meta or {}).get(
-            "type", "unknown"
-        )
+        entry_type = meta.get("vault_type") or meta.get("type", "unknown")
         samples.append(
             {
-                "id": doc_id,
-                "path": _display_path(doc_id),
-                "title": (meta or {}).get("title", doc_id),
+                "id": row["id"],
+                "path": _display_path(row["id"]),
+                "title": meta.get("title", row["id"]),
                 "type": entry_type,
             }
         )
@@ -834,32 +853,34 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     # Detailed breakdown
     if detailed:
         try:
-            all_meta = collection.get(include=["metadatas"])
-            type_counts = {}
-            namespace_counts = {}
+            type_rows = execute_query(
+                """SELECT metadata->>'type' AS content_type,
+                          count(*) AS cnt
+                   FROM jarvis
+                   GROUP BY content_type"""
+            )
+            type_counts = {row["content_type"]: row["cnt"] for row in type_rows}
 
-            for meta in all_meta.get("metadatas", []):
-                if not meta:
-                    continue
-                # Count by type
-                content_type = meta.get("type", "unknown")
-                type_counts[content_type] = type_counts.get(content_type, 0) + 1
-                # Count by namespace
-                ns = meta.get("namespace", "unknown")
-                namespace_counts[ns] = namespace_counts.get(ns, 0) + 1
+            ns_rows = execute_query(
+                """SELECT metadata->>'namespace' AS ns,
+                          count(*) AS cnt
+                   FROM jarvis
+                   GROUP BY ns"""
+            )
+            namespace_counts = {row["ns"]: row["cnt"] for row in ns_rows}
 
             result["type_breakdown"] = type_counts
             result["namespace_breakdown"] = namespace_counts
 
-            # Storage size
-            storage_bytes = 0
-            db_dir = get_path("chroma_data_path")
-            if os.path.isdir(db_dir):
-                for dirpath, _, filenames in os.walk(db_dir):
-                    for f in filenames:
-                        storage_bytes += os.path.getsize(os.path.join(dirpath, f))
-            result["storage_bytes"] = storage_bytes
-            result["storage_mb"] = round(storage_bytes / (1024 * 1024), 2)
+            # Storage size (PostgreSQL table + indexes)
+            size_result = execute_query(
+                """SELECT pg_total_relation_size('jarvis') AS total_bytes""",
+                fetch="one",
+            )
+            if size_result:
+                storage_bytes = size_result["total_bytes"]
+                result["storage_bytes"] = storage_bytes
+                result["storage_mb"] = round(storage_bytes / (1024 * 1024), 2)
 
         except Exception as e:
             result["detailed_error"] = str(e)

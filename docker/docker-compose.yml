@@ -7,24 +7,29 @@ services:
     ports:
       - "${JARVIS_CORE_PORT:-8741}:8741"
       - "${JARVIS_TODOIST_PORT:-8742}:8742"
-      - "${CHROMA_PORT:-8743}:8743"
       - "${JARVIS_OBSIDIAN_PORT:-8744}:8744"
     volumes:
       - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
       - "${JARVIS_HOME:-~/.jarvis}:/config"
+      - pgdata:/var/lib/postgresql/data
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
-      - CHROMA_HOST=127.0.0.1
-      - CHROMA_PORT=${CHROMA_PORT:-8743}
+      # Omit POSTGRES_URL for embedded PG (default, single-user)
+      # Set POSTGRES_URL for external PG (team/managed deployments)
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
       - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
+      - JARVIS_REPLICATION_MODE=${JARVIS_REPLICATION_MODE:-disabled}
+      - JARVIS_CENTRAL_URL=${JARVIS_CENTRAL_URL:-}
     stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
       interval: 30s
       timeout: 5s
-      start_period: 10s
+      start_period: 30s
       retries: 3
+
+volumes:
+  pgdata:

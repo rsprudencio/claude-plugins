@@ -1,6 +1,5 @@
 """Unit tests for observation staleness tracking module."""
 
-import json
 import os
 import time
 
@@ -11,7 +10,6 @@ from tools.staleness import (
     check_staleness,
     deserialize_mtimes,
     record_file_mtimes,
-    serialize_mtimes,
 )
 
 
@@ -43,34 +41,37 @@ class TestRecordFileMtimes:
         assert record_file_mtimes([]) == {}
 
 
-class TestSerializeDeserialize:
-    """Tests for serialize/deserialize roundtrip."""
+class TestDeserializeMtimes:
+    """Tests for deserialize_mtimes()."""
 
-    def test_roundtrip(self, tmp_path):
-        """Serialize then deserialize recovers original data."""
+    def test_dict_passthrough(self, tmp_path):
+        """Native dict (from pgvector jsonb) passes through."""
         f = tmp_path / "test.py"
         f.write_text("content")
         original = record_file_mtimes([str(f)])
 
-        serialized = serialize_mtimes(original)
-        recovered = deserialize_mtimes(serialized)
-
+        recovered = deserialize_mtimes(original)
         assert recovered == original
 
-    def test_empty_roundtrip(self):
-        """Empty dict serializes and deserializes correctly."""
-        assert deserialize_mtimes(serialize_mtimes({})) == {}
+    def test_empty_dict(self):
+        """Empty dict returns empty dict."""
+        assert deserialize_mtimes({}) == {}
 
-    def test_invalid_json(self):
-        """Invalid JSON returns empty dict."""
-        assert deserialize_mtimes("not json") == {}
+    def test_non_dict_returns_empty(self):
+        """Non-dict input returns empty dict."""
+        assert deserialize_mtimes("a string") == {}
         assert deserialize_mtimes("") == {}
         assert deserialize_mtimes(None) == {}
+        assert deserialize_mtimes([1, 2, 3]) == {}
+        assert deserialize_mtimes(42) == {}
 
-    def test_non_dict_json(self):
-        """Non-dict JSON returns empty dict."""
-        assert deserialize_mtimes("[1, 2, 3]") == {}
-        assert deserialize_mtimes('"a string"') == {}
+    def test_coerces_values_to_float(self):
+        """String-valued mtimes are coerced to float."""
+        assert deserialize_mtimes({"a.py": "123.4"}) == {"a.py": 123.4}
+
+    def test_bad_values_return_empty(self):
+        """Non-numeric values cause empty dict return."""
+        assert deserialize_mtimes({"a.py": "not a number"}) == {}
 
 
 class TestCheckStaleness:

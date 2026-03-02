@@ -207,10 +207,23 @@ class TestJarvisHealth:
         with mock.patch.object(sl, "CACHE_DIR", tmp_path):
             mock_run.return_value = mock.Mock(
                 returncode=0,
-                stdout='{"status":"ok","server":"jarvis-core","version":"2.0.2"}',
+                stdout='{"status":"ok","server":"jarvis-core","version":"2.3.0","postgres":{"status":"ok","doc_count":2657}}',
             )
             result = sl._jarvis_health()
             assert result["ok"] is True
+            assert result["pg_status"] == "ok"
+            assert result["doc_count"] == 2657
+
+    @mock.patch("statusline.subprocess.run")
+    def test_healthy_with_replication(self, mock_run, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            mock_run.return_value = mock.Mock(
+                returncode=0,
+                stdout='{"status":"ok","postgres":{"status":"ok","doc_count":100},"replication":{"mode":"local"}}',
+            )
+            result = sl._jarvis_health()
+            assert result["ok"] is True
+            assert result["repl_mode"] == "local"
 
     @mock.patch("statusline.subprocess.run")
     def test_down(self, mock_run, tmp_path):
@@ -218,6 +231,8 @@ class TestJarvisHealth:
             mock_run.return_value = mock.Mock(returncode=1, stdout="")
             result = sl._jarvis_health()
             assert result["ok"] is False
+            assert result["pg_status"] == ""
+            assert result["doc_count"] == 0
 
     @mock.patch("statusline.subprocess.run", side_effect=FileNotFoundError)
     def test_no_curl(self, mock_run, tmp_path):
@@ -227,20 +242,34 @@ class TestJarvisHealth:
 
     def test_uses_cache(self, tmp_path):
         with mock.patch.object(sl, "CACHE_DIR", tmp_path):
-            sl._write_cache("jarvis.json", {"ok": True})
+            sl._write_cache("jarvis.json", {"ok": True, "pg_status": "ok", "doc_count": 42, "repl_mode": ""})
             result = sl._jarvis_health()
             assert result["ok"] is True
+            assert result["doc_count"] == 42
 
     @mock.patch("statusline.subprocess.run")
     def test_caches_result(self, mock_run, tmp_path):
         with mock.patch.object(sl, "CACHE_DIR", tmp_path):
             mock_run.return_value = mock.Mock(
                 returncode=0,
-                stdout='{"status":"ok"}',
+                stdout='{"status":"ok","postgres":{"status":"ok","doc_count":10}}',
             )
             sl._jarvis_health()
             cached = sl._read_cache("jarvis.json", 60)
-            assert cached == {"ok": True}
+            assert cached["ok"] is True
+            assert cached["pg_status"] == "ok"
+            assert cached["doc_count"] == 10
+
+    @mock.patch("statusline.subprocess.run")
+    def test_degraded_pg(self, mock_run, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            mock_run.return_value = mock.Mock(
+                returncode=0,
+                stdout='{"status":"degraded","postgres":{"status":"disconnected","error":"connection refused"}}',
+            )
+            result = sl._jarvis_health()
+            assert result["ok"] is False
+            assert result["pg_status"] == "disconnected"
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +277,7 @@ class TestJarvisHealth:
 # ---------------------------------------------------------------------------
 
 class TestGenerate:
-    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True})
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "pg_status": "ok", "doc_count": 2657, "repl_mode": ""})
     @mock.patch.object(sl, "_git_info", return_value={"branch": "main", "dirty": False})
     @mock.patch.object(sl, "_account_name", return_value="personal-account")
     def test_full_output(self, mock_acct, mock_git, mock_jarvis, tmp_path):
@@ -264,6 +293,7 @@ class TestGenerate:
             assert "\n" not in output
             assert "personal-account" in output
             assert "JARVIS" in output
+            assert "pg:ok(2657)" in output
             assert "my-session" in output
             assert "Opus 4.6" in output
             assert "project" in output
@@ -271,7 +301,26 @@ class TestGenerate:
             assert "$0.5000" in output
             assert "45%" in output
 
-    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": False})
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "pg_status": "ok", "doc_count": 100, "repl_mode": "local"})
+    @mock.patch.object(sl, "_git_info", return_value={"branch": "main", "dirty": False})
+    @mock.patch.object(sl, "_account_name", return_value="")
+    def test_replication_indicator(self, mock_acct, mock_git, mock_jarvis, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            data = {"model": "test", "cwd": "/tmp", "context_window": {}}
+            output = sl.generate(data)
+            assert "repl:local" in output
+            assert "pg:ok(100)" in output
+
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": True, "pg_status": "disconnected", "doc_count": 0, "repl_mode": ""})
+    @mock.patch.object(sl, "_git_info", return_value={"branch": "", "dirty": False})
+    @mock.patch.object(sl, "_account_name", return_value="")
+    def test_pg_disconnected_display(self, mock_acct, mock_git, mock_jarvis, tmp_path):
+        with mock.patch.object(sl, "CACHE_DIR", tmp_path):
+            data = {"model": "test", "cwd": "/tmp", "context_window": {}}
+            output = sl.generate(data)
+            assert "pg:disconnected" in output
+
+    @mock.patch.object(sl, "_jarvis_health", return_value={"ok": False, "pg_status": "", "doc_count": 0, "repl_mode": ""})
     @mock.patch.object(sl, "_git_info", return_value={"branch": "", "dirty": False})
     @mock.patch.object(sl, "_account_name", return_value="")
     def test_minimal_data(self, mock_acct, mock_git, mock_jarvis, tmp_path):

@@ -23,6 +23,15 @@ import prompt_search as prompt_search_module
 from prompt_search import _should_skip_prompt, _extract_prompt, _format_memories
 
 
+def _seed_docs(db, ids, documents, metadatas):
+    """Seed documents into InMemoryDB with mock embeddings."""
+    from tools.embedding import get_embedding_service
+
+    emb = get_embedding_service()
+    for doc_id, doc, meta in zip(ids, documents, metadatas):
+        db.upsert(doc_id, doc, emb.encode(doc), meta)
+
+
 # --- Prompt Filtering Tests ---
 
 
@@ -323,12 +332,10 @@ class TestSemanticContext:
 
     def test_threshold_filtering(self, mock_config):
         """Results below threshold are excluded."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
-        # Add documents (one very relevant, one less so)
-        collection.add(
+        _seed_docs(
+            mock_config.db,
             ids=["vault::notes/relevant.md", "vault::notes/unrelated.md"],
             documents=[
                 "Career goals for 2026: leadership, technical depth",
@@ -360,11 +367,8 @@ class TestSemanticContext:
 
     def test_budget_limits_results(self, mock_config):
         """Small budget limits number of returned matches."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
-        # Add many documents
         ids = [f"vault::notes/doc{i}.md" for i in range(10)]
         docs = [f"Document about career goals topic {i}" for i in range(10)]
         metas = [
@@ -378,7 +382,7 @@ class TestSemanticContext:
             }
             for i in range(10)
         ]
-        collection.add(ids=ids, documents=docs, metadatas=metas)
+        _seed_docs(mock_config.db, ids, docs, metas)
 
         # Tiny budget (240 chars) should limit vault refs (~120 chars each)
         result_small = semantic_context("career goals", budget=240, threshold=0.0)
@@ -388,11 +392,10 @@ class TestSemanticContext:
 
     def test_sensitive_dirs_excluded(self, mock_config):
         """Results from documents/ and people/ are never returned."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
-        collection.add(
+        _seed_docs(
+            mock_config.db,
             ids=[
                 "vault::notes/safe.md",
                 "vault::documents/sensitive.md",
@@ -437,12 +440,11 @@ class TestSemanticContext:
 
     def test_vault_shown_as_reference(self, mock_config):
         """Vault items use reference display mode (path only, no full content)."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
         long_content = "Important career goal information. " * 100  # Very long
-        collection.add(
+        _seed_docs(
+            mock_config.db,
             ids=["vault::notes/long.md"],
             documents=[long_content],
             metadatas=[
@@ -466,14 +468,13 @@ class TestSemanticContext:
 
     def test_tier2_shown_in_full(self, mock_config):
         """Tier 2 items use full display mode with complete content."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
         obs_content = (
             "User prefers kebab-case for all file naming conventions across the vault."
         )
-        collection.add(
+        _seed_docs(
+            mock_config.db,
             ids=["obs::1234567890"],
             documents=[obs_content],
             metadatas=[
@@ -492,11 +493,10 @@ class TestSemanticContext:
 
     def test_chunk_dedup(self, mock_config):
         """Only best chunk per parent file is returned."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
 
-        collection = _get_collection()
-        collection.add(
+        _seed_docs(
+            mock_config.db,
             ids=["vault::notes/goals.md#chunk-0", "vault::notes/goals.md#chunk-1"],
             documents=[
                 "Career goals for 2026 include leadership",
@@ -531,10 +531,7 @@ class TestSemanticContext:
 
     def test_budget_split_mixed_tiers(self, mock_config):
         """Budget splits 50/50 between tier2 (full) and vault (reference) content."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
-
-        collection = _get_collection()
 
         # Add 5 vault files (~120 chars each as references = 600 chars)
         vault_ids = [f"vault::notes/goal{i}.md" for i in range(5)]
@@ -566,10 +563,11 @@ class TestSemanticContext:
             for _ in range(3)
         ]
 
-        collection.add(
-            ids=vault_ids + obs_ids,
-            documents=vault_docs + obs_docs,
-            metadatas=vault_metas + obs_metas,
+        _seed_docs(
+            mock_config.db,
+            vault_ids + obs_ids,
+            vault_docs + obs_docs,
+            vault_metas + obs_metas,
         )
 
         # Budget=2000: half=1000 per side
@@ -593,10 +591,7 @@ class TestSemanticContext:
 
     def test_budget_overflow_from_empty_half(self, mock_config):
         """Unused budget from one half overflows to the other."""
-        from tools.memory import _get_collection
         from tools.query import semantic_context
-
-        collection = _get_collection()
 
         # Add ONLY vault files (no tier2) — all budget should be available for vault
         vault_ids = [f"vault::notes/item{i}.md" for i in range(50)]
@@ -615,7 +610,7 @@ class TestSemanticContext:
             }
             for i in range(50)
         ]
-        collection.add(ids=vault_ids, documents=vault_docs, metadatas=vault_metas)
+        _seed_docs(mock_config.db, vault_ids, vault_docs, vault_metas)
 
         # Budget=1200: half=600. Vault refs cost ~120 each.
         # Without overflow: 600/120 = 5 vault refs

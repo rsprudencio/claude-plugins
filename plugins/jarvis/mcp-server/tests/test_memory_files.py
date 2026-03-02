@@ -124,7 +124,7 @@ class TestResolveMemoryPath:
     def test_project_path(self, mock_config):
         path, error = resolve_memory_path("context", scope="project", project="my-app")
         assert error == ""
-        assert ".jarvis/memories/my-app/context.md" in path
+        assert path.endswith("my-app/context.md")
 
     def test_project_scope_requires_project(self, mock_config):
         _, error = resolve_memory_path("context", scope="project")

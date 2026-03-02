@@ -13,9 +13,9 @@ from .routing_utils import validate_exactly_one, parse_memory_scope
 
 
 def _remove_vault_file(id: str, confirm: bool = False) -> dict:
-    """Delete a vault file from disk and clean its ChromaDB index entries."""
+    """Delete a vault file from disk and clean its database index entries."""
     from .file_ops import validate_vault_path
-    from .memory import _get_collection, _delete_existing_chunks
+    from .memory import _delete_existing_chunks
 
     file_path = id[7:].split("#chunk-")[0]  # strip vault:: and #chunk-N
 
@@ -41,10 +41,9 @@ def _remove_vault_file(id: str, confirm: bool = False) -> dict:
     # Delete the file
     os.remove(full_path)
 
-    # Clean up ChromaDB index
+    # Clean up database index entries
     try:
-        collection = _get_collection()
-        deleted_chunks = _delete_existing_chunks(collection, file_path)
+        deleted_chunks = _delete_existing_chunks(file_path)
     except Exception:
         deleted_chunks = 0
 

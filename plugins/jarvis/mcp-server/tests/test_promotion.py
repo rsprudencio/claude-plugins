@@ -4,7 +4,6 @@ import os
 import pytest
 from tools.tier2 import tier2_write, tier2_read
 from tools.promotion import check_promotion_criteria, promote
-from tools.memory import _get_collection
 from tools.paths import get_path
 
 
@@ -113,7 +112,7 @@ class TestPromote:
         result = promote(doc_id)
         assert result["success"]
         assert result["file_written"]
-        assert result["chromadb_updated"]
+        assert result["db_updated"]
         assert result["needs_git_commit"]
         assert "promoted_path" in result
         assert "vault_id" in result
@@ -197,7 +196,7 @@ class TestPromote:
         result1 = promote(doc_id)
         assert result1["success"]
 
-        # The document no longer exists in ChromaDB with obs:: ID
+        # The document no longer exists with obs:: ID
         # So second promotion should fail with "not found"
         result2 = promote(doc_id)
         assert not result2["success"]
@@ -250,8 +249,8 @@ class TestPromote:
         assert "- tag1" in content
         assert "- tag2" in content
 
-    def test_promote_updates_chromadb(self, mock_config):
-        """Test that promotion updates ChromaDB with new vault:: ID."""
+    def test_promote_updates_db(self, mock_config):
+        """Test that promotion updates database with new vault:: ID."""
         write_result = tier2_write(
             content="Test", content_type="observation", importance_score=0.9
         )
@@ -262,16 +261,15 @@ class TestPromote:
         vault_id = result["vault_id"]
 
         # Verify old ID is gone
-        collection = _get_collection()
-        old_result = collection.get(ids=[doc_id])
-        assert len(old_result["ids"]) == 0
+        old_row = mock_config.db.get(doc_id)
+        assert old_row is None
 
         # Verify new vault:: ID exists
-        new_result = collection.get(ids=[vault_id])
-        assert len(new_result["ids"]) == 1
-        assert new_result["metadatas"][0]["tier"] == "file"
-        assert new_result["metadatas"][0]["promoted"] == "true"
-        assert new_result["metadatas"][0]["original_tier2_id"] == doc_id
+        new_row = mock_config.db.get(vault_id)
+        assert new_row is not None
+        assert new_row["metadata"]["tier"] == "file"
+        assert new_row["metadata"]["promoted"] == "true"
+        assert new_row["metadata"]["original_tier2_id"] == doc_id
 
     def test_promote_unsupported_type(self, mock_config):
         """Test that unsupported types can't be promoted."""
@@ -372,14 +370,10 @@ class TestPromote:
         result = promote(write_result["id"])
         assert result["success"]
         # Should NOT have any project subdirectory between the promotion dir and filename
-        # The filename should be directly under the observations path (no nested project dir)
         filename = os.path.basename(result["promoted_path"])
         parent_dir = os.path.basename(os.path.dirname(result["promoted_path"]))
-        # parent should be the observations dir itself, not a project name
         assert filename.startswith("observation-")
         assert parent_dir != ""  # has a parent dir
-        # Verify no nested subdirectory — the promoted path should end with dir/filename
-        # (not dir/project/filename)
         assert "observation-" in result["promoted_path"]
 
     def test_promote_frontmatter_includes_scope_and_project(self, mock_config):

@@ -30,6 +30,7 @@ def retrieve(
     include_metadata: bool = True,
     include_content: bool = False,
     sort_by: str = "importance_desc",
+    session_id: Optional[str] = None,
     user: Optional[str] = None,
 ) -> dict:
     """Unified read/search entry point.
@@ -79,6 +80,7 @@ def retrieve(
             importance=importance,
             limit=limit,
             sort_by=sort_by,
+            session_id=session_id,
             include_content=include_content,
         )
 
@@ -96,7 +98,7 @@ def _read_by_id(doc_id: str, include_metadata: bool):
 
         return tier2_read(doc_id)
     else:
-        # Tier 1: use doc_read for ChromaDB-indexed content
+        # Tier 1: use doc_read for indexed content
         from .query import doc_read
 
         result = doc_read(ids=[doc_id], include_metadata=include_metadata)
@@ -132,6 +134,7 @@ def _list_content(
     importance,
     limit,
     sort_by="importance_desc",
+    session_id=None,
     include_content=False,
 ):
     """Route list operations."""
@@ -144,6 +147,7 @@ def _list_content(
             source=source,
             limit=limit,
             sort_by=sort_by,
+            session_id=session_id,
             include_content=include_content,
         )
     elif list_type == "memory":

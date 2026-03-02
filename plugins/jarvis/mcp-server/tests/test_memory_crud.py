@@ -10,32 +10,12 @@ from tools.memory_crud import (
 )
 
 
-def _reset_chromadb(mock_config):
-    """Reset ChromaDB singleton for test isolation."""
-    import tools.memory as mem
-
-    mem._chroma_client = None
-    mock_config.set(
-        memory={
-            "chroma_data_path": str(mock_config.vault_path / ".test_crud_db"),
-            "project_memories_path": str(
-                mock_config.vault_path / ".jarvis" / "memories"
-            ),
-        }
-    )
-
-
-def _cleanup_chromadb():
-    import tools.memory as mem
-
-    mem._chroma_client = None
-
 
 class TestMemoryWrite:
     """Tests for memory_write handler."""
 
     def test_write_basic(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(
             name="test-basic",
@@ -48,10 +28,10 @@ class TestMemoryWrite:
         assert result["indexed"] is True
         assert "memory::global::test-basic" == result["id"]
 
-        _cleanup_chromadb()
+
 
     def test_write_project_scope(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(
             name="project-ctx",
@@ -63,10 +43,10 @@ class TestMemoryWrite:
         assert result["scope"] == "project"
         assert "memory::my-app::project-ctx" == result["id"]
 
-        _cleanup_chromadb()
+
 
     def test_write_project_scope_requires_project(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(
             name="orphan",
@@ -76,63 +56,63 @@ class TestMemoryWrite:
         assert result["success"] is False
         assert "required" in result["error"].lower()
 
-        _cleanup_chromadb()
+
 
     def test_write_invalid_name(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(name="Invalid Name", content="test")
         assert result["success"] is False
         assert "invalid" in result["error"].lower()
 
-        _cleanup_chromadb()
+
 
     def test_write_invalid_scope(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(name="test", content="test", scope="unknown")
         assert result["success"] is False
         assert "invalid scope" in result["error"].lower()
 
-        _cleanup_chromadb()
+
 
     def test_write_invalid_importance(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(name="test", content="test", importance="extreme")
         assert result["success"] is False
         assert "invalid importance" in result["error"].lower()
 
-        _cleanup_chromadb()
+
 
     def test_write_numeric_importance(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(name="test-numeric", content="test", importance=0.85)
         assert result["success"] is True
 
-        _cleanup_chromadb()
+
 
     def test_write_importance_out_of_range(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         # Values are clamped, not rejected
         result = memory_write(name="test-clamp", content="test", importance=1.5)
         assert result["success"] is True
 
-        _cleanup_chromadb()
+
 
     def test_write_categorical_backward_compat(self, mock_config):
         """Categorical strings are accepted and mapped to numeric."""
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(name="test-cat", content="test", importance="high")
         assert result["success"] is True
 
-        _cleanup_chromadb()
+
 
     def test_write_secret_detected(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(
             name="has-secret",
@@ -142,10 +122,10 @@ class TestMemoryWrite:
         assert result["error"] == "SECRET_DETECTED"
         assert len(result["detections"]) > 0
 
-        _cleanup_chromadb()
+
 
     def test_write_secret_bypass(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_write(
             name="has-secret-ok",
@@ -155,46 +135,46 @@ class TestMemoryWrite:
         assert result["success"] is True
         assert result["secret_scan"] == "skipped"
 
-        _cleanup_chromadb()
+
 
     def test_write_overwrite(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="overwrite-me", content="V1")
         result = memory_write(name="overwrite-me", content="V2", overwrite=True)
         assert result["success"] is True
         assert result["version"] == 2
 
-        _cleanup_chromadb()
+
 
     def test_write_no_overwrite_fails(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="no-overwrite", content="V1")
         result = memory_write(name="no-overwrite", content="V2")
         assert result["success"] is False
         assert result.get("exists") is True
 
-        _cleanup_chromadb()
+
 
 
 class TestMemoryRead:
     """Tests for memory_read handler."""
 
     def test_read_from_chromadb(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="read-test", content="# Read Test\n\nContent here.")
         result = memory_read(name="read-test")
         assert result["success"] is True
         assert result["found"] is True
-        assert result["source"] == "chromadb"
+        assert result["source"] == "database"
         assert "Content here." in result["content"]
 
-        _cleanup_chromadb()
+
 
     def test_read_file_fallback(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         # Write file directly (bypass ChromaDB)
         from tools.memory_files import resolve_memory_path, write_memory_file
@@ -210,20 +190,20 @@ class TestMemoryRead:
         assert result["source"] == "file"
         assert result.get("index_stale") is True
 
-        _cleanup_chromadb()
+
 
     def test_read_not_found(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_read(name="nonexistent")
         assert result["success"] is True
         assert result["found"] is False
         assert "available" in result
 
-        _cleanup_chromadb()
+
 
     def test_read_project_scope(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(
             name="proj-read", content="Project data", scope="project", project="myapp"
@@ -232,14 +212,14 @@ class TestMemoryRead:
         assert result["success"] is True
         assert result["found"] is True
 
-        _cleanup_chromadb()
+
 
 
 class TestMemoryList:
     """Tests for memory_list handler."""
 
     def test_list_all(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="list-a", content="A", importance=0.8, tags=["tag1"])
         memory_write(name="list-b", content="B", importance=0.3)
@@ -251,10 +231,10 @@ class TestMemoryList:
         assert "list-a" in names
         assert "list-b" in names
 
-        _cleanup_chromadb()
+
 
     def test_list_with_threshold_filter(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="filter-high", content="H", importance=0.8)
         memory_write(name="filter-low", content="L", importance=0.3)
@@ -264,10 +244,10 @@ class TestMemoryList:
         assert "filter-high" in names
         assert "filter-low" not in names
 
-        _cleanup_chromadb()
+
 
     def test_list_indexed_status(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="indexed-check", content="Check")
         result = memory_list()
@@ -276,23 +256,23 @@ class TestMemoryList:
                 assert mem["indexed"] is True
                 break
 
-        _cleanup_chromadb()
+
 
     def test_list_empty(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_list(scope="global")
         assert result["success"] is True
         assert isinstance(result["memories"], list)
 
-        _cleanup_chromadb()
+
 
 
 class TestMemoryDelete:
     """Tests for memory_delete handler."""
 
     def test_delete_with_confirm(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="delete-me", content="Goodbye")
         result = memory_delete(name="delete-me", confirm=True)
@@ -304,10 +284,10 @@ class TestMemoryDelete:
         read_result = memory_read(name="delete-me")
         assert read_result["found"] is False
 
-        _cleanup_chromadb()
+
 
     def test_delete_without_confirm_prompts(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="confirm-gate", content="Protected content")
         result = memory_delete(name="confirm-gate")
@@ -319,35 +299,35 @@ class TestMemoryDelete:
         read_result = memory_read(name="confirm-gate")
         assert read_result["found"] is True
 
-        _cleanup_chromadb()
+
 
     def test_delete_project_scope_no_confirm_needed(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="proj-del", content="Del", scope="project", project="myapp")
         result = memory_delete(name="proj-del", scope="project", project="myapp")
         assert result["success"] is True
         assert result["file_deleted"] is True
 
-        _cleanup_chromadb()
+
 
     def test_delete_nonexistent(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         result = memory_delete(name="no-such-memory", confirm=True)
-        # File doesn't exist, but ChromaDB delete doesn't error on missing IDs
+        # File doesn't exist, but DB delete doesn't error on missing IDs
         # So file_deleted=False but index_deleted=True (no-op success)
         assert result["success"] is True
         assert result["file_deleted"] is False
 
-        _cleanup_chromadb()
+
 
 
 class TestIntegrationCycle:
     """End-to-end write → read → query → delete cycle."""
 
     def test_full_lifecycle(self, mock_config):
-        _reset_chromadb(mock_config)
+        
 
         # Write
         write_result = memory_write(
@@ -386,7 +366,7 @@ class TestIntegrationCycle:
         gone_result = memory_read(name="lifecycle-test")
         assert gone_result["found"] is False
 
-        _cleanup_chromadb()
+
 
 
 class TestMemoryTierMetadata:
@@ -394,25 +374,22 @@ class TestMemoryTierMetadata:
 
     def test_memory_write_includes_tier(self, mock_config):
         """Test that memory_write includes tier='file' in metadata."""
-        _cleanup_chromadb()
+        from tools.namespaces import global_memory_id
 
         result = memory_write(
             name="test-tier-memory", content="Testing tier metadata in memories"
         )
         assert result["success"] is True
 
-        # Verify tier in metadata
-        from tools.memory import _get_collection
-        from tools.namespaces import global_memory_id
-
-        collection = _get_collection()
+        # Verify tier in metadata via InMemoryDB
         doc_id = global_memory_id("test-tier-memory")
-        doc = collection.get(ids=[doc_id])
-        assert doc["metadatas"][0]["tier"] == "file"
+        row = mock_config.db.get(doc_id)
+        assert row is not None
+        assert row["metadata"]["tier"] == "file"
 
         # Cleanup
         memory_delete(name="test-tier-memory", confirm=True)
-        _cleanup_chromadb()
+
 
 
 class TestMemoryListIncludeContent:
@@ -420,7 +397,7 @@ class TestMemoryListIncludeContent:
 
     def test_default_excludes_content(self, mock_config):
         """Default include_content=False omits content from results."""
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="no-content-test", content="# Body\n\nSome text here.")
         result = memory_list()
@@ -431,11 +408,11 @@ class TestMemoryListIncludeContent:
                 assert "content" not in mem
                 break
 
-        _cleanup_chromadb()
+
 
     def test_include_content_true(self, mock_config):
         """include_content=True adds body text to each entry."""
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="with-content", content="# Title\n\nBody text for test.")
         result = memory_list(include_content=True)
@@ -450,11 +427,11 @@ class TestMemoryListIncludeContent:
                 break
         assert found, "Memory 'with-content' not found in list"
 
-        _cleanup_chromadb()
+
 
     def test_include_content_false_explicit(self, mock_config):
         """Explicit include_content=False omits content."""
-        _reset_chromadb(mock_config)
+        
 
         memory_write(name="explicit-false", content="Should not appear.")
         result = memory_list(include_content=False)
@@ -465,11 +442,11 @@ class TestMemoryListIncludeContent:
                 assert "content" not in mem
                 break
 
-        _cleanup_chromadb()
+
 
     def test_content_is_frontmatter_stripped(self, mock_config):
         """Content returned by include_content has frontmatter stripped."""
-        _reset_chromadb(mock_config)
+        
 
         memory_write(
             name="fm-stripped",
@@ -488,4 +465,4 @@ class TestMemoryListIncludeContent:
                 assert mem["content"] == "Pure body only."
                 break
 
-        _cleanup_chromadb()
+

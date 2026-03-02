@@ -1,6 +1,6 @@
 """Memory CRUD tool handlers.
 
-Orchestrates file I/O (tools.memory_files) + ChromaDB indexing (tools.memory)
+Orchestrates file I/O (tools.memory_files) + pgvector indexing (tools.schema)
 for Tier 1 file-backed memories. Each handler is called from server.py.
 
 Storage locations:
@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .memory import _get_collection
+from .schema import execute_query, execute_write, metadata_to_jsonb, jsonb_to_metadata
 from .memory_files import (
     resolve_memory_path,
     write_memory_file,
@@ -43,18 +43,18 @@ CATEGORICAL_TO_NUMERIC = {
 VALID_SCOPES = ("global", "project")
 
 
-def _build_chromadb_id(name: str, scope: str, project: Optional[str] = None) -> str:
-    """Build the ChromaDB document ID for a memory."""
+def _build_doc_id(name: str, scope: str, project: Optional[str] = None) -> str:
+    """Build the document ID for a memory."""
     if scope == "project" and project:
         return project_memory_id(project, name)
     return global_memory_id(name)
 
 
 def _normalize_importance(value) -> float:
-    """Normalize importance to a float 0.0–1.0.
+    """Normalize importance to a float 0.0-1.0.
 
     Accepts:
-      - float/int: passed through (clamped to 0.0–1.0)
+      - float/int: passed through (clamped to 0.0-1.0)
       - str numeric: "0.8" -> 0.8
       - str categorical: "high" -> 0.8  (backward compat)
 
@@ -73,7 +73,7 @@ def _normalize_importance(value) -> float:
             pass
     raise ValueError(
         f"Invalid importance: '{value}'. "
-        f"Use 0.0–1.0 or: {', '.join(CATEGORICAL_TO_NUMERIC.keys())}"
+        f"Use 0.0-1.0 or: {', '.join(CATEGORICAL_TO_NUMERIC.keys())}"
     )
 
 
@@ -86,7 +86,7 @@ def _build_memory_metadata(
     created: Optional[str] = None,
     modified: Optional[str] = None,
 ) -> dict:
-    """Build ChromaDB metadata for a memory document."""
+    """Build metadata for a memory document."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     namespace = memory_namespace(project)
 
@@ -120,7 +120,7 @@ def memory_write(
     overwrite: bool = False,
     skip_secret_scan: bool = False,
 ) -> dict:
-    """Write a memory file and index in ChromaDB.
+    """Write a memory file and index in PostgreSQL.
 
     Args:
         name: Memory name slug (lowercase, hyphens)
@@ -128,7 +128,7 @@ def memory_write(
         scope: "global" or "project"
         project: Required when scope="project"
         tags: Optional list of tags
-        importance: Numeric 0.0–1.0 (also accepts categorical strings for backward compat)
+        importance: Numeric 0.0-1.0 (also accepts categorical strings for backward compat)
         overwrite: Allow overwriting existing memory
         skip_secret_scan: Bypass secret detection (use with caution)
 
@@ -191,11 +191,13 @@ def memory_write(
     if not write_result.get("success"):
         return write_result
 
-    # Index in ChromaDB under write lock
+    # Index in PostgreSQL
     indexed = False
-    doc_id = _build_chromadb_id(name, scope, project)
+    doc_id = _build_doc_id(name, scope, project)
     try:
-        collection = _get_collection()
+        from .embedding import get_embedding_service
+        from .schema import _get_pool
+
         metadata = _build_memory_metadata(
             name=name,
             scope=scope,
@@ -211,14 +213,37 @@ def memory_write(
             else content
         )
 
-        collection.upsert(
-            ids=[doc_id],
-            documents=[full_content],
-            metadatas=[metadata],
-        )
+        # Generate embedding
+        service = get_embedding_service()
+        embedding = service.encode(full_content)
+
+        # Upsert into jarvis table
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO jarvis (id, document, embedding, metadata, created_at, updated_at)
+                       VALUES (%s, %s, %s::halfvec, %s::jsonb,
+                               COALESCE(%s::timestamptz, now()),
+                               COALESCE(%s::timestamptz, now()))
+                       ON CONFLICT (id) DO UPDATE SET
+                           document = EXCLUDED.document,
+                           embedding = EXCLUDED.embedding,
+                           metadata = EXCLUDED.metadata,
+                           updated_at = EXCLUDED.updated_at""",
+                    (
+                        doc_id,
+                        full_content,
+                        embedding,
+                        metadata_to_jsonb(metadata),
+                        metadata.get("created_at"),
+                        metadata.get("updated_at"),
+                    ),
+                )
+                conn.commit()
         indexed = True
     except Exception as e:
-        logger.warning(f"ChromaDB indexing failed for memory '{name}': {e}")
+        logger.warning(f"PostgreSQL indexing failed for memory '{name}': {e}")
 
     return {
         "success": True,
@@ -237,7 +262,7 @@ def memory_read(
 ) -> dict:
     """Read a memory by name.
 
-    Tries ChromaDB first (fast path), falls back to file read.
+    Tries PostgreSQL first (fast path), falls back to file read.
 
     Args:
         name: Memory name slug
@@ -252,28 +277,28 @@ def memory_read(
     if name_error:
         return {"success": False, "error": name_error}
 
-    doc_id = _build_chromadb_id(name, scope, project)
+    doc_id = _build_doc_id(name, scope, project)
 
-    # Try ChromaDB first (fast path)
+    # Try PostgreSQL first (fast path)
     try:
-        collection = _get_collection()
-        result = collection.get(
-            ids=[doc_id],
-            include=["documents", "metadatas"],
+        row = execute_query(
+            "SELECT id, document, metadata FROM jarvis WHERE id = %s",
+            (doc_id,),
+            fetch="one",
         )
-        if result["ids"]:
+        if row:
             return {
                 "success": True,
                 "found": True,
                 "id": doc_id,
                 "name": name,
                 "scope": scope,
-                "content": result["documents"][0],
-                "metadata": result["metadatas"][0],
-                "source": "chromadb",
+                "content": row["document"],
+                "metadata": jsonb_to_metadata(row["metadata"]),
+                "source": "database",
             }
     except Exception as e:
-        logger.debug(f"ChromaDB read failed for '{name}': {e}")
+        logger.debug(f"PostgreSQL read failed for '{name}': {e}")
 
     # Fall back to file read
     path, error = resolve_memory_path(name, scope, project)
@@ -322,7 +347,7 @@ def memory_list(
         scope: "global", "project", or "all"
         project: Filter by project (for scope="project")
         tag: Filter by tag
-        importance: Minimum importance threshold (0.0–1.0). Also accepts
+        importance: Minimum importance threshold (0.0-1.0). Also accepts
                     categorical strings for backward compat.
         include_content: Include body text in each memory entry
 
@@ -343,25 +368,28 @@ def memory_list(
         include_content=include_content,
     )
 
-    # Cross-reference with ChromaDB to detect stale indexes
+    # Cross-reference with PostgreSQL to detect stale indexes
     try:
-        collection = _get_collection()
         for mem in memories:
-            doc_id = _build_chromadb_id(
+            doc_id = _build_doc_id(
                 mem["name"],
                 mem["scope"],
                 mem.get("project"),
             )
             mem["id"] = doc_id
             try:
-                result = collection.get(ids=[doc_id])
-                mem["indexed"] = bool(result["ids"])
+                row = execute_query(
+                    "SELECT id FROM jarvis WHERE id = %s",
+                    (doc_id,),
+                    fetch="one",
+                )
+                mem["indexed"] = row is not None
             except Exception:
                 mem["indexed"] = False
             # Remove full path from output (internal detail)
             mem.pop("path", None)
     except Exception:
-        # ChromaDB unavailable — mark all as unknown
+        # Database unavailable — mark all as unknown
         for mem in memories:
             mem["indexed"] = None
             mem.pop("path", None)
@@ -379,7 +407,7 @@ def memory_delete(
     project: Optional[str] = None,
     confirm: bool = False,
 ) -> dict:
-    """Delete a memory file and its ChromaDB entry.
+    """Delete a memory file and its database entry.
 
     Args:
         name: Memory name slug
@@ -426,18 +454,20 @@ def memory_delete(
     file_result = delete_memory_file(path)
     file_deleted = file_result.get("success", False)
 
-    # Delete ChromaDB entry under write lock
+    # Delete database entry
     index_deleted = False
-    doc_id = _build_chromadb_id(name, scope, project)
+    doc_id = _build_doc_id(name, scope, project)
     try:
-        collection = _get_collection()
-        collection.delete(ids=[doc_id])
-        index_deleted = True
-    except Exception as e:
-        logger.warning(f"ChromaDB delete failed for '{name}': {e}")
+        from .schema import _get_pool
 
-    # ChromaDB delete is a no-op for missing IDs, so only check file_deleted
-    # to determine if the memory actually existed
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM jarvis WHERE id = %s", (doc_id,))
+                index_deleted = cur.rowcount > 0
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"PostgreSQL delete failed for '{name}': {e}")
 
     return {
         "success": True,

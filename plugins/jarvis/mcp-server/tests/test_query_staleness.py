@@ -1,12 +1,11 @@
 """Integration tests for staleness tracking in query_vault and semantic_context."""
 
-import json
 import time
 
 import pytest
 
 from tools.query import query_vault, semantic_context
-from tools.staleness import MTIME_TOLERANCE, serialize_mtimes
+from tools.staleness import MTIME_TOLERANCE
 from tools.tier2 import tier2_write
 
 
@@ -21,7 +20,7 @@ class TestQueryVaultStaleness:
             importance_score=0.8,
             extra_metadata={
                 "relevant_files": ",".join(file_mtimes.keys()),
-                "file_mtimes": serialize_mtimes(file_mtimes),
+                "file_mtimes": file_mtimes,
             },
         )
 
@@ -60,15 +59,15 @@ class TestQueryVaultStaleness:
         obs = result["results"][0]
         assert "stale" not in obs
 
-    def test_backward_compat_no_mtimes(self, mock_config):
+    def test_no_mtimes_metadata(self, mock_config):
         """Observations without file_mtimes metadata are unaffected."""
         tier2_write(
-            content="Legacy observation without file tracking",
+            content="Observation without file tracking",
             content_type="observation",
             importance_score=0.8,
         )
 
-        result = query_vault("Legacy observation without file tracking")
+        result = query_vault("Observation without file tracking")
         assert result["success"] is True
         assert len(result["results"]) > 0
 
@@ -113,7 +112,7 @@ class TestSemanticContextStaleness:
             importance_score=0.9,
             extra_metadata={
                 "relevant_files": str(f),
-                "file_mtimes": serialize_mtimes(mtimes),
+                "file_mtimes": mtimes,
             },
         )
 
@@ -142,7 +141,7 @@ class TestSemanticContextStaleness:
             importance_score=0.9,
             extra_metadata={
                 "relevant_files": f"{fresh},{stale}",
-                "file_mtimes": serialize_mtimes(mtimes),
+                "file_mtimes": mtimes,
             },
         )
 

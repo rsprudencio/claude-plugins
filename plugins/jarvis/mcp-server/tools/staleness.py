@@ -2,11 +2,10 @@
 
 Records file modification times when observations are created, and detects
 staleness at query time by comparing recorded mtimes against current values.
-No new ChromaDB operations — staleness metadata travels in the existing
-extra_metadata dict on writes, and is read from already-fetched metadata on queries.
+Staleness metadata travels in the existing extra_metadata dict on writes,
+and is read from already-fetched metadata on queries.
 """
 
-import json
 import os
 
 # HFS+ has 1-second granularity; APFS is nanosecond but we keep a small buffer
@@ -74,22 +73,14 @@ def check_staleness(recorded_mtimes: dict[str, float]) -> dict:
     }
 
 
-def serialize_mtimes(mtimes: dict[str, float]) -> str:
-    """Serialize mtime dict to JSON string for ChromaDB metadata storage."""
-    return json.dumps(mtimes)
-
-
-def deserialize_mtimes(json_str: str) -> dict[str, float]:
-    """Deserialize mtime JSON string back to dict.
+def deserialize_mtimes(data) -> dict[str, float]:
+    """Extract mtimes from a native dict (pgvector jsonb metadata).
 
     Returns empty dict on invalid input rather than raising.
     """
-    if not json_str:
+    if not isinstance(data, dict):
         return {}
     try:
-        data = json.loads(json_str)
-        if isinstance(data, dict):
-            return {k: float(v) for k, v in data.items()}
-        return {}
-    except (json.JSONDecodeError, ValueError, TypeError):
+        return {k: float(v) for k, v in data.items()}
+    except (ValueError, TypeError):
         return {}

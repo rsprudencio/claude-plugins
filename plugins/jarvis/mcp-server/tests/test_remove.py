@@ -81,15 +81,11 @@ class TestRemoveById:
 
         state = {"delete_called": False}
 
-        def fake_get_collection():
-            return object()
-
-        def fake_delete_existing_chunks(collection, file_path):
+        def fake_delete_existing_chunks(file_path):
             assert file_path == "notes/test.md"
             state["delete_called"] = True
             return 3
 
-        monkeypatch.setattr(memory, "_get_collection", fake_get_collection)
         monkeypatch.setattr(
             memory,
             "_delete_existing_chunks",

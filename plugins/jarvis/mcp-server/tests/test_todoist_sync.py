@@ -502,8 +502,8 @@ class TestBackgroundTaskRegistry:
         import server
 
         tasks = server.get_background_tasks()
-        # Should have 3 tasks now: pattern_detection, health_probe, todoist_sync
-        assert len(tasks) == 3
+        # Should have 2 tasks: pattern_detection, todoist_sync
+        assert len(tasks) == 2
         # Each should be a coroutine
         for t in tasks:
             assert asyncio.iscoroutine(t)

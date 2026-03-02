@@ -1,8 +1,7 @@
-"""Tests for Tier 2 (ChromaDB-first) CRUD operations."""
+"""Tests for Tier 2 (pgvector-backed) CRUD operations."""
 
 import pytest
 from tools.tier2 import tier2_write, tier2_read, tier2_list, tier2_delete
-from tools.memory import _get_collection
 
 
 class TestTier2Write:
@@ -75,10 +74,9 @@ class TestTier2Write:
         )
         assert result["success"]
 
-        # Verify tags in metadata
-        collection = _get_collection()
-        doc = collection.get(ids=[result["id"]])
-        assert doc["metadatas"][0]["tags"] == "work,jarvis,testing"
+        # Verify tags in metadata via in-memory DB
+        row = mock_config.db.get(result["id"])
+        assert row["metadata"]["tags"] == "work,jarvis,testing"
 
     def test_write_invalid_content_type(self, mock_config):
         """Test validation of content type."""
@@ -165,11 +163,9 @@ class TestTier2Read:
         )
         doc_id = write_result["id"]
 
-        collection = _get_collection()
-        result = collection.get(ids=[doc_id])
-        meta = {**result["metadatas"][0]}
-        meta["retrieval_count"] = "2.5"
-        collection.upsert(ids=[doc_id], documents=result["documents"], metadatas=[meta])
+        # Directly set retrieval_count in in-memory DB
+        row = mock_config.db.rows[doc_id]
+        row["metadata"]["retrieval_count"] = "2.5"
 
         # Read should increment by 1 → 3.5
         read_result = tier2_read(doc_id)
@@ -240,12 +236,9 @@ class TestTier2List:
         assert result["returned"] <= 5
 
     def test_list_empty_collection(self, mock_config):
-        """Test listing with empty collection."""
-        # Clear collection
-        collection = _get_collection()
-        ids = collection.get()["ids"]
-        if ids:
-            collection.delete(ids=ids)
+        """Test listing with empty database."""
+        # Clear in-memory DB
+        mock_config.db.clear()
 
         result = tier2_list()
         assert result["success"]
@@ -303,6 +296,7 @@ class TestTier2ListSortBy:
     def test_sort_by_none(self, mock_config):
         """sort_by='none' returns results without sorting."""
         tier2_write(content="A", content_type="observation", importance_score=0.3)
+        import time; time.sleep(0.002)  # Ensure distinct observation_id timestamps
         tier2_write(content="B", content_type="observation", importance_score=0.9)
 
         result = tier2_list(sort_by="none")
@@ -414,7 +408,7 @@ class TestTier2ExtraMetadata:
     """Test extra_metadata passthrough."""
 
     def test_extra_metadata_stored(self, mock_config):
-        """Test that extra_metadata is stored in ChromaDB."""
+        """Test that extra_metadata is stored in database."""
         result = tier2_write(
             content="Observation with context",
             content_type="observation",
@@ -461,11 +455,12 @@ class TestTier2ExtraMetadata:
         assert second["id"] == first["id"]
         assert second.get("deduplicated") is True
 
-        from tools.memory import _get_collection
-
-        collection = _get_collection()
-        rows = collection.get(where={"ingest_event_id": event_id})
-        assert len(rows["ids"]) == 1
+        # Verify only one document with this event_id exists in DB
+        matching = [
+            r for r in mock_config.db.rows.values()
+            if r["metadata"].get("ingest_event_id") == event_id
+        ]
+        assert len(matching) == 1
 
 
 class TestTier2Upsert:
@@ -554,6 +549,8 @@ class TestTier2Worklog:
 
     def test_list_worklogs_by_session_id(self, mock_config):
         """Test filtering worklogs by session_id."""
+        import time
+
         # Write two worklogs with different session IDs
         tier2_write(
             content="Task A",
@@ -561,6 +558,7 @@ class TestTier2Worklog:
             session_id="session-1",
             extra_metadata={"workstream": "misc", "activity_type": "coding"},
         )
+        time.sleep(0.002)  # Ensure distinct worklog_id timestamps
         tier2_write(
             content="Task B",
             content_type="worklog",
@@ -576,12 +574,15 @@ class TestTier2Worklog:
 
     def test_list_worklogs_no_session_filter(self, mock_config):
         """Test listing all worklogs without session filter."""
+        import time
+
         tier2_write(
             content="Task X",
             content_type="worklog",
             session_id="s1",
             extra_metadata={"workstream": "misc", "activity_type": "coding"},
         )
+        time.sleep(0.002)  # Ensure distinct worklog_id timestamps
         tier2_write(
             content="Task Y",
             content_type="worklog",
