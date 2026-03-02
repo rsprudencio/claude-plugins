@@ -180,11 +180,25 @@ PGHBA
         exit 1
     fi
 
-    # Create database and run init.sql (idempotent)
+    # Create database, jarvis role, and run init.sql (all idempotent)
     # Pipe init.sql via stdin so root reads the file (postgres user may lack /app access)
     su postgres -c "psql -h 127.0.0.1 -p 5432 -tc \"SELECT 1 FROM pg_database WHERE datname='jarvis'\" | grep -q 1" || \
         su postgres -c "createdb -h 127.0.0.1 -p 5432 jarvis"
     su postgres -c "psql -h 127.0.0.1 -p 5432 -d jarvis" < /app/init.sql
+
+    # Create 'jarvis' role matching config.json default (postgresql://jarvis:jarvis@...)
+    # so docker exec and external scripts work without POSTGRES_URL override
+    su postgres -c "psql -h 127.0.0.1 -p 5432 -d jarvis" <<'ROLES'
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jarvis') THEN
+        CREATE ROLE jarvis WITH LOGIN PASSWORD 'jarvis';
+    END IF;
+END $$;
+GRANT ALL PRIVILEGES ON DATABASE jarvis TO jarvis;
+GRANT ALL ON SCHEMA public TO jarvis;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO jarvis;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO jarvis;
+ROLES
 
     echo "[jarvis] Embedded PostgreSQL initialized (database: jarvis)"
 }
