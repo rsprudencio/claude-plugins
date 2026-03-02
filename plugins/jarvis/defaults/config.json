@@ -11,10 +11,11 @@
   "configured_at": "__REQUIRED__",
   "memory": {
     "postgres_url": "postgresql://jarvis:jarvis@localhost:5432/jarvis",
-    "embedding_model": "ibm-granite/granite-embedding-english-r2",
-    "embedding_dimensions": 768,
+    "embedding_model": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_dimensions": 384,
     "embedding_device": "cpu",
     "embedding_backend": "onnx",
+    "embedding_bedrock_region": "eu-central-1",
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,

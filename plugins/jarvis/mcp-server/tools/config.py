@@ -55,12 +55,16 @@ def get_embedding_config() -> dict:
     """Get embedding model configuration with defaults.
 
     Resolution order: env vars > config file > defaults.
+
+    Supported backends: "onnx" (local ONNX Runtime), "torch" (PyTorch),
+    "bedrock" (Amazon Bedrock API — no local model needed).
     """
     defaults = {
-        "model": "ibm-granite/granite-embedding-english-r2",
-        "dimensions": 768,
+        "model": "ibm-granite/granite-embedding-small-english-r2",
+        "dimensions": 384,
         "device": "cpu",
         "backend": "onnx",
+        "bedrock_region": "eu-central-1",
     }
     mem = _get_memory_section()
     config = {
@@ -79,6 +83,10 @@ def get_embedding_config() -> dict:
         "backend": (
             os.environ.get("EMBEDDING_BACKEND")
             or mem.get("embedding_backend", defaults["backend"])
+        ),
+        "bedrock_region": (
+            os.environ.get("BEDROCK_REGION")
+            or mem.get("embedding_bedrock_region", defaults["bedrock_region"])
         ),
     }
     return config

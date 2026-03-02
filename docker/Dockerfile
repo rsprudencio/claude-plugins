@@ -19,7 +19,7 @@ WORKDIR /build
 RUN uv pip install --system --no-cache \
     "mcp>=1.0.0" \
     "tokenizers>=0.13.0" \
-    "sentence-transformers>=3.0.0" \
+    "sentence-transformers[onnx]>=3.0.0" \
     "onnxruntime>=1.17.0" \
     "psycopg[pool]>=3.1.0" \
     "pgvector>=0.3.0" \
@@ -42,17 +42,11 @@ RUN wget -q "${HF_BASE}/onnx/model.onnx" -O model.onnx && \
     wget -q "${HF_BASE}/tokenizer.json" -O tokenizer.json && \
     echo "${TOKENIZER_HASH}  tokenizer.json" | sha256sum -c
 
-# ---- Embedding model pre-download ----
-# Downloads the embedding model at build time so no HuggingFace access is
-# needed at runtime. The local path is passed via EMBEDDING_MODEL env var.
-FROM builder AS embed-fetch
-
-ARG EMBEDDING_MODEL_ID=ibm-granite/granite-embedding-english-r2
-RUN python3 -c "\
-from huggingface_hub import snapshot_download; \
-snapshot_download('${EMBEDDING_MODEL_ID}', local_dir='/models/embedding'); \
-print('Embedding model downloaded') \
-"
+# ---- Embedding model: pre-baked onnx-community INT8 quantized ----
+# granite-embedding-small-english-r2 (384d, ModernBERT, INT8 quantized)
+# Source: onnx-community/granite-embedding-small-english-r2-ONNX
+# INT8 via optimum-cli with MHA fusion — 50MB on disk, ~400MB runtime.
+# Includes tokenizer + config + ONNX model. No HuggingFace download at build.
 
 # ---- Runtime stage ----
 FROM python:3.12-slim
@@ -81,9 +75,9 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=model-fetch /models /app/models
 ENV JARVIS_MODEL_DIR=/app/models/cross-encoder
 
-# Copy pre-downloaded embedding model (no runtime HuggingFace download needed)
-COPY --from=embed-fetch /models/embedding /app/models/embedding
-ARG EMBEDDING_DIMS=768
+# Copy pre-baked embedding model (onnx-community INT8 quantized, ~50MB)
+COPY docker/models/embedding /app/models/embedding
+ARG EMBEDDING_DIMS=384
 ENV EMBEDDING_MODEL=/app/models/embedding
 ENV EMBEDDING_DIMENSIONS=${EMBEDDING_DIMS}
 

@@ -258,9 +258,9 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
                     """UPDATE jarvis
                        SET metadata = metadata
                            || jsonb_build_object(
-                               'status', 'superseded',
-                               'superseded_by', %s,
-                               'superseded_at', %s),
+                               'status', 'superseded'::text,
+                               'superseded_by', %s::text,
+                               'superseded_at', %s::text),
                            updated_at = now()
                        WHERE id = %s""",
                     (new_doc_id, now_iso, old_doc_id),

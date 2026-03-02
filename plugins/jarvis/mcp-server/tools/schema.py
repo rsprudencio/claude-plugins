@@ -40,7 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_jarvis_metadata ON jarvis
     USING gin (metadata jsonb_path_ops);
 
 CREATE INDEX IF NOT EXISTS idx_jarvis_tier2 ON jarvis ((metadata->>'tier'))
-    WHERE metadata->>'tier' = 'chromadb';
+    WHERE metadata->>'tier' = 'tier2';
+
+CREATE INDEX IF NOT EXISTS idx_jarvis_parent_file ON jarvis ((metadata->>'parent_file'))
+    WHERE metadata->>'parent_file' IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$

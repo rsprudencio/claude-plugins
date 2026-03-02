@@ -1,7 +1,7 @@
 """Tests for the embedding model upgrade migration script.
 
 Tests the bin/upgrade_embedding_model.py functions that handle
-the 384d vector → 768d halfvec migration.
+the embedding model upgrade migration.
 """
 
 import math
@@ -18,8 +18,11 @@ from bin.upgrade_embedding_model import (
     atomic_column_swap,
     update_meta,
     cleanup_old_column,
+    resolve_inference_batch_size,
+    main,
     DEFAULT_MODEL,
     DEFAULT_DIMENSIONS,
+    DEFAULT_INFERENCE_BATCH_SIZE,
 )
 
 
@@ -141,11 +144,11 @@ class TestAddNewColumn:
     def test_executes_alter_table(self):
         """Adds halfvec column with correct dimensions."""
         conn = MagicMock()
-        add_new_column(conn, 768)
+        add_new_column(conn, 384)
 
         conn.execute.assert_called_once()
         sql = conn.execute.call_args[0][0]
-        assert "halfvec(768)" in sql
+        assert "halfvec(384)" in sql
         assert "embedding_new" in sql
         assert "IF NOT EXISTS" in sql
         conn.commit.assert_called_once()
@@ -196,23 +199,65 @@ class TestBatchReembed:
         with patch("tools.embedding.EmbeddingService") as MockSvc:
             mock_svc = MagicMock()
             mock_svc.encode_batch.return_value = [
-                [0.1] * 768,
-                [0.2] * 768,
+                [0.1] * 384,
+                [0.2] * 384,
             ]
             MockSvc.return_value = mock_svc
 
             processed = batch_reembed(
                 conn,
                 model_name=DEFAULT_MODEL,
-                dimensions=768,
+                dimensions=384,
                 batch_size=100,
             )
 
         assert processed == 2
         assert update_cur.execute.call_count == 2
+        mock_svc.encode_batch.assert_called_once_with(
+            ["hello world", "goodbye moon"],
+            batch_size=DEFAULT_INFERENCE_BATCH_SIZE,
+        )
         # Verify halfvec cast in UPDATE SQL
         update_sql = update_cur.execute.call_args_list[0][0][0]
         assert "::halfvec" in update_sql
+
+    @patch("tools.schema.set_meta")
+    def test_uses_explicit_inference_batch_size(self, mock_set_meta):
+        """Re-embed uses explicit inference sub-batch while keeping DB batch size."""
+        select_cur = MagicMock()
+        select_cur.fetchall.side_effect = [
+            [("id1", "hello world"), ("id2", "goodbye moon")],
+            [],
+        ]
+        update_cur = MagicMock()
+        conn = MagicMock()
+        conn.cursor.side_effect = [select_cur, update_cur, select_cur]
+
+        with patch("tools.embedding.EmbeddingService") as MockSvc:
+            mock_svc = MagicMock()
+            mock_svc.encode_batch.return_value = [
+                [0.1] * 384,
+                [0.2] * 384,
+            ]
+            MockSvc.return_value = mock_svc
+
+            processed = batch_reembed(
+                conn,
+                model_name=DEFAULT_MODEL,
+                dimensions=384,
+                batch_size=500,
+                inference_batch_size=7,
+            )
+
+        assert processed == 2
+        select_cur.execute.assert_called_with(
+            "SELECT id, document FROM jarvis WHERE embedding_new IS NULL LIMIT %s",
+            (500,),
+        )
+        mock_svc.encode_batch.assert_called_once_with(
+            ["hello world", "goodbye moon"],
+            batch_size=7,
+        )
 
     def test_dry_run_previews_only(self):
         """Dry run reports batch size but doesn't modify data."""
@@ -226,7 +271,7 @@ class TestBatchReembed:
         processed = batch_reembed(
             conn,
             model_name=DEFAULT_MODEL,
-            dimensions=768,
+            dimensions=384,
             batch_size=100,
             dry_run=True,
         )
@@ -249,13 +294,13 @@ class TestBatchReembed:
 
         with patch("tools.embedding.EmbeddingService") as MockSvc:
             mock_svc = MagicMock()
-            mock_svc.encode_batch.return_value = [[0.5] * 768]
+            mock_svc.encode_batch.return_value = [[0.5] * 384]
             MockSvc.return_value = mock_svc
 
             processed = batch_reembed(
                 conn,
                 model_name=DEFAULT_MODEL,
-                dimensions=768,
+                dimensions=384,
                 batch_size=100,
             )
 
@@ -351,11 +396,11 @@ class TestUpdateMeta:
 
         # Use real mock_config connection
         conn = MagicMock()  # Not used — update_meta uses set_meta directly
-        update_meta(conn, DEFAULT_MODEL, 768)
+        update_meta(conn, DEFAULT_MODEL, 384)
 
         stored = get_meta("embedding_config")
         assert stored["model"] == DEFAULT_MODEL
-        assert stored["dimensions"] == 768
+        assert stored["dimensions"] == 384
         assert stored["vector_type"] == "halfvec"
 
         sv = get_meta("schema_version")
@@ -369,7 +414,7 @@ class TestUpdateMeta:
         from tools.schema import get_meta
 
         conn = MagicMock()
-        update_meta(conn, DEFAULT_MODEL, 768, dry_run=True)
+        update_meta(conn, DEFAULT_MODEL, 384, dry_run=True)
 
         assert get_meta("embedding_config") is None
 
@@ -380,23 +425,39 @@ class TestUpdateMeta:
 class TestHalfvecCosineDistance:
     """Test that cosine distance works correctly with higher dimensions."""
 
-    def test_768d_cosine_distance(self):
-        """Cosine distance calculation works with 768d vectors."""
+    def test_384d_cosine_distance(self):
+        """Cosine distance calculation works with 384d vectors."""
         from tests.conftest import _cosine_distance
 
         # Identical normalized vectors → distance 0
-        vec = [1.0 / math.sqrt(768)] * 768
+        vec = [1.0 / math.sqrt(384)] * 384
         assert abs(_cosine_distance(vec, vec)) < 1e-6
 
         # Orthogonal-ish vectors → distance ~1
-        vec_a = [1.0 if i < 384 else 0.0 for i in range(768)]
-        vec_b = [0.0 if i < 384 else 1.0 for i in range(768)]
+        vec_a = [1.0 if i < 192 else 0.0 for i in range(384)]
+        vec_b = [0.0 if i < 192 else 1.0 for i in range(384)]
         norm_a = math.sqrt(sum(x * x for x in vec_a))
         norm_b = math.sqrt(sum(x * x for x in vec_b))
         vec_a = [x / norm_a for x in vec_a]
         vec_b = [x / norm_b for x in vec_b]
         dist = _cosine_distance(vec_a, vec_b)
         assert abs(dist - 1.0) < 1e-6
+
+
+class TestInferenceBatchSizeResolution:
+    """Tests for inference sub-batch resolution."""
+
+    def test_default_caps_large_db_batch(self):
+        """Default inference batch is capped for large DB batches."""
+        assert resolve_inference_batch_size(1000) == DEFAULT_INFERENCE_BATCH_SIZE
+
+    def test_default_matches_small_db_batch(self):
+        """Default inference batch matches DB batch when DB batch is small."""
+        assert resolve_inference_batch_size(8) == 8
+
+    def test_explicit_override_wins(self):
+        """Explicit inference batch override is used as-is."""
+        assert resolve_inference_batch_size(1000, inference_batch_size=64) == 64
 
 
 # ── Model override ───────────────────────────────────────────────────
@@ -407,8 +468,41 @@ class TestModelOverride:
 
     def test_english_model_override(self):
         """English-only model can be specified as override."""
-        assert DEFAULT_MODEL == "ibm-granite/granite-embedding-english-r2"
+        assert DEFAULT_MODEL == "ibm-granite/granite-embedding-small-english-r2"
 
     def test_default_dimensions(self):
         """Default dimensions are 768."""
-        assert DEFAULT_DIMENSIONS == 768
+        assert DEFAULT_DIMENSIONS == 384
+
+
+class TestCliBatchSizing:
+    """Tests CLI plumbing for DB batch size and inference sub-batch size."""
+
+    def test_main_passes_inference_batch_size_to_batch_reembed(self):
+        """CLI --inference-batch-size is forwarded to batch_reembed."""
+        conn = MagicMock()
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("sys.argv", [
+                "upgrade_embedding_model.py",
+                "--pg-url",
+                "postgresql://localhost/test",
+                "--dry-run",
+                "--batch-size",
+                "500",
+                "--inference-batch-size",
+                "16",
+            ]):
+                with patch("bin.upgrade_embedding_model.get_connection", return_value=conn):
+                    with patch("bin.upgrade_embedding_model.preflight", return_value={
+                        "row_count": 1,
+                        "has_new_column": False,
+                        "pending_count": 0,
+                    }):
+                        with patch("bin.upgrade_embedding_model.batch_reembed", return_value=1) as mock_batch_reembed:
+                            main()
+
+        assert mock_batch_reembed.call_count == 1
+        assert mock_batch_reembed.call_args.kwargs["batch_size"] == 500
+        assert mock_batch_reembed.call_args.kwargs["inference_batch_size"] == 16
+        conn.close.assert_called_once()

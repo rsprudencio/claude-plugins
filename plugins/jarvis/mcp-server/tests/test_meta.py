@@ -78,7 +78,7 @@ class TestModelConsistency:
 
         stored = get_meta("embedding_config")
         assert stored is not None
-        assert stored["dimensions"] == 768
+        assert stored["dimensions"] == 384
         assert stored["vector_type"] == "halfvec"
         # Model comes from get_embedding_config default
         assert "granite" in stored["model"].lower() or stored["model"] != ""
@@ -112,10 +112,10 @@ class TestModelConsistency:
         """Mismatched dimensions raises ModelMismatchError."""
         from tools.schema import check_model_consistency, set_meta, ModelMismatchError
 
-        # Record with old dimensions (384) which mismatches new default (768)
+        # Record with old dimensions (768) which mismatches new default (384)
         set_meta("embedding_config", {
-            "model": "ibm-granite/granite-embedding-english-r2",
-            "dimensions": 384,
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 768,
         })
 
         with pytest.raises(ModelMismatchError, match="dimensions mismatch"):

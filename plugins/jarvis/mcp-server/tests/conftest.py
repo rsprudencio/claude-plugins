@@ -25,13 +25,13 @@ import pytest
 
 
 class MockEmbeddingService:
-    """Returns deterministic 768d vectors based on text content hash.
+    """Returns deterministic 384d vectors based on text content hash.
 
     Similar texts produce similar vectors (via SHA-256 hash),
     enabling realistic vector search in tests.
     """
 
-    def __init__(self, dimensions=768):
+    def __init__(self, dimensions=384):
         self._dimensions = dimensions
 
     def encode(self, text: str) -> list[float]:
@@ -767,14 +767,14 @@ def mock_config(temp_vault: Path, temp_config_dir: Path, monkeypatch):
     mock_pool = MockPool(db)
     monkeypatch.setattr(schema_module, "_get_pool", lambda: mock_pool)
     monkeypatch.setattr(schema_module, "_pool", mock_pool)
-    monkeypatch.setattr(schema_module, "_pool_cache_key", ("test", 768))
+    monkeypatch.setattr(schema_module, "_pool_cache_key", ("test", 384))
 
     # Patch embedding service
-    mock_emb = MockEmbeddingService(dimensions=768)
+    mock_emb = MockEmbeddingService(dimensions=384)
     monkeypatch.setattr(embedding_module, "get_embedding_service", lambda: mock_emb)
     monkeypatch.setattr(embedding_module, "_service", mock_emb)
     monkeypatch.setattr(
-        embedding_module, "_service_cache_key", ("mock", 768, "cpu", "mock")
+        embedding_module, "_service_cache_key", ("mock", 384, "cpu", "mock")
     )
 
     def _clear_cache():

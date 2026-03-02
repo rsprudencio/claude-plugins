@@ -2,16 +2,19 @@
 
 Provides bulk and incremental indexing of vault .md files into PostgreSQL
 with pgvector. Embeddings are generated explicitly via EmbeddingService
-(granite-embedding-small-english-r2, 384d).
+(granite-embedding-small-english-r2, 384d, ONNX backend).
 
 All documents are stored in the unified 'jarvis' table with namespaced
 IDs (vault:: prefix) and JSONB metadata.
 """
 
+import gc
 import glob
 import logging
 import os
+import platform
 import re
+import resource
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +38,46 @@ from .schema import execute_query, execute_write, metadata_to_jsonb
 logger = logging.getLogger("jarvis-core")
 
 _BATCH_SIZE = 10
+
+
+def _rss_mb() -> float:
+    """Current process RSS in megabytes.
+
+    macOS ru_maxrss is in bytes; Linux ru_maxrss is in kilobytes.
+    """
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if platform.system() == "Darwin":
+        return rss / (1024 * 1024)
+    return rss / 1024
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
+
+
+def _sanitize_timestamp(value, default: str) -> str:
+    """Convert frontmatter timestamps to ISO 8601 strings.
+
+    Obsidian stores timestamps as Unix milliseconds (e.g. 1695032292344).
+    PostgreSQL TIMESTAMPTZ rejects raw integers. Convert to ISO format.
+    Also strips Obsidian's non-standard timezone suffixes like "(UTC +00:00)".
+    """
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        # Unix milliseconds → seconds
+        ts = value / 1000 if value > 1e12 else value
+        try:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except (ValueError, OSError, OverflowError):
+            return default
+    if isinstance(value, str) and value.isdigit():
+        return _sanitize_timestamp(int(value), default)
+    if isinstance(value, str) and value:
+        # Strip Obsidian's "(UTC +00:00)" or similar timezone suffixes
+        cleaned = re.sub(r"\s*\(UTC\s*[+\-]\d{2}:\d{2}\)\s*$", "Z", value).strip()
+        return cleaned
+    return default
 
 
 def _parse_frontmatter_for_file(content: str, filename: str) -> dict:
@@ -66,8 +107,8 @@ def _build_metadata(frontmatter: dict, relative_path: str) -> dict:
         "namespace": NAMESPACE_VAULT,
         "tier": "file",
         "source": "vault-index",
-        "created_at": frontmatter.get("created", now_iso),
-        "updated_at": frontmatter.get("modified", now_iso),
+        "created_at": _sanitize_timestamp(frontmatter.get("created"), now_iso),
+        "updated_at": _sanitize_timestamp(frontmatter.get("modified"), now_iso),
         # Vault-specific
         "directory": directory,
         "has_frontmatter": "true" if frontmatter else "false",
@@ -242,9 +283,22 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
     from .embedding import get_embedding_service
     from .schema import _get_pool
 
+    total_chars = sum(len(d) for d in docs)
+    logger.info(
+        "Batch START: %d docs, %d chars, RSS=%.0fMB",
+        len(ids), total_chars, _rss_mb(),
+    )
+
+    t0 = time.time()
+    rss_before = _rss_mb()
+
     service = get_embedding_service()
     embeddings = service.encode_batch(docs)
 
+    t_embed = time.time() - t0
+    rss_after_embed = _rss_mb()
+
+    t1 = time.time()
     pool = _get_pool()
     with pool.connection() as conn:
         with conn.cursor() as cur:
@@ -269,6 +323,20 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
                     ),
                 )
             conn.commit()
+    t_insert = time.time() - t1
+
+    t2 = time.time()
+    del embeddings
+    gc.collect()
+    t_gc = time.time() - t2
+
+    total_chars = sum(len(d) for d in docs)
+    logger.info(
+        "Batch upsert: %d docs, %d chars, embed=%.2fs insert=%.2fs gc=%.2fs, "
+        "RSS %.0fMB→%.0fMB (now %.0fMB)",
+        len(ids), total_chars, t_embed, t_insert, t_gc,
+        rss_before, rss_after_embed, _rss_mb(),
+    )
 
 
 def index_vault(
@@ -337,7 +405,12 @@ def index_vault(
     secret_detection_enabled = get_memory_config().get("secret_detection", True)
     secrets_skipped = 0
 
-    for filepath in indexable_files:
+    logger.info(
+        "index_vault: %d files to process (force=%s), RSS=%.0fMB",
+        len(indexable_files), force, _rss_mb(),
+    )
+
+    for file_num, filepath in enumerate(indexable_files, 1):
         relative = os.path.relpath(filepath, vault_path)
 
         if _should_skip(relative, include_sensitive):
@@ -349,14 +422,20 @@ def index_vault(
             continue
 
         try:
+            t_file_start = time.time()
+            fsize_kb = os.path.getsize(filepath) / 1024
+
+            t0 = time.time()
             with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
+            t_read = time.time() - t0
 
             if not content.strip():
                 skipped += 1
                 continue
 
             # Secret scan — skip file if secrets detected
+            t0 = time.time()
             if secret_detection_enabled:
                 detections = scan_for_secrets(content)
                 if detections:
@@ -368,14 +447,20 @@ def index_vault(
                     secrets_skipped += 1
                     skipped += 1
                     continue
+            t_secret = time.time() - t0
 
             # On force re-index, clean up old chunks first
+            t0 = time.time()
             if force:
                 _delete_existing_chunks(relative)
+            t_delete = time.time() - t0
 
+            t0 = time.time()
             frontmatter = _parse_frontmatter_for_file(content, filepath)
             title = _extract_title_for_file(content, os.path.basename(filepath))
+            t_parse = time.time() - t0
 
+            t0 = time.time()
             ids, docs, metas, n_chunks = _index_single_file(
                 content,
                 frontmatter,
@@ -384,6 +469,7 @@ def index_vault(
                 chunking_config,
                 scoring_config,
             )
+            t_chunk = time.time() - t0
 
             batch_ids.extend(ids)
             batch_docs.extend(docs)
@@ -391,16 +477,47 @@ def index_vault(
             files_indexed += 1
             chunks_total += n_chunks
 
-            # Flush batch
+            # Flush batch — always clear even on error to prevent
+            # cascade: a failed upsert must not cause an ever-growing
+            # batch that re-encodes all prior items on each retry.
+            t_flush = 0
             if len(batch_ids) >= _BATCH_SIZE:
-                _upsert_batch(batch_ids, batch_docs, batch_meta)
+                t0 = time.time()
+                try:
+                    _upsert_batch(batch_ids, batch_docs, batch_meta)
+                except Exception as batch_err:
+                    logger.error("Batch upsert failed: %s", batch_err)
+                    errors.append({"file": relative, "error": f"batch: {batch_err}"})
+                t_flush = time.time() - t0
                 batch_ids, batch_docs, batch_meta = [], [], []
+
+            t_total = time.time() - t_file_start
+            logger.info(
+                "index_vault: [%d/%d] %s (%.1fkB, %dch) "
+                "read=%.0fms secret=%.0fms del=%.0fms parse=%.0fms "
+                "chunk=%.0fms flush=%.0fms TOTAL=%.0fms",
+                file_num, len(indexable_files), relative, fsize_kb, n_chunks,
+                t_read * 1000, t_secret * 1000, t_delete * 1000,
+                t_parse * 1000, t_chunk * 1000, t_flush * 1000,
+                t_total * 1000,
+            )
+
+            # Progress every 10 files
+            if files_indexed % 10 == 0:
+                logger.info(
+                    "index_vault progress: %d/%d files, %d chunks, RSS=%.0fMB",
+                    file_num, len(indexable_files), chunks_total, _rss_mb(),
+                )
 
         except Exception as e:
             errors.append({"file": relative, "error": str(e)})
 
     # Flush remaining
-    _upsert_batch(batch_ids, batch_docs, batch_meta)
+    try:
+        _upsert_batch(batch_ids, batch_docs, batch_meta)
+    except Exception as e:
+        logger.error("Final batch upsert failed: %s", e)
+        errors.append({"file": "final_batch", "error": str(e)})
 
     # Get total count
     count_result = execute_query("SELECT count(*) AS cnt FROM jarvis", fetch="one")

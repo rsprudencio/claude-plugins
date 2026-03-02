@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Upgrade embedding model from 384d vector to 768d halfvec.
+"""Upgrade embedding model with zero-downtime halfvec migration.
 
 Zero-downtime migration for existing Jarvis v3 installations:
 1. Pre-flight: verify current schema, report row count
-2. Add new halfvec(768) column (instant DDL)
+2. Add new halfvec(N) column (instant DDL)
 3. Re-embed documents in resumable batches
 4. Verify completeness (abort if NULLs remain)
 5. Create HNSW index CONCURRENTLY (non-blocking)
@@ -27,9 +27,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 logger = logging.getLogger("jarvis-upgrade-embedding")
 
-DEFAULT_MODEL = "ibm-granite/granite-embedding-english-r2"
-DEFAULT_DIMENSIONS = 768
+DEFAULT_MODEL = "ibm-granite/granite-embedding-small-english-r2"
+DEFAULT_DIMENSIONS = 384
 DEFAULT_BATCH_SIZE = 100
+DEFAULT_INFERENCE_BATCH_SIZE = 32
+
+
+def resolve_inference_batch_size(
+    db_batch_size: int,
+    inference_batch_size: int | None = None,
+) -> int:
+    """Resolve model inference sub-batch size from CLI/function inputs.
+
+    By default, cap model sub-batches so a large DB batch size does not cause
+    large in-memory model batches.
+    """
+    if inference_batch_size is not None:
+        return inference_batch_size
+    return min(db_batch_size, DEFAULT_INFERENCE_BATCH_SIZE)
 
 
 def get_connection(pg_url: str):
@@ -97,6 +112,7 @@ def batch_reembed(
     model_name: str,
     dimensions: int,
     batch_size: int,
+    inference_batch_size: int | None = None,
     dry_run: bool = False,
 ) -> int:
     """Re-embed documents in batches. Resumable via WHERE embedding_new IS NULL.
@@ -110,6 +126,11 @@ def batch_reembed(
         dimensions=dimensions,
         device=os.environ.get("EMBEDDING_DEVICE", "cpu"),
         backend=os.environ.get("EMBEDDING_BACKEND", "onnx"),
+    )
+
+    effective_inference_batch_size = resolve_inference_batch_size(
+        db_batch_size=batch_size,
+        inference_batch_size=inference_batch_size,
     )
 
     total_processed = 0
@@ -131,7 +152,7 @@ def batch_reembed(
         ids = [row[0] for row in batch]
         texts = [row[1] for row in batch]
 
-        embeddings = svc.encode_batch(texts, batch_size=batch_size)
+        embeddings = svc.encode_batch(texts, batch_size=effective_inference_batch_size)
 
         # Update each row
         update_cur = conn.cursor()
@@ -260,7 +281,7 @@ def cleanup_old_column(conn, dry_run: bool = False) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Upgrade Jarvis embedding model from 384d vector to 768d halfvec."
+        description="Upgrade Jarvis embedding model with zero-downtime halfvec migration."
     )
     parser.add_argument(
         "--pg-url",
@@ -271,6 +292,15 @@ def main():
         type=int,
         default=DEFAULT_BATCH_SIZE,
         help=f"Documents per re-embedding batch (default: {DEFAULT_BATCH_SIZE})",
+    )
+    parser.add_argument(
+        "--inference-batch-size",
+        type=int,
+        default=None,
+        help=(
+            "Embedding model sub-batch size used inside each DB batch "
+            f"(default: min(--batch-size, {DEFAULT_INFERENCE_BATCH_SIZE}))"
+        ),
     )
     parser.add_argument(
         "--model",
@@ -299,6 +329,16 @@ def main():
         help="Enable verbose logging",
     )
     args = parser.parse_args()
+
+    if args.batch_size <= 0:
+        parser.error("--batch-size must be >= 1")
+    if args.inference_batch_size is not None and args.inference_batch_size <= 0:
+        parser.error("--inference-batch-size must be >= 1")
+
+    effective_inference_batch_size = resolve_inference_batch_size(
+        db_batch_size=args.batch_size,
+        inference_batch_size=args.inference_batch_size,
+    )
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -354,11 +394,17 @@ def main():
 
         # 3. Re-embed in batches
         logger.info("─── Re-embedding documents ───")
+        logger.info(
+            "  DB batch size: %d, inference sub-batch size: %d",
+            args.batch_size,
+            effective_inference_batch_size,
+        )
         processed = batch_reembed(
             conn,
             model_name=args.model,
             dimensions=args.dimensions,
             batch_size=args.batch_size,
+            inference_batch_size=effective_inference_batch_size,
             dry_run=args.dry_run,
         )
         logger.info("Re-embedded %d documents", processed)

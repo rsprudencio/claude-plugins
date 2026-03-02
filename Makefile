@@ -3,14 +3,16 @@
 #
 # Quick reference:
 #   make version          — show current version
-#   make test             — run pytest suite
+#   make test             — run unit tests
+#   make test-e2e         — run e2e tests (needs PG on :25432)
+#   make test-all         — run unit + e2e tests
 #   make bump VERSION=x   — bump version files
 #   make build            — Docker build + tag
 #   make restart          — restart Docker container
 #   make reinstall        — reinstall Claude plugins
 #   make release VERSION=x — full pipeline (test→bump→build→restart→reinstall)
 
-.PHONY: help version bump test build restart reinstall release clean
+.PHONY: help version bump test test-e2e test-all build restart reinstall release clean
 
 # ─── Configuration ──────────────────────────────────────────────────
 
@@ -42,7 +44,7 @@ NC      := \033[0m
 help: ## Show available targets
 	@echo "$(CYAN)Jarvis Plugin Development$(NC)  ($(PLUGIN): v$(CURRENT_VERSION))"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(YELLOW)Full release:$(NC)  make release VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic]"
@@ -50,12 +52,32 @@ help: ## Show available targets
 version: ## Show current plugin version
 	@echo "$(CURRENT_VERSION)"
 
-test: ## Run MCP server pytest suites (core + obsidian)
-	@echo "$(CYAN)Running jarvis-core tests...$(NC)"
-	cd plugins/jarvis/mcp-server && python3 -m pytest tests/ -x -q
+test: ## Run unit tests (core + obsidian)
+	@echo "$(CYAN)Running jarvis-core unit tests...$(NC)"
+	cd plugins/jarvis/mcp-server && uv run python -m pytest tests/ --ignore=tests/e2e -x -q
 	@echo "$(CYAN)Running jarvis-obsidian tests...$(NC)"
 	cd plugins/jarvis-obsidian/mcp-server && python3 -m pytest tests/ -x -q
-	@echo "$(GREEN)✓ All tests passed$(NC)"
+	@echo "$(GREEN)✓ All unit tests passed$(NC)"
+
+E2E_COMPOSE := plugins/jarvis/mcp-server/docker-compose.e2e.yml
+E2E_PG_URL  := postgresql://jarvis:jarvis@localhost:25432/jarvis?sslmode=disable
+
+test-e2e: ## Run e2e tests against real PostgreSQL (auto-starts PG)
+	@echo "$(CYAN)Starting e2e PostgreSQL...$(NC)"
+	@docker compose -f $(E2E_COMPOSE) up -d --wait
+	@echo "$(CYAN)Running e2e tests...$(NC)"
+	@cd plugins/jarvis/mcp-server && \
+		E2E_POSTGRES_URL="$(E2E_PG_URL)" uv run python -m pytest tests/e2e/ -v; \
+		_rc=$$?; \
+		echo "$(CYAN)Stopping e2e PostgreSQL...$(NC)"; \
+		docker compose -f $(abspath $(E2E_COMPOSE)) down -v > /dev/null 2>&1; \
+		exit $$_rc
+	@echo "$(GREEN)✓ E2E tests passed$(NC)"
+
+test-all: ## Run unit + e2e tests
+	$(MAKE) test
+	@echo ""
+	$(MAKE) test-e2e
 
 bump: ## Bump version (VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic])
 	@if [ -z "$(VERSION)" ]; then \

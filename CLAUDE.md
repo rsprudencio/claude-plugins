@@ -79,6 +79,53 @@ Before committing plugin changes:
 
 ---
 
+## Testing
+
+### Test Tiers
+
+| Command | What it runs | When to use |
+|---------|-------------|-------------|
+| `make test` | Unit tests only (~1300 tests, no DB required) | Quick validation during development |
+| `make test-e2e` | E2E tests against real PostgreSQL (~22 tests) | After any SQL, schema, or JSONB change |
+| `make test-all` | Both unit + e2e | Before committing MCP server changes |
+
+### E2E Testing Convention
+
+**Default to e2e tests for anything that touches SQL.** The InMemoryDB mock cannot catch SQL-level bugs (type casts, JSONB operators, trigger behavior, halfvec storage). When investigating or fixing a database-related issue:
+
+1. **Write an e2e test first** in `plugins/jarvis/mcp-server/tests/e2e/` that reproduces the problem against real PostgreSQL
+2. **Fix the bug** — the e2e test verifies the fix works with actual SQL execution
+3. **Run `make test-all`** to confirm both unit and e2e tests pass
+
+Do NOT manually run SQL queries against a test database to verify fixes. Write a proper test instead — it becomes a permanent regression guard.
+
+### E2E Test Files
+
+| File | Coverage |
+|------|----------|
+| `test_tier2_e2e.py` | Tier 2 lifecycle: store, read, increment, filter, sort, delete |
+| `test_memory_e2e.py` | Memory write/read/overwrite with file + PG roundtrip |
+| `test_search_e2e.py` | Vector similarity search, retrieval count batch increment |
+| `test_cross_cutting_e2e.py` | Metadata fidelity, idempotency, JSONB merge, triggers, halfvec, schema, jarvis_meta |
+
+### Running E2E Tests Manually
+
+```bash
+# Start PG, run tests, tear down (preferred — all-in-one)
+make test-e2e
+
+# Or manually:
+cd plugins/jarvis/mcp-server
+docker compose -f docker-compose.e2e.yml up -d --wait
+E2E_POSTGRES_URL="postgresql://jarvis:jarvis@localhost:25432/jarvis?sslmode=disable" \
+    uv run python -m pytest tests/e2e/ -v
+docker compose -f docker-compose.e2e.yml down -v
+```
+
+E2E tests skip gracefully when `E2E_POSTGRES_URL` is absent — they never cause failures in `make test`.
+
+---
+
 ## Version Bumping Workflow
 
 **Use `/bump` skill to bump version and stage files for commit.**

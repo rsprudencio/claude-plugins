@@ -1,3 +1,8 @@
+# Jarvis MCP Server — single-container deployment
+#
+# Embedded PostgreSQL is the default for personal use.
+# Set POSTGRES_URL to point at an external database (team/managed deployments).
+
 services:
   jarvis:
     image: ghcr.io/rsprudencio/jarvis:latest
@@ -11,17 +16,15 @@ services:
     volumes:
       - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
       - "${JARVIS_HOME:-~/.jarvis}:/config"
-      - pgdata:/var/lib/postgresql/data
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
-      # Omit POSTGRES_URL for embedded PG (default, single-user)
-      # Set POSTGRES_URL for external PG (team/managed deployments)
+      # Omit POSTGRES_URL for embedded PG (default)
+      # Set POSTGRES_URL for external PG (team deployments)
+      - POSTGRES_URL=${POSTGRES_URL:-}
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
       - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
-      - JARVIS_REPLICATION_MODE=${JARVIS_REPLICATION_MODE:-disabled}
-      - JARVIS_CENTRAL_URL=${JARVIS_CENTRAL_URL:-}
     stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:
@@ -30,6 +33,3 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
-
-volumes:
-  pgdata:

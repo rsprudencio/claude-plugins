@@ -32,3 +32,4 @@ htmlcov/
 .claude/settings.local.json
 .claude/worktrees/
 .serena/
+docker/models/

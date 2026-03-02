@@ -1,16 +1,20 @@
 """Embedding service for Jarvis v3.0 — explicit vector generation.
 
-Replaces ChromaDB's auto-embed with an explicit pipeline using
-granite-embedding-english-r2 (768d, 8192 tokens, ModernBERT architecture).
-Stored as halfvec (16-bit) for zero storage overhead vs 384d float32.
+Supports three backends:
+  - onnx: Local ONNX Runtime (default, ~400MB RAM, no API calls)
+  - torch: Local PyTorch via sentence-transformers (fallback)
+  - bedrock: Amazon Bedrock API (zero local model, requires AWS credentials)
 
-The service uses ONNX Runtime by default for 2-5x faster CPU inference,
-with automatic fallback to PyTorch if ONNX is unavailable.
+When backend is "onnx" or "torch", uses a local model (e.g. Granite 384d).
+When backend is "bedrock", calls the Bedrock InvokeModel API (e.g. Titan
+Embed v2) — no local model is loaded, saving ~550MB RAM.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -28,15 +32,26 @@ _service_cache_key: tuple | None = None
 class EmbeddingService:
     """Encode text into dense vector embeddings.
 
-    Wraps sentence-transformers with ONNX backend for fast CPU inference.
-    Designed as a lazy singleton via get_embedding_service().
+    Backends:
+        onnx: Raw ONNX Runtime for minimal memory. Mean pooling +
+              L2 normalization post-inference. Falls back to torch.
+        torch: sentence-transformers + PyTorch.
+        bedrock: Amazon Bedrock InvokeModel API. Model ID is passed
+                 as model_name (e.g. "amazon.titan-embed-text-v2:0").
 
     Args:
-        model_name: HuggingFace model identifier.
-        dimensions: Expected embedding dimensions (validated on first encode).
-        device: Torch device string ("cpu", "cuda", etc.).
-        backend: "onnx" (preferred) or "torch".
+        model_name: HuggingFace model ID, local path, or Bedrock model ID.
+        dimensions: Expected embedding dimensions (validated on encode).
+        device: Torch device string ("cpu", "cuda", etc.). Ignored for bedrock.
+        backend: "onnx" (preferred), "torch", or "bedrock".
+        bedrock_region: AWS region for Bedrock API. Ignored for local backends.
     """
+
+    # Reset the ONNX session every N encode calls to prevent C++ heap
+    # fragmentation from accumulating over very long indexing runs.
+    # Conservative interval: 50 calls × 8 texts/call = ~400 embeddings.
+    # Under QEMU/emulated CPU, ONNX accumulates internal state faster.
+    _ONNX_RESET_INTERVAL = 50
 
     def __init__(
         self,
@@ -44,43 +59,192 @@ class EmbeddingService:
         dimensions: int,
         device: str = "cpu",
         backend: str = "onnx",
+        bedrock_region: str = "eu-central-1",
     ) -> None:
         self._model_name = model_name
         self._dimensions = dimensions
         self._device = device
         self._backend = backend
+        self._bedrock_region = bedrock_region
+        # Raw ONNX mode
+        self._ort_session = None
+        self._tokenizer = None
+        self._onnx_call_count = 0
+        # Sentence-transformers fallback
         self._model: SentenceTransformer | None = None
+        # Bedrock client (lazy-initialized)
+        self._bedrock_client = None
+
+    # ── Bedrock backend ─────────────────────────────────────────────
+
+    def _init_bedrock(self):
+        """Lazy-initialize the Bedrock Runtime client."""
+        if self._bedrock_client is not None:
+            return
+
+        try:
+            import boto3
+        except ImportError:
+            raise ImportError(
+                "boto3 is required for the 'bedrock' embedding backend. "
+                "Install with: pip install boto3"
+            )
+
+        self._bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=self._bedrock_region,
+        )
+        logger.info(
+            "Initialized Bedrock client (region=%s, model=%s)",
+            self._bedrock_region,
+            self._model_name,
+        )
+
+    def _bedrock_encode(self, texts: list[str]) -> list[list[float]]:
+        """Encode texts via Amazon Bedrock InvokeModel API.
+
+        Calls the API once per text (Titan Embed has no native batch).
+        Each call returns a normalized embedding vector.
+        """
+        self._init_bedrock()
+
+        results = []
+        for text in texts:
+            response = self._bedrock_client.invoke_model(
+                modelId=self._model_name,
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps({
+                    "inputText": text,
+                    "dimensions": self._dimensions,
+                    "normalize": True,
+                }),
+            )
+            body = json.loads(response["body"].read())
+            embedding = body["embedding"]
+            if len(embedding) != self._dimensions:
+                raise ValueError(
+                    f"Dimension mismatch: Bedrock returned {len(embedding)}d, "
+                    f"expected {self._dimensions}d"
+                )
+            results.append(embedding)
+        return results
+
+    # ── ONNX backend ────────────────────────────────────────────────
+
+    def _load_onnx(self):
+        """Load ONNX Runtime session + tokenizer directly."""
+        if self._ort_session is not None:
+            return
+
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+
+        sess_opts = ort.SessionOptions()
+        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_opts.intra_op_num_threads = 2
+        sess_opts.inter_op_num_threads = 1
+
+        # Find the ONNX model file
+        model_path = self._model_name
+        onnx_path = os.path.join(model_path, "onnx", "model.onnx")
+        if not os.path.exists(onnx_path):
+            raise FileNotFoundError(f"ONNX model not found at {onnx_path}")
+
+        self._ort_session = ort.InferenceSession(
+            onnx_path,
+            sess_options=sess_opts,
+            providers=["CPUExecutionProvider"],
+        )
+        self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+        self._onnx_call_count = 0
+        logger.info(
+            "Loaded %s with raw ONNX Runtime (CPU, mem_arena=on)",
+            self._model_name,
+        )
+
+    def reset_onnx_session(self) -> None:
+        """Release and recreate the ONNX session to reclaim C++ heap memory.
+
+        Called periodically during long indexing runs to prevent heap
+        fragmentation in the ONNX Runtime C++ allocator. Uses aggressive
+        cleanup (multiple gc passes) because ONNX C++ objects may hold
+        indirect references that require multiple collection cycles.
+        """
+        if self._ort_session is not None:
+            import gc
+            count = self._onnx_call_count
+            # Release session and tokenizer
+            self._ort_session = None
+            self._tokenizer = None
+            # Multiple gc passes to clean up C++ → Python reference chains
+            gc.collect()
+            gc.collect()
+            self._onnx_call_count = 0
+            logger.info("ONNX session reset after %d encode calls", count)
+
+    def _onnx_encode(self, texts: list[str], normalize: bool = True) -> np.ndarray:
+        """Encode texts using raw ONNX Runtime + mean pooling.
+
+        Steps:
+        1. Tokenize with HuggingFace tokenizer
+        2. Run ONNX session (returns last_hidden_state + sentence_embedding)
+        3. If model outputs sentence_embedding, use it directly
+        4. Otherwise, apply attention-masked mean pooling
+        5. L2-normalize
+        """
+        # Periodic session reset to prevent C++ heap fragmentation
+        self._onnx_call_count += 1
+        if self._onnx_call_count >= self._ONNX_RESET_INTERVAL:
+            self.reset_onnx_session()
+
+        self._load_onnx()
+
+        inputs = self._tokenizer(
+            texts,
+            return_tensors="np",
+            padding=True,
+            truncation=True,
+            max_length=512,
+        )
+
+        outputs = self._ort_session.run(None, dict(inputs))
+
+        # Check if model provides sentence_embedding output directly
+        output_names = [o.name for o in self._ort_session.get_outputs()]
+        if "sentence_embedding" in output_names:
+            idx = output_names.index("sentence_embedding")
+            embeddings = outputs[idx]
+        else:
+            # Mean pooling over last_hidden_state with attention mask
+            last_hidden = outputs[0]  # (batch, seq_len, hidden_dim)
+            mask = inputs["attention_mask"]  # (batch, seq_len)
+            mask_expanded = np.expand_dims(mask, -1)  # (batch, seq_len, 1)
+            summed = np.sum(last_hidden * mask_expanded, axis=1)
+            counts = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
+            embeddings = summed / counts
+
+        if normalize:
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms = np.clip(norms, a_min=1e-12, a_max=None)
+            embeddings = embeddings / norms
+
+        return embeddings
+
+    # ── PyTorch backend ─────────────────────────────────────────────
 
     def _load_model(self) -> SentenceTransformer:
-        """Lazy-load the sentence-transformers model."""
+        """Lazy-load the sentence-transformers model (PyTorch fallback)."""
         if self._model is not None:
             return self._model
 
         from sentence_transformers import SentenceTransformer
 
-        kwargs: dict = {
-            "model_name_or_path": self._model_name,
-            "device": self._device,
-        }
-
-        if self._backend == "onnx":
-            try:
-                kwargs["backend"] = "onnx"
-                self._model = SentenceTransformer(**kwargs)
-                logger.info(
-                    "Loaded %s with ONNX backend on %s",
-                    self._model_name,
-                    self._device,
-                )
-                return self._model
-            except Exception:
-                logger.warning(
-                    "ONNX backend unavailable for %s, falling back to PyTorch",
-                    self._model_name,
-                )
-                kwargs.pop("backend", None)
-
-        self._model = SentenceTransformer(**kwargs)
+        self._model = SentenceTransformer(
+            model_name_or_path=self._model_name,
+            device=self._device,
+        )
         logger.info(
             "Loaded %s with PyTorch backend on %s",
             self._model_name,
@@ -88,8 +252,30 @@ class EmbeddingService:
         )
         return self._model
 
+    # ── Public API ──────────────────────────────────────────────────
+
     def encode(self, text: str) -> list[float]:
         """Encode a single text into a vector. Used for queries."""
+        if self._backend == "bedrock":
+            return self._bedrock_encode([text])[0]
+
+        if self._backend == "onnx":
+            try:
+                embeddings = self._onnx_encode([text])
+                vec = embeddings[0].tolist()
+                if len(vec) != self._dimensions:
+                    raise ValueError(
+                        f"Dimension mismatch: model produced {len(vec)}d, "
+                        f"expected {self._dimensions}d"
+                    )
+                return vec
+            except FileNotFoundError:
+                logger.warning("ONNX model not found, falling back to PyTorch")
+                self._backend = "torch"
+            except ImportError:
+                logger.warning("onnxruntime not available, falling back to PyTorch")
+                self._backend = "torch"
+
         model = self._load_model()
         embedding = model.encode(text, normalize_embeddings=True)
         vec = embedding.tolist() if isinstance(embedding, np.ndarray) else list(embedding)
@@ -112,6 +298,37 @@ class EmbeddingService:
         """
         if not texts:
             return []
+
+        if self._backend == "bedrock":
+            return self._bedrock_encode(texts)
+
+        if self._backend == "onnx":
+            try:
+                # Process in sub-batches for memory efficiency
+                all_embeddings = []
+                for i in range(0, len(texts), batch_size):
+                    batch = texts[i : i + batch_size]
+                    embs = self._onnx_encode(batch)
+                    all_embeddings.append(embs)
+
+                embeddings = np.concatenate(all_embeddings, axis=0)
+                result = []
+                for emb in embeddings:
+                    vec = emb.tolist()
+                    if len(vec) != self._dimensions:
+                        raise ValueError(
+                            f"Dimension mismatch: model produced {len(vec)}d, "
+                            f"expected {self._dimensions}d"
+                        )
+                    result.append(vec)
+                return result
+            except FileNotFoundError:
+                logger.warning("ONNX model not found, falling back to PyTorch")
+                self._backend = "torch"
+            except ImportError:
+                logger.warning("onnxruntime not available, falling back to PyTorch")
+                self._backend = "torch"
+
         model = self._load_model()
         embeddings = model.encode(
             texts,
@@ -147,8 +364,12 @@ class EmbeddingService:
 
     @property
     def is_loaded(self) -> bool:
-        """Whether the model has been loaded into memory."""
-        return self._model is not None
+        """Whether the backend has been initialized."""
+        return (
+            self._ort_session is not None
+            or self._model is not None
+            or self._bedrock_client is not None
+        )
 
 
 def get_embedding_service() -> EmbeddingService:
@@ -166,12 +387,16 @@ def get_embedding_service() -> EmbeddingService:
     if _service is not None and _service_cache_key == key:
         return _service
 
-    _service = EmbeddingService(
-        model_name=cfg["model"],
-        dimensions=cfg["dimensions"],
-        device=cfg["device"],
-        backend=cfg["backend"],
-    )
+    kwargs = {
+        "model_name": cfg["model"],
+        "dimensions": cfg["dimensions"],
+        "device": cfg["device"],
+        "backend": cfg["backend"],
+    }
+    if cfg["backend"] == "bedrock":
+        kwargs["bedrock_region"] = cfg.get("bedrock_region", "eu-central-1")
+
+    _service = EmbeddingService(**kwargs)
     _service_cache_key = key
     return _service
 
