@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from .config import get_sync_config
-from .schema import _get_pool
+from .config import get_sync_config, get_embedding_config
+from .schema import _get_pool, REMOTE_SCHEMA_SQL
 from .sync_queue import (
     claim_pending_syncs,
     mark_synced,
@@ -29,6 +29,9 @@ from .sync_config import resolve_env_vars, redact_dsn
 logger = logging.getLogger("jarvis-core")
 
 _STARTUP_DELAY = 10  # seconds — wait for server to settle
+
+# Cache of (url, schema) pairs already ensured — skip DDL after first success
+_ensured_schemas: set[tuple[str, str]] = set()
 
 
 def _sync_iteration() -> dict:
@@ -70,13 +73,17 @@ def _sync_iteration() -> dict:
         try:
             raw_url = remote_cfg.get("url", "")
             resolved_url = resolve_env_vars(raw_url)
+            schema = remote_cfg.get("schema", dest)
+
+            # Ensure target schema exists on remote (cached after first success)
+            _ensure_remote_schema(resolved_url, schema)
 
             # Fetch memory documents for this batch
             memory_ids = [e["memory_id"] for e in dest_entries]
             memories = _fetch_memories(pool, memory_ids)
 
             # Upsert to remote
-            _batch_upsert_to_remote(resolved_url, memories)
+            _batch_upsert_to_remote(resolved_url, memories, schema=schema)
 
             # Mark done and update synced_to
             ids = [e["id"] for e in dest_entries]
@@ -123,28 +130,57 @@ def _fetch_memories(pool, memory_ids: list[str]) -> list[dict]:
     return [dict(zip(columns, row)) for row in rows]
 
 
-def _batch_upsert_to_remote(remote_url: str, memories: list[dict]) -> None:
+def _ensure_remote_schema(remote_url: str, schema: str) -> None:
+    """Ensure the target schema + memories table exist on the remote.
+
+    Idempotent DDL — safe to call multiple times. Results are cached
+    per (url, schema) pair so DDL only runs once per process lifetime.
+
+    Args:
+        remote_url: Resolved PostgreSQL connection URL.
+        schema: Target schema name (already validated as safe PG identifier).
+    """
+    cache_key = (remote_url, schema)
+    if cache_key in _ensured_schemas:
+        return
+
+    import psycopg
+
+    dims = get_embedding_config()["dimensions"]
+    ddl = REMOTE_SCHEMA_SQL.format(schema=schema, dimensions=dims)
+
+    with psycopg.connect(remote_url, autocommit=True) as conn:
+        conn.execute(ddl)
+
+    _ensured_schemas.add(cache_key)
+    logger.info("Ensured remote schema '%s' on %s", schema, redact_dsn(remote_url))
+
+
+def _batch_upsert_to_remote(
+    remote_url: str, memories: list[dict], schema: str = "local"
+) -> None:
     """Upsert memory records to a remote PostgreSQL instance.
 
-    Connects directly to the remote and performs an atomic batch upsert.
-    The remote must have the same local.memories schema (Phase 7+).
+    Connects directly to the remote and performs an atomic batch upsert
+    into {schema}.memories.
 
     Args:
         remote_url: Resolved PostgreSQL connection URL.
         memories: List of memory dicts from _fetch_memories.
+        schema: Target schema name on the remote (validated PG identifier).
     """
     if not memories:
         return
 
+    import json
+
     import psycopg
+    from psycopg.types.json import Jsonb
     from pgvector.psycopg import register_vector
 
-    with psycopg.connect(remote_url, autocommit=False) as conn:
-        register_vector(conn)
-        with conn.cursor() as cur:
-            for mem in memories:
-                cur.execute(
-                    """INSERT INTO local.memories
+    # SQL safe: schema is validated by sync_config.validate_sync_config
+    # (alphanumeric + underscore only, checked at startup)
+    upsert_sql = f"""INSERT INTO {schema}.memories
                        (id, document, embedding, category, scope, project,
                         source, importance_score, retrieval_count, status,
                         superseded_by, deleted_at, metadata, synced_to,
@@ -167,7 +203,22 @@ def _batch_upsert_to_remote(remote_url: str, memories: list[dict]) -> None:
                            deleted_at = EXCLUDED.deleted_at,
                            metadata = EXCLUDED.metadata,
                            origin = EXCLUDED.origin,
-                           updated_at = EXCLUDED.updated_at""",
+                           updated_at = EXCLUDED.updated_at"""
+
+    with psycopg.connect(remote_url, autocommit=False) as conn:
+        register_vector(conn)
+        with conn.cursor() as cur:
+            for mem in memories:
+                # Wrap dict/list types for psycopg JSONB/array adaptation
+                metadata = mem["metadata"]
+                if isinstance(metadata, dict):
+                    metadata = Jsonb(metadata)
+                synced_to = mem["synced_to"]
+                if isinstance(synced_to, list):
+                    synced_to = synced_to or []
+
+                cur.execute(
+                    upsert_sql,
                     (
                         mem["id"],
                         mem["document"],
@@ -181,8 +232,8 @@ def _batch_upsert_to_remote(remote_url: str, memories: list[dict]) -> None:
                         mem["status"],
                         mem["superseded_by"],
                         mem["deleted_at"],
-                        mem["metadata"],
-                        mem["synced_to"],
+                        metadata,
+                        synced_to,
                         mem["origin"],
                         mem["created_at"],
                         mem["updated_at"],

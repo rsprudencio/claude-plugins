@@ -28,7 +28,7 @@
       "dedup_threshold": 0.95,
       "debug": false
     },
-    "per_prompt_search": {
+    "context_enrichment": {
       "enabled": true,
       "threshold": 0.5,
       "budget": 8000,
@@ -112,7 +112,15 @@
       "strategy": "first-match",
       "default_action": "local-only",
       "worker_interval_seconds": 30,
-      "remotes": {},
+      "remotes": {
+        "_example_remote": {
+          "url": "$PG_REMOTE_URL",
+          "schema": "my_context",
+          "ssl_mode": "require",
+          "enabled": false,
+          "description": "Example — replace with real values. Schema defaults to remote name if omitted."
+        }
+      },
       "rules": [],
       "project_groups": {}
     }

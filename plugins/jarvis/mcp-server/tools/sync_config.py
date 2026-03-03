@@ -21,6 +21,14 @@ _ENV_VAR_PATTERN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 # Pattern for credentials in DSN: scheme://user:password@host
 _DSN_CREDENTIALS_PATTERN = re.compile(r"(://[^:]+:)([^@]+)(@)")
 
+# Valid PostgreSQL identifier: starts with letter/underscore, alphanumeric+underscore, max 63 chars
+_PG_IDENTIFIER_PATTERN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+
+# Schema names that must never be used as remote targets
+_RESERVED_SCHEMAS = frozenset({
+    "pg_catalog", "information_schema", "public", "local",
+})
+
 
 def resolve_env_vars(url: str) -> str:
     """Resolve $ENV_VAR references in a connection URL.
@@ -96,6 +104,19 @@ def validate_sync_config(config: dict) -> list[str]:
             resolve_env_vars(url)
         except ValueError as e:
             errors.append(str(e))
+
+        # Validate schema (explicit field or remote name as fallback)
+        schema = remote_cfg.get("schema", remote_name)
+        if not _PG_IDENTIFIER_PATTERN.match(schema):
+            errors.append(
+                f"Remote '{remote_name}': schema '{schema}' is not a valid "
+                f"PostgreSQL identifier (must match [a-z_][a-z0-9_]{{0,62}})"
+            )
+        elif schema in _RESERVED_SCHEMAS:
+            errors.append(
+                f"Remote '{remote_name}': schema '{schema}' is reserved "
+                f"and cannot be used as a remote target"
+            )
 
     # Validate rules
     remote_names = set(remotes.keys())

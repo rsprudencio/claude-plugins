@@ -158,6 +158,155 @@ class TestValidateSyncConfig:
         assert validate_sync_config(config) == []
 
 
+class TestSchemaValidation:
+    """Tests for remote schema field validation."""
+
+    def test_valid_schema_names_pass(self):
+        """Valid PG identifiers pass validation."""
+        for schema in ("personio", "work_context", "aurora", "a", "_private"):
+            config = {
+                "remotes": {
+                    "r": {"url": "postgresql://h:5432/db", "schema": schema},
+                },
+                "rules": [],
+            }
+            errors = validate_sync_config(config)
+            schema_errors = [e for e in errors if "schema" in e.lower()]
+            assert schema_errors == [], f"schema '{schema}' should be valid: {schema_errors}"
+
+    def test_remote_name_as_default_schema_valid(self):
+        """When schema omitted, remote name is validated as the schema."""
+        config = {
+            "remotes": {
+                "aurora": {"url": "postgresql://h:5432/db"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        schema_errors = [e for e in errors if "schema" in e.lower()]
+        assert schema_errors == []
+
+    def test_remote_name_as_default_schema_invalid(self):
+        """Remote name that is not a valid PG identifier fails when no explicit schema."""
+        config = {
+            "remotes": {
+                "0x88": {"url": "postgresql://h:5432/db"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("schema" in e.lower() and "0x88" in e for e in errors)
+
+    def test_reserved_schema_pg_catalog(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "pg_catalog"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("reserved" in e for e in errors)
+
+    def test_reserved_schema_information_schema(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "information_schema"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("reserved" in e for e in errors)
+
+    def test_reserved_schema_public(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "public"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("reserved" in e for e in errors)
+
+    def test_reserved_schema_local(self):
+        """'local' is reserved — must never push to another host's local schema."""
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "local"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("reserved" in e for e in errors)
+
+    def test_invalid_schema_starts_with_digit(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "123bad"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("PostgreSQL identifier" in e for e in errors)
+
+    def test_invalid_schema_has_spaces(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "has spaces"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("PostgreSQL identifier" in e for e in errors)
+
+    def test_invalid_schema_sql_injection(self):
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "DROP TABLE"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("PostgreSQL identifier" in e for e in errors)
+
+    def test_invalid_schema_uppercase(self):
+        """PG identifiers in our validation are lowercase-only."""
+        config = {
+            "remotes": {
+                "r": {"url": "postgresql://h:5432/db", "schema": "MySchema"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        assert any("PostgreSQL identifier" in e for e in errors)
+
+    def test_missing_schema_no_validation_error(self):
+        """When schema is omitted and remote name is valid, no error."""
+        config = {
+            "remotes": {
+                "work": {"url": "postgresql://h:5432/db"},
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        schema_errors = [e for e in errors if "schema" in e.lower()]
+        assert schema_errors == []
+
+    def test_explicit_schema_overrides_remote_name_validation(self):
+        """Invalid remote name is OK if explicit schema is valid."""
+        config = {
+            "remotes": {
+                "0x88": {
+                    "url": "postgresql://h:5432/db",
+                    "schema": "x0x88",
+                },
+            },
+            "rules": [],
+        }
+        errors = validate_sync_config(config)
+        schema_errors = [e for e in errors if "schema" in e.lower()]
+        assert schema_errors == []
+
+
 class TestLoadRoutingRules:
     def test_empty_rules(self):
         assert load_routing_rules({"rules": []}) == []

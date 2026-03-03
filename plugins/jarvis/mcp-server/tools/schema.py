@@ -340,6 +340,81 @@ CREATE INDEX IF NOT EXISTS idx_sync_queue_dlq
 """
 
 
+REMOTE_SCHEMA_SQL = """\
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE SCHEMA IF NOT EXISTS {schema};
+
+CREATE TABLE IF NOT EXISTS {schema}.memories (
+    id TEXT PRIMARY KEY,
+    document TEXT NOT NULL,
+    embedding halfvec({dimensions}) NOT NULL,
+
+    -- Classification columns
+    category TEXT NOT NULL DEFAULT 'observation'
+        CHECK (category IN ('observation', 'pattern', 'learning', 'decision',
+                            'summary', 'code', 'relationship', 'hint', 'plan',
+                            'worklog', 'memory')),
+    scope TEXT NOT NULL DEFAULT 'global'
+        CHECK (scope IN ('global', 'project')),
+    project TEXT,
+    source TEXT NOT NULL DEFAULT 'auto-extract',
+    importance_score FLOAT NOT NULL DEFAULT 0.5
+        CHECK (importance_score >= 0.0 AND importance_score <= 1.0),
+    retrieval_count FLOAT NOT NULL DEFAULT 0.0,
+
+    -- Lifecycle
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'superseded', 'deleted')),
+    superseded_by TEXT,
+    deleted_at TIMESTAMPTZ,
+
+    -- Sync provenance
+    synced_to TEXT[] NOT NULL DEFAULT '{{}}',
+    origin TEXT NOT NULL DEFAULT 'local',
+
+    -- Remaining flexible metadata
+    metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_{schema}_embedding ON {schema}.memories
+    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
+CREATE INDEX IF NOT EXISTS idx_{schema}_metadata ON {schema}.memories USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_{schema}_category ON {schema}.memories (category);
+CREATE INDEX IF NOT EXISTS idx_{schema}_active ON {schema}.memories (status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_{schema}_importance ON {schema}.memories (importance_score DESC);
+
+-- Active view
+CREATE OR REPLACE VIEW {schema}.active_memories AS
+    SELECT * FROM {schema}.memories WHERE status = 'active';
+
+-- updated_at trigger function (idempotent — may already exist on remote)
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_{schema}_memories_updated_at'
+    ) THEN
+        CREATE TRIGGER trg_{schema}_memories_updated_at
+            BEFORE UPDATE ON {schema}.memories
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END;
+$$;
+"""
+
+
 def _get_pool():
     """Get or create singleton connection pool with config-based invalidation.
 

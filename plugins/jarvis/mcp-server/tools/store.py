@@ -106,6 +106,13 @@ def store(
 
     # Route 4: New content (auto-generate ID)
     if type in CONTENT_TYPES:
+        # Forward scope/project into extra_metadata so content_write can extract them
+        merged_metadata = dict(extra_metadata) if extra_metadata else {}
+        if scope and scope != "global":
+            merged_metadata.setdefault("scope", scope)
+        if project:
+            merged_metadata.setdefault("project", project)
+
         return _store_content(
             content=content,
             content_type=type,
@@ -114,7 +121,7 @@ def store(
             source=source,
             tags=tags,
             session_id=session_id,
-            extra_metadata=extra_metadata,
+            extra_metadata=merged_metadata or None,
             skip_secret_scan=skip_secret_scan,
         )
 
