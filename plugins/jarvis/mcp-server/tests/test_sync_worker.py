@@ -250,11 +250,17 @@ class TestRemoteSchema:
         _, kwargs = mock_upsert.call_args
         assert kwargs["schema"] == "aurora"
 
+    @patch("tools.embedding.get_embedding_service")
     @patch("pgvector.psycopg.register_vector")
     @patch("psycopg.connect")
-    def test_upsert_sql_contains_schema_name(self, mock_connect, mock_register):
-        """_batch_upsert_to_remote generates SQL with the correct schema."""
+    def test_upsert_sql_contains_schema_name(self, mock_connect, mock_register,
+                                              mock_emb_svc):
+        """_batch_upsert_to_remote generates SQL with the correct CAS tables."""
         from tools.sync_worker import _batch_upsert_to_remote
+
+        mock_svc = MagicMock()
+        mock_svc.model_name = "test-model"
+        mock_emb_svc.return_value = mock_svc
 
         mock_cur = MagicMock()
         mock_conn = MagicMock()
@@ -275,14 +281,20 @@ class TestRemoteSchema:
         }
         _batch_upsert_to_remote("postgresql://h/db", [mem], schema="personio")
 
-        sql_executed = mock_cur.execute.call_args[0][0]
-        assert "personio.memories" in sql_executed
-        assert "local.memories" not in sql_executed
+        # Should have 2 execute calls: 1 content + 1 ref
+        calls = mock_cur.execute.call_args_list
+        assert len(calls) == 2
+        content_sql = calls[0][0][0]
+        ref_sql = calls[1][0][0]
+        assert "personio.content" in content_sql
+        assert "personio.memory_refs" in ref_sql
+        assert "personio.memories" not in content_sql
+        assert "personio.memories" not in ref_sql
 
     @patch("tools.sync_worker.get_embedding_config")
     @patch("psycopg.connect")
     def test_ensure_remote_schema_runs_ddl(self, mock_connect, mock_emb):
-        """_ensure_remote_schema executes DDL on first call."""
+        """_ensure_remote_schema executes CAS DDL on first call."""
         import tools.sync_worker as mod
         from tools.sync_worker import _ensure_remote_schema
 
@@ -299,7 +311,8 @@ class TestRemoteSchema:
         mock_conn.execute.assert_called_once()
         ddl = mock_conn.execute.call_args[0][0]
         assert "CREATE SCHEMA IF NOT EXISTS personio" in ddl
-        assert "personio.memories" in ddl
+        assert "personio.content" in ddl
+        assert "personio.memory_refs" in ddl
 
         mod._ensured_schemas.discard(("postgresql://h/db", "personio"))
 
@@ -351,6 +364,124 @@ class TestRemoteSchema:
 
         mod._ensured_schemas.discard(("postgresql://h/db", "schema_a"))
         mod._ensured_schemas.discard(("postgresql://h/db", "schema_b"))
+
+
+class TestContentHash:
+    """Tests for _compute_content_hash()."""
+
+    def test_deterministic(self):
+        from tools.sync_worker import _compute_content_hash
+
+        h1 = _compute_content_hash("hello world", "model-v1")
+        h2 = _compute_content_hash("hello world", "model-v1")
+        assert h1 == h2
+
+    def test_model_sensitivity(self):
+        """Different model name produces different hash."""
+        from tools.sync_worker import _compute_content_hash
+
+        h1 = _compute_content_hash("same doc", "model-v1")
+        h2 = _compute_content_hash("same doc", "model-v2")
+        assert h1 != h2
+
+    def test_nul_separator(self):
+        """NUL separator prevents prefix collisions."""
+        from tools.sync_worker import _compute_content_hash
+
+        # Without NUL separator, "abc" + "def" could equal "ab" + "cdef"
+        h1 = _compute_content_hash("abc", "def")
+        h2 = _compute_content_hash("ab", "cdef")
+        assert h1 != h2
+
+    def test_returns_hex_string(self):
+        from tools.sync_worker import _compute_content_hash
+
+        h = _compute_content_hash("test", "model")
+        assert len(h) == 64  # SHA-256 hex digest
+        assert all(c in "0123456789abcdef" for c in h)
+
+
+class TestCASBatchUpsert:
+    """Tests for CAS-aware _batch_upsert_to_remote()."""
+
+    def _make_memory(self, mem_id="obs::1", document="test doc"):
+        return {
+            "id": mem_id, "document": document, "embedding": [0.1],
+            "category": "observation", "scope": "global", "project": None,
+            "source": "auto-extract", "importance_score": 0.5,
+            "retrieval_count": 0.0, "status": "active",
+            "superseded_by": None, "deleted_at": None,
+            "metadata": {}, "synced_to": [], "origin": "local",
+            "created_at": "2026-01-01", "updated_at": "2026-01-01",
+        }
+
+    @patch("tools.embedding.get_embedding_service")
+    @patch("pgvector.psycopg.register_vector")
+    @patch("psycopg.connect")
+    def test_content_dedup_within_batch(self, mock_connect, mock_register,
+                                        mock_emb_svc):
+        """Two memories with same document produce 1 content INSERT, 2 ref INSERTs."""
+        from tools.sync_worker import _batch_upsert_to_remote
+
+        mock_svc = MagicMock()
+        mock_svc.model_name = "test-model"
+        mock_emb_svc.return_value = mock_svc
+
+        mock_cur = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_connect.return_value = mock_conn
+
+        mem1 = self._make_memory("obs::1", "same document")
+        mem2 = self._make_memory("obs::2", "same document")  # same content
+
+        _batch_upsert_to_remote("postgresql://h/db", [mem1, mem2], schema="test")
+
+        calls = mock_cur.execute.call_args_list
+        content_calls = [c for c in calls if "content" in c[0][0] and "memory_refs" not in c[0][0]]
+        ref_calls = [c for c in calls if "memory_refs" in c[0][0]]
+        assert len(content_calls) == 1  # deduped
+        assert len(ref_calls) == 2
+
+    @patch("tools.embedding.get_embedding_service")
+    @patch("pgvector.psycopg.register_vector")
+    @patch("psycopg.connect")
+    def test_transaction_ordering(self, mock_connect, mock_register, mock_emb_svc):
+        """Content INSERTs execute before ref INSERTs."""
+        from tools.sync_worker import _batch_upsert_to_remote
+
+        mock_svc = MagicMock()
+        mock_svc.model_name = "test-model"
+        mock_emb_svc.return_value = mock_svc
+
+        mock_cur = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_connect.return_value = mock_conn
+
+        mem = self._make_memory()
+        _batch_upsert_to_remote("postgresql://h/db", [mem], schema="test")
+
+        calls = mock_cur.execute.call_args_list
+        # First call should be content, second should be ref
+        assert "content" in calls[0][0][0] and "memory_refs" not in calls[0][0][0]
+        assert "memory_refs" in calls[1][0][0]
+
+    @patch("tools.embedding.get_embedding_service")
+    @patch("pgvector.psycopg.register_vector")
+    @patch("psycopg.connect")
+    def test_empty_batch_is_noop(self, mock_connect, mock_register, mock_emb_svc):
+        """Empty memories list doesn't connect to remote."""
+        from tools.sync_worker import _batch_upsert_to_remote
+
+        _batch_upsert_to_remote("postgresql://h/db", [], schema="test")
+        mock_connect.assert_not_called()
 
 
 class TestSyncPresets:

@@ -149,6 +149,29 @@ class TestInitialPull:
         assert result["success"] is True
         assert result["pulled_count"] == 0
 
+    def test_initial_pull_uses_cas_tables(self):
+        """initial_pull reads from CAS tables (memory_refs JOIN content)."""
+        rows = [
+            ("obs::1", "test doc", [0.1] * 384, "observation", "global", None,
+             "auto-extract", 0.5, 0.0, "active", None, {},
+             datetime.now(timezone.utc), datetime.now(timezone.utc)),
+        ]
+        remote_pool, local_pool, local_cursor = self._make_mock_pools(rows)
+
+        # Capture the SQL executed on the remote
+        remote_conn = remote_pool.connection.return_value.__enter__.return_value
+        remote_cursor = remote_conn.cursor.return_value.__enter__.return_value
+
+        with patch("tools.sync_pull.get_remote_pool", return_value=remote_pool), \
+             patch("tools.sync_pull._get_pool", return_value=local_pool), \
+             patch("tools.sync_pull._set_last_pull_ts"):
+            initial_pull("test-remote", "remote_test", source_schema="work")
+
+        sql = remote_cursor.execute.call_args_list[0][0][0]
+        assert "work.memory_refs" in sql
+        assert "work.content" in sql
+        assert "local.memories" not in sql
+
     def test_records_sync_timestamp(self):
         remote_pool, local_pool, _ = self._make_mock_pools([])
 
@@ -172,12 +195,13 @@ class TestIncrementalPull:
             result = incremental_pull("new-remote", "remote_new")
 
         mock_initial.assert_called_once_with(
-            "new-remote", "remote_new", batch_size=DEFAULT_BATCH_SIZE
+            "new-remote", "remote_new",
+            source_schema="local", batch_size=DEFAULT_BATCH_SIZE,
         )
         assert result["mode"] == "initial"
 
     def test_uses_timestamp_filter(self):
-        """When timestamp exists, fetches only newer rows."""
+        """When timestamp exists, fetches only newer rows from CAS tables."""
         last_ts = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
 
         remote_cursor = MagicMock()
@@ -206,13 +230,32 @@ class TestIncrementalPull:
              patch("tools.sync_pull.get_remote_pool", return_value=remote_pool), \
              patch("tools.sync_pull._get_pool", return_value=local_pool), \
              patch("tools.sync_pull._set_last_pull_ts"):
-            result = incremental_pull("incr-remote", "remote_incr")
+            result = incremental_pull(
+                "incr-remote", "remote_incr", source_schema="work"
+            )
 
         assert result["mode"] == "incremental"
         assert result["since"] == last_ts.isoformat()
-        # Verify the SQL used the timestamp parameter
+        # Verify the SQL uses CAS tables with correct schema
         execute_call = remote_cursor.execute.call_args
+        sql = execute_call[0][0]
+        assert "work.memory_refs" in sql
+        assert "work.content" in sql
+        assert "local.memories" not in sql
         assert last_ts in execute_call[0][1]  # timestamp in params
+
+    def test_source_schema_passed_to_initial_on_fallback(self):
+        """When no timestamp exists, source_schema is forwarded to initial_pull."""
+        with patch("tools.sync_pull._get_last_pull_ts", return_value=None), \
+             patch("tools.sync_pull.initial_pull", return_value={"mode": "initial"}) as mock_initial:
+            incremental_pull(
+                "new-remote", "remote_new", source_schema="personio"
+            )
+
+        mock_initial.assert_called_once_with(
+            "new-remote", "remote_new",
+            source_schema="personio", batch_size=DEFAULT_BATCH_SIZE,
+        )
 
 
 class TestPullSyncLoop:

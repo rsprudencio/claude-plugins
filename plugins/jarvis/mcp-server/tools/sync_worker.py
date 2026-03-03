@@ -14,6 +14,7 @@ The worker:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 
 from .config import get_sync_config, get_embedding_config
@@ -32,6 +33,17 @@ _STARTUP_DELAY = 10  # seconds — wait for server to settle
 
 # Cache of (url, schema) pairs already ensured — skip DDL after first success
 _ensured_schemas: set[tuple[str, str]] = set()
+
+
+def _compute_content_hash(document: str, model_name: str) -> str:
+    """SHA-256(document + NUL + model_name).
+
+    NUL separator prevents prefix collisions (e.g. "abc" + "def" vs "ab" + "cdef").
+    Including model_name ensures embedding model upgrades produce new content rows.
+    """
+    return hashlib.sha256(
+        document.encode("utf-8") + b"\x00" + model_name.encode("utf-8")
+    ).hexdigest()
 
 
 def _sync_iteration() -> dict:
@@ -159,10 +171,12 @@ def _ensure_remote_schema(remote_url: str, schema: str) -> None:
 def _batch_upsert_to_remote(
     remote_url: str, memories: list[dict], schema: str = "local"
 ) -> None:
-    """Upsert memory records to a remote PostgreSQL instance.
+    """Upsert memory records to a remote PostgreSQL instance using CAS.
 
-    Connects directly to the remote and performs an atomic batch upsert
-    into {schema}.memories.
+    Splits each memory into an immutable content row (keyed by SHA-256 hash)
+    and a mutable metadata ref row. Content is deduplicated within the batch,
+    and both are written in a single transaction (content before refs to
+    satisfy the FK constraint).
 
     Args:
         remote_url: Resolved PostgreSQL connection URL.
@@ -172,73 +186,95 @@ def _batch_upsert_to_remote(
     if not memories:
         return
 
-    import json
-
     import psycopg
     from psycopg.types.json import Jsonb
     from pgvector.psycopg import register_vector
 
+    from .embedding import get_embedding_service
+
+    model_name = get_embedding_service().model_name
+
     # SQL safe: schema is validated by sync_config.validate_sync_config
-    # (alphanumeric + underscore only, checked at startup)
-    upsert_sql = f"""INSERT INTO {schema}.memories
-                       (id, document, embedding, category, scope, project,
-                        source, importance_score, retrieval_count, status,
-                        superseded_by, deleted_at, metadata, synced_to,
-                        origin, created_at, updated_at)
-                       VALUES (%s, %s, %s, %s, %s, %s,
-                               %s, %s, %s, %s,
-                               %s, %s, %s, %s,
-                               %s, %s, %s)
-                       ON CONFLICT (id) DO UPDATE SET
-                           document = EXCLUDED.document,
-                           embedding = EXCLUDED.embedding,
-                           category = EXCLUDED.category,
-                           scope = EXCLUDED.scope,
-                           project = EXCLUDED.project,
-                           source = EXCLUDED.source,
-                           importance_score = EXCLUDED.importance_score,
-                           retrieval_count = EXCLUDED.retrieval_count,
-                           status = EXCLUDED.status,
-                           superseded_by = EXCLUDED.superseded_by,
-                           deleted_at = EXCLUDED.deleted_at,
-                           metadata = EXCLUDED.metadata,
-                           origin = EXCLUDED.origin,
-                           updated_at = EXCLUDED.updated_at"""
+    content_sql = f"""INSERT INTO {schema}.content
+                        (hash, content, embedding, embedding_model)
+                      VALUES (%s, %s, %s, %s)
+                      ON CONFLICT (hash) DO NOTHING"""
+
+    ref_sql = f"""INSERT INTO {schema}.memory_refs
+                    (id, content_hash, category, scope, project,
+                     source, importance_score, retrieval_count, status,
+                     superseded_by, deleted_at, synced_to, origin,
+                     metadata, created_at, updated_at)
+                  VALUES (%s, %s, %s, %s, %s,
+                          %s, %s, %s, %s,
+                          %s, %s, %s, %s,
+                          %s, %s, %s)
+                  ON CONFLICT (id) DO UPDATE SET
+                      content_hash = EXCLUDED.content_hash,
+                      category = EXCLUDED.category,
+                      scope = EXCLUDED.scope,
+                      project = EXCLUDED.project,
+                      source = EXCLUDED.source,
+                      importance_score = EXCLUDED.importance_score,
+                      retrieval_count = EXCLUDED.retrieval_count,
+                      status = EXCLUDED.status,
+                      superseded_by = EXCLUDED.superseded_by,
+                      deleted_at = EXCLUDED.deleted_at,
+                      origin = EXCLUDED.origin,
+                      metadata = EXCLUDED.metadata,
+                      updated_at = EXCLUDED.updated_at"""
+
+    # Build content + ref tuples, dedup content within batch
+    content_rows: dict[str, tuple] = {}  # hash → (hash, doc, embedding, model)
+    ref_rows: list[tuple] = []
+
+    for mem in memories:
+        content_hash = _compute_content_hash(mem["document"], model_name)
+
+        # Deduplicate content within batch
+        if content_hash not in content_rows:
+            content_rows[content_hash] = (
+                content_hash,
+                mem["document"],
+                mem["embedding"],
+                model_name,
+            )
+
+        metadata = mem["metadata"]
+        if isinstance(metadata, dict):
+            metadata = Jsonb(metadata)
+        synced_to = mem["synced_to"]
+        if isinstance(synced_to, list):
+            synced_to = synced_to or []
+
+        ref_rows.append((
+            mem["id"],
+            content_hash,
+            mem["category"],
+            mem["scope"],
+            mem["project"],
+            mem["source"],
+            mem["importance_score"],
+            mem["retrieval_count"],
+            mem["status"],
+            mem["superseded_by"],
+            mem["deleted_at"],
+            synced_to,
+            mem["origin"],
+            metadata,
+            mem["created_at"],
+            mem["updated_at"],
+        ))
 
     with psycopg.connect(remote_url, autocommit=False) as conn:
         register_vector(conn)
         with conn.cursor() as cur:
-            for mem in memories:
-                # Wrap dict/list types for psycopg JSONB/array adaptation
-                metadata = mem["metadata"]
-                if isinstance(metadata, dict):
-                    metadata = Jsonb(metadata)
-                synced_to = mem["synced_to"]
-                if isinstance(synced_to, list):
-                    synced_to = synced_to or []
-
-                cur.execute(
-                    upsert_sql,
-                    (
-                        mem["id"],
-                        mem["document"],
-                        mem["embedding"],
-                        mem["category"],
-                        mem["scope"],
-                        mem["project"],
-                        mem["source"],
-                        mem["importance_score"],
-                        mem["retrieval_count"],
-                        mem["status"],
-                        mem["superseded_by"],
-                        mem["deleted_at"],
-                        metadata,
-                        synced_to,
-                        mem["origin"],
-                        mem["created_at"],
-                        mem["updated_at"],
-                    ),
-                )
+            # Content first (FK target must exist before refs)
+            for content_tuple in content_rows.values():
+                cur.execute(content_sql, content_tuple)
+            # Then refs
+            for ref_tuple in ref_rows:
+                cur.execute(ref_sql, ref_tuple)
         conn.commit()
 
 

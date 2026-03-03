@@ -345,12 +345,25 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE SCHEMA IF NOT EXISTS {schema};
 
-CREATE TABLE IF NOT EXISTS {schema}.memories (
-    id TEXT PRIMARY KEY,
-    document TEXT NOT NULL,
-    embedding halfvec({dimensions}) NOT NULL,
+-- Drop legacy flat table (nuke existing data on first CAS deployment)
+DROP TABLE IF EXISTS {schema}.memories CASCADE;
 
-    -- Classification columns
+-- CAS content store (immutable, deduped by hash)
+CREATE TABLE IF NOT EXISTS {schema}.content (
+    hash TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    embedding halfvec({dimensions}) NOT NULL,
+    embedding_model TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_{schema}_content_embedding ON {schema}.content
+    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
+
+-- Mutable metadata references (FK to content)
+CREATE TABLE IF NOT EXISTS {schema}.memory_refs (
+    id TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL REFERENCES {schema}.content(hash) ON DELETE RESTRICT,
     category TEXT NOT NULL DEFAULT 'observation'
         CHECK (category IN ('observation', 'pattern', 'learning', 'decision',
                             'summary', 'code', 'relationship', 'hint', 'plan',
@@ -362,35 +375,35 @@ CREATE TABLE IF NOT EXISTS {schema}.memories (
     importance_score FLOAT NOT NULL DEFAULT 0.5
         CHECK (importance_score >= 0.0 AND importance_score <= 1.0),
     retrieval_count FLOAT NOT NULL DEFAULT 0.0,
-
-    -- Lifecycle
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'superseded', 'deleted')),
     superseded_by TEXT,
     deleted_at TIMESTAMPTZ,
-
-    -- Sync provenance
     synced_to TEXT[] NOT NULL DEFAULT '{{}}',
     origin TEXT NOT NULL DEFAULT 'local',
-
-    -- Remaining flexible metadata
     metadata JSONB NOT NULL DEFAULT '{{}}'::jsonb,
-
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Indexes
-CREATE INDEX IF NOT EXISTS idx_{schema}_embedding ON {schema}.memories
-    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
-CREATE INDEX IF NOT EXISTS idx_{schema}_metadata ON {schema}.memories USING gin (metadata jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_{schema}_category ON {schema}.memories (category);
-CREATE INDEX IF NOT EXISTS idx_{schema}_active ON {schema}.memories (status) WHERE status = 'active';
-CREATE INDEX IF NOT EXISTS idx_{schema}_importance ON {schema}.memories (importance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_{schema}_refs_content_hash ON {schema}.memory_refs (content_hash);
+CREATE INDEX IF NOT EXISTS idx_{schema}_refs_metadata ON {schema}.memory_refs USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_{schema}_refs_category ON {schema}.memory_refs (category);
+CREATE INDEX IF NOT EXISTS idx_{schema}_refs_active ON {schema}.memory_refs (status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_{schema}_refs_importance ON {schema}.memory_refs (importance_score DESC);
 
--- Active view
+-- Backward-compat view for direct remote queries
 CREATE OR REPLACE VIEW {schema}.active_memories AS
-    SELECT * FROM {schema}.memories WHERE status = 'active';
+    SELECT r.id, c.content AS document, c.embedding,
+           r.category, r.scope, r.project, r.source,
+           r.importance_score, r.retrieval_count,
+           r.status, r.superseded_by, r.deleted_at,
+           r.synced_to, r.origin, r.metadata,
+           r.created_at, r.updated_at,
+           r.content_hash, c.embedding_model
+    FROM {schema}.memory_refs r
+    JOIN {schema}.content c ON c.hash = r.content_hash
+    WHERE r.status = 'active';
 
 -- updated_at trigger function (idempotent — may already exist on remote)
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -404,10 +417,10 @@ $$ LANGUAGE plpgsql;
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_{schema}_memories_updated_at'
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_{schema}_refs_updated_at'
     ) THEN
-        CREATE TRIGGER trg_{schema}_memories_updated_at
-            BEFORE UPDATE ON {schema}.memories
+        CREATE TRIGGER trg_{schema}_refs_updated_at
+            BEFORE UPDATE ON {schema}.memory_refs
             FOR EACH ROW EXECUTE FUNCTION update_updated_at();
     END IF;
 END;

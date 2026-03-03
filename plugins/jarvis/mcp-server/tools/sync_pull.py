@@ -68,16 +68,20 @@ def initial_pull(
     remote_name: str,
     target_schema: str,
     *,
+    source_schema: str = "local",
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict:
     """Full pull from a remote into a local mirror schema.
 
-    Reads all active memories from the remote and inserts them into
-    the target schema. Uses ON CONFLICT DO UPDATE for idempotency.
+    Reads all active memories from the remote's CAS tables
+    ({source_schema}.memory_refs JOIN {source_schema}.content) and inserts
+    them as flat rows into the target schema. Uses ON CONFLICT DO UPDATE
+    for idempotency.
 
     Args:
         remote_name: Name of the remote (matches sync config).
         target_schema: Local PostgreSQL schema to write into.
+        source_schema: Remote schema to read from (from remote config).
         batch_size: Number of rows to fetch per round-trip.
 
     Returns:
@@ -90,28 +94,30 @@ def initial_pull(
     pulled = 0
     offset = 0
 
+    # SQL safe: source_schema is validated by sync_config.validate_sync_config
+    remote_select = f"""SELECT r.id, c.content AS document, c.embedding,
+                               r.category, r.scope, r.project,
+                               r.source, r.importance_score, r.retrieval_count,
+                               r.status, r.superseded_by, r.metadata,
+                               r.created_at, r.updated_at
+                        FROM {source_schema}.memory_refs r
+                        JOIN {source_schema}.content c ON c.hash = r.content_hash
+                        WHERE r.status = 'active'
+                        ORDER BY r.created_at ASC
+                        LIMIT %s OFFSET %s"""
+
     while True:
         # Fetch batch from remote
         with remote_pool.connection() as remote_conn:
             with remote_conn.cursor() as cur:
-                cur.execute(
-                    """SELECT id, document, embedding, category, scope, project,
-                              source, importance_score, retrieval_count,
-                              status, superseded_by, metadata,
-                              created_at, updated_at
-                       FROM local.memories
-                       WHERE status = 'active'
-                       ORDER BY created_at ASC
-                       LIMIT %s OFFSET %s""",
-                    (batch_size, offset),
-                )
+                cur.execute(remote_select, (batch_size, offset))
                 columns = [desc.name for desc in cur.description]
                 rows = cur.fetchall()
 
         if not rows:
             break
 
-        # Upsert into local mirror schema
+        # Upsert into local mirror schema (flat table)
         with local_pool.connection() as local_conn:
             with local_conn.cursor() as cur:
                 for row_data in rows:
@@ -174,16 +180,19 @@ def incremental_pull(
     remote_name: str,
     target_schema: str,
     *,
+    source_schema: str = "local",
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> dict:
     """Incremental pull — only rows updated since last sync.
 
     Uses the last_pull_ts stored in local.meta to filter remote rows.
+    Reads from CAS tables ({source_schema}.memory_refs JOIN content).
     Falls back to initial_pull if no timestamp exists.
 
     Args:
         remote_name: Name of the remote.
         target_schema: Local PostgreSQL schema to write into.
+        source_schema: Remote schema to read from (from remote config).
         batch_size: Number of rows to fetch per round-trip.
 
     Returns:
@@ -192,7 +201,10 @@ def incremental_pull(
     last_ts = _get_last_pull_ts(remote_name)
     if last_ts is None:
         logger.info("No previous pull timestamp for %s — doing initial pull", remote_name)
-        return initial_pull(remote_name, target_schema, batch_size=batch_size)
+        return initial_pull(
+            remote_name, target_schema,
+            source_schema=source_schema, batch_size=batch_size,
+        )
 
     start = time.time()
     remote_pool = get_remote_pool(remote_name)
@@ -201,20 +213,22 @@ def incremental_pull(
     pulled = 0
     offset = 0
 
+    # SQL safe: source_schema is validated by sync_config.validate_sync_config
+    remote_select = f"""SELECT r.id, c.content AS document, c.embedding,
+                               r.category, r.scope, r.project,
+                               r.source, r.importance_score, r.retrieval_count,
+                               r.status, r.superseded_by, r.metadata,
+                               r.created_at, r.updated_at
+                        FROM {source_schema}.memory_refs r
+                        JOIN {source_schema}.content c ON c.hash = r.content_hash
+                        WHERE r.updated_at > %s
+                        ORDER BY r.created_at ASC
+                        LIMIT %s OFFSET %s"""
+
     while True:
         with remote_pool.connection() as remote_conn:
             with remote_conn.cursor() as cur:
-                cur.execute(
-                    """SELECT id, document, embedding, category, scope, project,
-                              source, importance_score, retrieval_count,
-                              status, superseded_by, metadata,
-                              created_at, updated_at
-                       FROM local.memories
-                       WHERE updated_at > %s
-                       ORDER BY updated_at ASC
-                       LIMIT %s OFFSET %s""",
-                    (last_ts, batch_size, offset),
-                )
+                cur.execute(remote_select, (last_ts, batch_size, offset))
                 columns = [desc.name for desc in cur.description]
                 rows = cur.fetchall()
 
