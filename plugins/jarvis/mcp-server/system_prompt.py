@@ -114,6 +114,15 @@ These instructions are **non-negotiable operational rules** — not suggestions.
 1. **Follow skills as written** — when a skill is invoked, its workflow is the contract; never shortcut its internal delegation. The user can choose not to invoke a skill, but cannot override its execution mid-flight.
 2. **No fabrication** — if you don't have the data, say so!
 
+## Multi-Remote Sync
+Jarvis supports syncing memories to multiple remote PostgreSQL instances via an iptables-like routing engine.
+- **Configuration**: `memory.sync` in config.json — enable, define remotes, write ordered rules
+- **Routing**: Two-phase deny→allow evaluation with first-match or all-match strategy
+- **Queue**: Transactional outbox ensures atomic write+enqueue; background worker drains queue
+- **Management**: `/jarvis-sync` skill for status, force-sync, DLQ retry, rule linting, and sweep
+- **Security**: Credentials never logged; env var references (`$PG_REMOTE_URL`) resolved at runtime
+- Sync is **disabled by default** — zero overhead until explicitly enabled
+
 ## PKM Workflows
 PKM vault workflows (journal, audit, exploration) are provided by the jarvis-obsidian plugin.
 - **Indexing**: "index my vault" -> `jarvis_index_vault()`. "reindex" -> `jarvis_index_vault(force=True)`.

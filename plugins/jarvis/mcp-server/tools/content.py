@@ -275,6 +275,36 @@ def content_write(
                         now_ts,
                     ),
                 )
+
+                # Transactional outbox: evaluate routing + enqueue sync
+                # within the same transaction as the memory INSERT
+                try:
+                    from .config import get_sync_config
+                    from .routing import evaluate_routing
+                    from .sync_queue import enqueue_sync
+                    from .sync_config import load_routing_rules
+
+                    sync_cfg = get_sync_config()
+                    if sync_cfg.get("enabled"):
+                        memory_dict = {
+                            "category": content_type,
+                            "scope": scope,
+                            "project": project,
+                            "importance_score": importance_score,
+                            "metadata": metadata,
+                        }
+                        rules = load_routing_rules(sync_cfg)
+                        project_groups = sync_cfg.get("project_groups", {})
+                        decision = evaluate_routing(
+                            memory_dict, rules,
+                            sync_cfg.get("strategy", "first-match"),
+                            project_groups,
+                        )
+                        if decision.destinations:
+                            enqueue_sync(cur, doc_id, decision.destinations)
+                except Exception as e:
+                    logger.debug(f"Sync routing skipped: {e}")
+
                 conn.commit()
 
         result = {
@@ -494,14 +524,29 @@ def content_delete(doc_id: str, hard: bool = False) -> dict:
             with conn.cursor() as cur:
                 if hard:
                     cur.execute("DELETE FROM core.memories WHERE id = %s", (doc_id,))
+                    deleted = cur.rowcount > 0
                 else:
+                    # Soft delete: also propagate to synced remotes
                     cur.execute(
                         """UPDATE core.memories
                            SET status = 'deleted', deleted_at = now(), updated_at = now()
-                           WHERE id = %s""",
+                           WHERE id = %s
+                           RETURNING synced_to""",
                         (doc_id,),
                     )
-                deleted = cur.rowcount > 0
+                    row = cur.fetchone()
+                    deleted = row is not None
+
+                    # Enqueue delete sync for remotes that have this memory
+                    if deleted and row and row[0]:
+                        try:
+                            from .sync_queue import enqueue_sync
+                            synced_remotes = row[0]
+                            if synced_remotes:
+                                enqueue_sync(cur, doc_id, synced_remotes)
+                        except Exception as e:
+                            logger.debug(f"Delete sync propagation skipped: {e}")
+
                 conn.commit()
 
         if not deleted:

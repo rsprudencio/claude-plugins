@@ -1,48 +1,68 @@
-"""Tests for get_replication_config."""
+"""Tests for get_sync_config (replaced get_replication_config in Phase 7)."""
 
 import os
 
 
-class TestReplicationConfig:
-    """Tests for replication configuration getter."""
+class TestSyncConfig:
+    """Tests for multi-remote sync configuration getter."""
 
     def test_defaults_disabled(self, mock_config):
-        """Default config has mode=disabled."""
-        from tools.config import get_replication_config
+        """Default config has enabled=false."""
+        from tools.config import get_sync_config
 
-        cfg = get_replication_config()
-        assert cfg["mode"] == "disabled"
-        assert cfg["central_url"] == ""
-        assert cfg["node_id"] == ""
-        assert cfg["publications"] == ["jarvis_pub"]
-        assert cfg["replication_user"] == "jarvis_repl"
+        cfg = get_sync_config()
+        assert cfg["enabled"] is False
+        assert cfg["strategy"] == "first-match"
+        assert cfg["default_action"] == "local-only"
+        assert cfg["worker_interval_seconds"] == 30
+        assert cfg["remotes"] == {}
+        assert cfg["rules"] == []
+        assert cfg["project_groups"] == {}
 
-    def test_env_override_mode(self, mock_config, monkeypatch):
-        """JARVIS_REPLICATION_MODE env var overrides config."""
-        from tools.config import get_replication_config
+    def test_env_override_enabled(self, mock_config, monkeypatch):
+        """JARVIS_SYNC_ENABLED env var overrides config."""
+        from tools.config import get_sync_config
 
-        monkeypatch.setenv("JARVIS_REPLICATION_MODE", "central")
-        cfg = get_replication_config()
-        assert cfg["mode"] == "central"
+        monkeypatch.setenv("JARVIS_SYNC_ENABLED", "true")
+        cfg = get_sync_config()
+        assert cfg["enabled"] is True
 
-    def test_env_override_central_url(self, mock_config, monkeypatch):
-        """JARVIS_CENTRAL_URL env var overrides config."""
-        from tools.config import get_replication_config
+    def test_env_override_enabled_numeric(self, mock_config, monkeypatch):
+        """JARVIS_SYNC_ENABLED=1 is truthy."""
+        from tools.config import get_sync_config
 
-        monkeypatch.setenv("JARVIS_CENTRAL_URL", "postgresql://central:5432/jarvis")
-        cfg = get_replication_config()
-        assert cfg["central_url"] == "postgresql://central:5432/jarvis"
+        monkeypatch.setenv("JARVIS_SYNC_ENABLED", "1")
+        cfg = get_sync_config()
+        assert cfg["enabled"] is True
+
+    def test_env_override_enabled_false(self, mock_config, monkeypatch):
+        """JARVIS_SYNC_ENABLED=false disables sync."""
+        from tools.config import get_sync_config
+
+        monkeypatch.setenv("JARVIS_SYNC_ENABLED", "false")
+        cfg = get_sync_config()
+        assert cfg["enabled"] is False
+
+    def test_env_override_strategy(self, mock_config, monkeypatch):
+        """JARVIS_SYNC_STRATEGY env var overrides config."""
+        from tools.config import get_sync_config
+
+        monkeypatch.setenv("JARVIS_SYNC_STRATEGY", "all-match")
+        cfg = get_sync_config()
+        assert cfg["strategy"] == "all-match"
 
     def test_config_file_override(self, mock_config):
         """Config file values override defaults."""
         import json
-        from tools.config import get_replication_config
+        from tools.config import get_sync_config
 
         data = json.loads(mock_config.path.read_text())
-        data.setdefault("memory", {})["replication"] = {
-            "mode": "local",
-            "central_url": "postgresql://remote-host:5432/jarvis",
-            "node_id": "laptop-1",
+        data.setdefault("memory", {})["sync"] = {
+            "enabled": True,
+            "strategy": "all-match",
+            "remotes": {
+                "work": {"url": "postgresql://work-host:5432/jarvis"}
+            },
         }
         mock_config.path.write_text(json.dumps(data))
         import jarvis_common.config as cc
@@ -50,22 +70,23 @@ class TestReplicationConfig:
         import tools.config as tc
         tc._config_cache = None
 
-        cfg = get_replication_config()
-        assert cfg["mode"] == "local"
-        assert cfg["central_url"] == "postgresql://remote-host:5432/jarvis"
-        assert cfg["node_id"] == "laptop-1"
+        cfg = get_sync_config()
+        assert cfg["enabled"] is True
+        assert cfg["strategy"] == "all-match"
+        assert "work" in cfg["remotes"]
         # Defaults still present for unset keys
-        assert cfg["publications"] == ["jarvis_pub"]
+        assert cfg["default_action"] == "local-only"
+        assert cfg["worker_interval_seconds"] == 30
 
     def test_env_precedence_over_config(self, mock_config, monkeypatch):
         """Env vars take precedence over config file values."""
         import json
-        from tools.config import get_replication_config
+        from tools.config import get_sync_config
 
         data = json.loads(mock_config.path.read_text())
-        data.setdefault("memory", {})["replication"] = {
-            "mode": "local",
-            "central_url": "postgresql://config-host:5432/jarvis",
+        data.setdefault("memory", {})["sync"] = {
+            "enabled": True,
+            "strategy": "first-match",
         }
         mock_config.path.write_text(json.dumps(data))
         import jarvis_common.config as cc
@@ -73,9 +94,9 @@ class TestReplicationConfig:
         import tools.config as tc
         tc._config_cache = None
 
-        monkeypatch.setenv("JARVIS_REPLICATION_MODE", "central")
-        monkeypatch.setenv("JARVIS_CENTRAL_URL", "postgresql://env-host:5432/jarvis")
+        monkeypatch.setenv("JARVIS_SYNC_ENABLED", "false")
+        monkeypatch.setenv("JARVIS_SYNC_STRATEGY", "all-match")
 
-        cfg = get_replication_config()
-        assert cfg["mode"] == "central"
-        assert cfg["central_url"] == "postgresql://env-host:5432/jarvis"
+        cfg = get_sync_config()
+        assert cfg["enabled"] is False
+        assert cfg["strategy"] == "all-match"

@@ -105,26 +105,28 @@ def get_postgres_config() -> dict:
     return {"url": url}
 
 
-def get_replication_config() -> dict:
-    """Get replication configuration with defaults.
+def get_sync_config() -> dict:
+    """Get multi-remote sync configuration with defaults.
 
     Resolution order: env vars > config file > defaults.
     """
     defaults = {
-        "mode": "disabled",
-        "central_url": "",
-        "node_id": "",
-        "publications": ["jarvis_pub"],
-        "replication_user": "jarvis_repl",
+        "enabled": False,
+        "strategy": "first-match",
+        "default_action": "local-only",
+        "worker_interval_seconds": 30,
+        "remotes": {},
+        "rules": [],
+        "project_groups": {},
     }
-    config = _merge_with_defaults(defaults, _get_memory_section("replication"))
+    config = _merge_with_defaults(defaults, _get_memory_section("sync"))
     # Env var overrides
-    env_mode = os.environ.get("JARVIS_REPLICATION_MODE")
-    if env_mode:
-        config["mode"] = env_mode
-    env_url = os.environ.get("JARVIS_CENTRAL_URL")
-    if env_url:
-        config["central_url"] = env_url
+    env_enabled = os.environ.get("JARVIS_SYNC_ENABLED")
+    if env_enabled is not None:
+        config["enabled"] = env_enabled.lower() in ("1", "true", "yes")
+    env_strategy = os.environ.get("JARVIS_SYNC_STRATEGY")
+    if env_strategy:
+        config["strategy"] = env_strategy
     return config
 
 

@@ -86,12 +86,14 @@
       "lookback_minutes": 10,
       "merge_threshold": 0.7
     },
-    "replication": {
-      "mode": "disabled",
-      "central_url": "",
-      "node_id": "",
-      "publications": ["jarvis_pub"],
-      "replication_user": "jarvis_repl"
+    "sync": {
+      "enabled": false,
+      "strategy": "first-match",
+      "default_action": "local-only",
+      "worker_interval_seconds": 30,
+      "remotes": {},
+      "rules": [],
+      "project_groups": {}
     }
   },
   "todoist": {

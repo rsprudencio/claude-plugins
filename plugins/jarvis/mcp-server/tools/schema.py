@@ -240,6 +240,42 @@ ON CONFLICT (key) DO UPDATE SET value = '{{"version": 3}}'::jsonb;
 """
 
 
+SYNC_SCHEMA_SQL = """\
+-- Phase 7: Multi-remote sync columns on core.memories
+ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+    synced_to TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+    origin TEXT NOT NULL DEFAULT 'local';
+
+-- Routing composite index (only local, active memories need routing)
+CREATE INDEX IF NOT EXISTS idx_core_routing
+    ON core.memories (category, scope, project)
+    WHERE status = 'active' AND origin = 'local';
+
+-- Sync outbox queue
+CREATE TABLE IF NOT EXISTS core.sync_queue (
+    id SERIAL PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES core.memories(id) ON DELETE CASCADE,
+    destination TEXT NOT NULL,
+    version INT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'sending', 'done', 'failed', 'dlq')),
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_attempt TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ DEFAULT now(),
+    error TEXT,
+    UNIQUE (memory_id, destination, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_queue_pending
+    ON core.sync_queue (next_retry_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_sync_queue_dlq
+    ON core.sync_queue (destination) WHERE status = 'dlq';
+"""
+
+
 def _get_pool():
     """Get or create singleton connection pool with config-based invalidation.
 
@@ -316,6 +352,9 @@ def ensure_schema() -> None:
             conn.execute(CORE_SCHEMA_SQL.format(dimensions=dims))
             conn.execute(VAULT_SCHEMA_SQL.format(dimensions=dims))
             conn.execute(CORE_META_SQL)
+
+            # Phase 7: sync columns + queue table (idempotent)
+            conn.execute(SYNC_SCHEMA_SQL)
 
             # Check if migration is needed
             old_table = conn.execute(
@@ -533,7 +572,7 @@ def check_model_consistency() -> None:
             "dimensions": emb["dimensions"],
             "vector_type": "halfvec",
         })
-        set_meta("schema_version", {"version": 3})
+        set_meta("schema_version", {"version": 4})
         logger.info("Recorded embedding config in core.meta: %s (%dd)",
                      emb["model"], emb["dimensions"])
         return

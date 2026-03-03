@@ -120,7 +120,10 @@ async def health_response(scope, receive, send):
     pg_info = {"host": display_url}
     try:
         from tools.schema import execute_query
-        count_result = execute_query("SELECT count(*) AS cnt FROM jarvis", fetch="one")
+        count_result = execute_query(
+            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            fetch="one",
+        )
         pg_info["doc_count"] = count_result["cnt"] if count_result else 0
     except Exception as e:
         pg_status = "disconnected"
@@ -133,30 +136,12 @@ async def health_response(scope, receive, send):
         "postgres": {**pg_info, "status": pg_status},
     }
 
-    # Replication status (only present when enabled)
-    from tools.config import get_replication_config
-    repl_cfg = get_replication_config()
-    if repl_cfg.get("mode") != "disabled":
-        repl_info = {
-            "mode": repl_cfg["mode"],
-            "node_id": repl_cfg.get("node_id", ""),
-        }
-        central = repl_cfg.get("central_url", "")
-        if central:
-            repl_info["central_url"] = central.split("@")[-1] if "@" in central else central
-        # Query subscription status if available
-        try:
-            sub_result = execute_query(
-                "SELECT subname, subenabled FROM pg_subscription LIMIT 5",
-                fetch="all",
-            )
-            repl_info["subscriptions"] = [
-                {"name": r["subname"], "enabled": r["subenabled"]}
-                for r in sub_result
-            ] if sub_result else []
-        except Exception:
-            repl_info["subscriptions"] = []
-        data["replication"] = repl_info
+    # Sync status (only present when enabled)
+    from tools.config import get_sync_config
+    sync_cfg = get_sync_config()
+    if sync_cfg.get("enabled"):
+        remotes = sync_cfg.get("remotes", {})
+        data["sync"] = {"enabled": True, "remotes": len(remotes)}
 
     # Auth status (mTLS is a detail of auth, not a separate concern)
     auth_cfg = get_auth_config()
@@ -176,6 +161,39 @@ async def health_response(scope, receive, send):
 
 async def not_found(scope, receive, send):
     await _json_response(send, {"error": "Not found"}, status=404)
+
+
+async def telemetry_response(scope, receive, send):
+    """GET /telemetry — sync queue stats and per-remote health."""
+    try:
+        from tools.config import get_sync_config
+        from tools.sync_queue import get_queue_stats
+        from tools.schema import _get_pool
+
+        sync_cfg = get_sync_config()
+        if not sync_cfg.get("enabled"):
+            await _json_response(send, {"sync": {"enabled": False}})
+            return
+
+        pool = _get_pool()
+        stats = get_queue_stats(pool)
+        remotes = sync_cfg.get("remotes", {})
+
+        data = {
+            "sync": {
+                "enabled": True,
+                "strategy": sync_cfg.get("strategy", "first-match"),
+                "worker_interval_seconds": sync_cfg.get("worker_interval_seconds", 30),
+                "remotes": {
+                    name: {"configured": True}
+                    for name in remotes
+                },
+                "queue": stats,
+            }
+        }
+        await _json_response(send, data)
+    except Exception as e:
+        await _json_response(send, {"error": str(e)}, status=500)
 
 
 async def hook_prompt_context_response(scope, receive, send):
@@ -316,7 +334,9 @@ async def app(scope, receive, send):
     # Set contextvar for downstream use, reset on completion
     token = current_user.set(username)
     try:
-        if path == "/hook/prompt-context" and method == "POST":
+        if path == "/telemetry" and method == "GET":
+            await telemetry_response(scope, receive, send)
+        elif path == "/hook/prompt-context" and method == "POST":
             await hook_prompt_context_response(scope, receive, send)
         elif path == "/hook/auto-extract/context" and method == "POST":
             await hook_auto_extract_context_response(scope, receive, send)
