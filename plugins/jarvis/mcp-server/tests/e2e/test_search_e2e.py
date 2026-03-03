@@ -22,7 +22,7 @@ def test_query_finds_related_content(e2e_config):
     from tools.content import content_write
     from tools.query import query_vault
 
-    # Seed some content in core.memories
+    # Seed some content in local.memories
     content_write(
         content="Python is a great language for data science and machine learning",
         content_type="observation",
@@ -42,7 +42,7 @@ def test_query_finds_related_content(e2e_config):
 
 
 def test_search_increments_retrieval_count(e2e_config):
-    """Batch UPDATE core.memories SET retrieval_count = retrieval_count + %s."""
+    """Batch UPDATE local.memories SET retrieval_count = retrieval_count + %s."""
     from tools.content import content_write, content_read
     from tools.query import query_vault
 
@@ -70,12 +70,12 @@ def test_search_increments_retrieval_count(e2e_config):
 
 
 def test_cross_schema_search(e2e_config):
-    """UNION ALL search across core.memories and vault.documents."""
+    """UNION ALL search across local.memories and obsidian.documents."""
     from tools.content import content_write
     from tools.memory import index_file
     from tools.query import query_vault
 
-    # Seed content in core.memories
+    # Seed content in local.memories
     content_write(
         content="Authentication uses OAuth 2.0 with PKCE flow",
         content_type="learning",
@@ -83,7 +83,7 @@ def test_cross_schema_search(e2e_config):
         skip_secret_scan=True,
     )
 
-    # Seed content in vault.documents via indexing
+    # Seed content in obsidian.documents via indexing
     vault_dir = e2e_config["vault_dir"]
     notes_dir = vault_dir / "notes"
     auth_file = notes_dir / "auth-guide.md"
@@ -97,11 +97,11 @@ def test_cross_schema_search(e2e_config):
 
     # Should have results from both schemas
     schemas = {r.get("schema") for r in result["results"]}
-    assert "core" in schemas or "vault" in schemas
+    assert "local" in schemas or "obsidian" in schemas
 
 
 def test_vault_document_search(e2e_config):
-    """Vault documents indexed into vault.documents are searchable."""
+    """Vault documents indexed into obsidian.documents are searchable."""
     from tools.memory import index_file
     from tools.query import query_vault
 

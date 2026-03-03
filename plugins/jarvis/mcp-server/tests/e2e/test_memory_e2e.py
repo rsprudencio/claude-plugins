@@ -1,6 +1,6 @@
 """Memory lifecycle e2e tests — real PostgreSQL.
 
-Verifies file write + INSERT to core.memories with category='memory',
+Verifies file write + INSERT to local.memories with category='memory',
 ON CONFLICT DO UPDATE (overwrite), and graceful fallback.
 """
 
@@ -18,7 +18,7 @@ pytestmark = [
 
 
 def test_write_and_read_memory(e2e_config):
-    """File write + INSERT to core.memories + SELECT roundtrip."""
+    """File write + INSERT to local.memories + SELECT roundtrip."""
     from tools.memory_crud import memory_write, memory_read
 
     result = memory_write(
@@ -97,7 +97,7 @@ def test_memory_has_category_column(e2e_config):
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT category, scope FROM core.memories WHERE id = %s",
+            "SELECT category, scope FROM local.memories WHERE id = %s",
             (doc_id,),
         )
         row = cur.fetchone()

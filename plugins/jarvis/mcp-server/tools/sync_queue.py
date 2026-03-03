@@ -1,6 +1,6 @@
 """Sync queue management for the multi-remote routing engine.
 
-Manages the core.sync_queue table: enqueue, claim (SKIP LOCKED),
+Manages the local.sync_queue table: enqueue, claim (SKIP LOCKED),
 status FSM transitions, DLQ management, and queue statistics.
 
 All functions that take a `cur` parameter operate within the caller's
@@ -26,7 +26,7 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
 
     Args:
         cur: Database cursor (caller owns the transaction).
-        memory_id: The core.memories ID to sync.
+        memory_id: The local.memories ID to sync.
         destinations: List of remote destination names.
         version: Version counter for tracking re-syncs (default 1).
 
@@ -39,7 +39,7 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
     inserted = 0
     for dest in destinations:
         cur.execute(
-            """INSERT INTO core.sync_queue (memory_id, destination, version)
+            """INSERT INTO local.sync_queue (memory_id, destination, version)
                VALUES (%s, %s, %s)
                ON CONFLICT (memory_id, destination, version) DO NOTHING""",
             (memory_id, dest, version),
@@ -64,10 +64,10 @@ def claim_pending_syncs(pool, batch_size: int = 50) -> list[dict]:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """UPDATE core.sync_queue
+                """UPDATE local.sync_queue
                    SET status = 'sending', last_attempt = now()
                    WHERE id IN (
-                       SELECT id FROM core.sync_queue
+                       SELECT id FROM local.sync_queue
                        WHERE status = 'pending'
                          AND next_retry_at <= now()
                        ORDER BY next_retry_at
@@ -108,7 +108,7 @@ def mark_synced(pool, queue_ids: list[int]) -> int:
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """UPDATE core.sync_queue
+                """UPDATE local.sync_queue
                    SET status = 'done'
                    WHERE id = ANY(%s) AND status = 'sending'""",
                 (queue_ids,),
@@ -139,7 +139,7 @@ def mark_failed(pool, queue_ids: list[int], error: str) -> int:
         with conn.cursor() as cur:
             # Update attempts, set backoff, or move to DLQ
             cur.execute(
-                """UPDATE core.sync_queue
+                """UPDATE local.sync_queue
                    SET attempts = attempts + 1,
                        error = %s,
                        status = CASE
@@ -175,7 +175,7 @@ def retry_dlq(pool, destination: str | None = None) -> int:
         with conn.cursor() as cur:
             if destination:
                 cur.execute(
-                    """UPDATE core.sync_queue
+                    """UPDATE local.sync_queue
                        SET status = 'pending', attempts = 0,
                            next_retry_at = now(), error = NULL
                        WHERE status = 'dlq' AND destination = %s""",
@@ -183,7 +183,7 @@ def retry_dlq(pool, destination: str | None = None) -> int:
                 )
             else:
                 cur.execute(
-                    """UPDATE core.sync_queue
+                    """UPDATE local.sync_queue
                        SET status = 'pending', attempts = 0,
                            next_retry_at = now(), error = NULL
                        WHERE status = 'dlq'"""
@@ -203,7 +203,7 @@ def get_queue_stats(pool) -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT destination, status, count(*) AS cnt
-                   FROM core.sync_queue
+                   FROM local.sync_queue
                    GROUP BY destination, status
                    ORDER BY destination, status"""
             )
@@ -229,13 +229,13 @@ def update_synced_to(pool, memory_id: str, destination: str) -> None:
 
     Args:
         pool: Connection pool.
-        memory_id: The core.memories ID.
+        memory_id: The local.memories ID.
         destination: Remote name to add to synced_to.
     """
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """UPDATE core.memories
+                """UPDATE local.memories
                    SET synced_to = array_append(synced_to, %s),
                        updated_at = now()
                    WHERE id = %s AND NOT (%s = ANY(synced_to))""",

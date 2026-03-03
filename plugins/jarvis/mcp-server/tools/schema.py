@@ -1,12 +1,12 @@
 """PostgreSQL + pgvector schema and connection management.
 
 Provides the singleton connection pool and schema initialization for
-the core.memories and vault.documents tables. Replaces the single-table
+the local.memories and obsidian.documents tables. Replaces the single-table
 public.jarvis design (v2.x) with dual-schema architecture (v3.0).
 
 Schemas:
-- core: memories (observations, patterns, strategic, etc.)
-- vault: indexed vault file chunks
+- local: memories (observations, patterns, strategic, etc.)
+- obsidian: indexed vault file chunks
 """
 
 from __future__ import annotations
@@ -24,12 +24,12 @@ _pool_cache_key: tuple | None = None
 
 # ── Schema SQL ────────────────────────────────────────────────────────
 
-CORE_SCHEMA_SQL = """\
+LOCAL_SCHEMA_SQL = """\
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS local;
 
-CREATE TABLE IF NOT EXISTS core.memories (
+CREATE TABLE IF NOT EXISTS local.memories (
     id TEXT PRIMARY KEY,
     document TEXT NOT NULL,
     embedding halfvec({dimensions}) NOT NULL,
@@ -62,28 +62,28 @@ CREATE TABLE IF NOT EXISTS core.memories (
 
 -- Cross-field integrity
 DO $$ BEGIN
-    ALTER TABLE core.memories ADD CONSTRAINT chk_scope_project
+    ALTER TABLE local.memories ADD CONSTRAINT chk_scope_project
         CHECK ((scope = 'project' AND project IS NOT NULL) OR (scope = 'global'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 DO $$ BEGIN
-    ALTER TABLE core.memories ADD CONSTRAINT chk_superseded_by
+    ALTER TABLE local.memories ADD CONSTRAINT chk_superseded_by
         CHECK ((status = 'superseded' AND superseded_by IS NOT NULL) OR (status != 'superseded'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_core_embedding ON core.memories
+CREATE INDEX IF NOT EXISTS idx_local_embedding ON local.memories
     USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
-CREATE INDEX IF NOT EXISTS idx_core_metadata ON core.memories USING gin (metadata jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_core_category ON core.memories (category);
-CREATE INDEX IF NOT EXISTS idx_core_active ON core.memories (status) WHERE status = 'active';
-CREATE INDEX IF NOT EXISTS idx_core_importance ON core.memories (importance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_local_metadata ON local.memories USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_local_category ON local.memories (category);
+CREATE INDEX IF NOT EXISTS idx_local_active ON local.memories (status) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_local_importance ON local.memories (importance_score DESC);
 
 -- Active view (query default — excludes superseded + deleted)
-CREATE OR REPLACE VIEW core.active_memories AS
-    SELECT * FROM core.memories WHERE status = 'active';
+CREATE OR REPLACE VIEW local.active_memories AS
+    SELECT * FROM local.memories WHERE status = 'active';
 
 -- updated_at trigger function (shared by both schemas)
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -97,21 +97,24 @@ $$ LANGUAGE plpgsql;
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_core_memories_updated_at'
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_local_memories_updated_at'
     ) THEN
-        CREATE TRIGGER trg_core_memories_updated_at
-            BEFORE UPDATE ON core.memories
+        CREATE TRIGGER trg_local_memories_updated_at
+            BEFORE UPDATE ON local.memories
             FOR EACH ROW EXECUTE FUNCTION update_updated_at();
     END IF;
 END;
 $$;
 """
 
+# Deprecated alias
+CORE_SCHEMA_SQL = LOCAL_SCHEMA_SQL
 
-VAULT_SCHEMA_SQL = """\
-CREATE SCHEMA IF NOT EXISTS vault;
 
-CREATE TABLE IF NOT EXISTS vault.documents (
+OBSIDIAN_SCHEMA_SQL = """\
+CREATE SCHEMA IF NOT EXISTS obsidian;
+
+CREATE TABLE IF NOT EXISTS obsidian.documents (
     id TEXT PRIMARY KEY,
     document TEXT NOT NULL,
     embedding halfvec({dimensions}) NOT NULL,
@@ -134,29 +137,32 @@ CREATE TABLE IF NOT EXISTS vault.documents (
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_vault_embedding ON vault.documents
+CREATE INDEX IF NOT EXISTS idx_obsidian_embedding ON obsidian.documents
     USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
-CREATE INDEX IF NOT EXISTS idx_vault_metadata ON vault.documents USING gin (metadata jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_vault_parent_file ON vault.documents (parent_file);
-CREATE INDEX IF NOT EXISTS idx_vault_directory ON vault.documents (directory);
-CREATE INDEX IF NOT EXISTS idx_vault_importance ON vault.documents (importance_score DESC);
+CREATE INDEX IF NOT EXISTS idx_obsidian_metadata ON obsidian.documents USING gin (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_obsidian_parent_file ON obsidian.documents (parent_file);
+CREATE INDEX IF NOT EXISTS idx_obsidian_directory ON obsidian.documents (directory);
+CREATE INDEX IF NOT EXISTS idx_obsidian_importance ON obsidian.documents (importance_score DESC);
 
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_vault_documents_updated_at'
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_obsidian_documents_updated_at'
     ) THEN
-        CREATE TRIGGER trg_vault_documents_updated_at
-            BEFORE UPDATE ON vault.documents
+        CREATE TRIGGER trg_obsidian_documents_updated_at
+            BEFORE UPDATE ON obsidian.documents
             FOR EACH ROW EXECUTE FUNCTION update_updated_at();
     END IF;
 END;
 $$;
 """
 
+# Deprecated alias
+VAULT_SCHEMA_SQL = OBSIDIAN_SCHEMA_SQL
 
-CORE_META_SQL = """\
-CREATE TABLE IF NOT EXISTS core.meta (
+
+LOCAL_META_SQL = """\
+CREATE TABLE IF NOT EXISTS local.meta (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -165,20 +171,23 @@ CREATE TABLE IF NOT EXISTS core.meta (
 DO $$
 BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_core_meta_updated_at'
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_local_meta_updated_at'
     ) THEN
-        CREATE TRIGGER trg_core_meta_updated_at
-            BEFORE UPDATE ON core.meta
+        CREATE TRIGGER trg_local_meta_updated_at
+            BEFORE UPDATE ON local.meta
             FOR EACH ROW EXECUTE FUNCTION update_updated_at();
     END IF;
 END;
 $$;
 """
 
+# Deprecated alias
+CORE_META_SQL = LOCAL_META_SQL
+
 
 MIGRATION_SQL = """\
--- Step 1: Vault rows → vault.documents
-INSERT INTO vault.documents (id, document, embedding, parent_file, directory,
+-- Step 1: Vault rows → obsidian.documents
+INSERT INTO obsidian.documents (id, document, embedding, parent_file, directory,
     vault_type, title, chunk_index, chunk_total, chunk_heading,
     importance_score, metadata, created_at, updated_at)
 SELECT id, document, embedding,
@@ -201,8 +210,8 @@ SELECT id, document, embedding,
 FROM jarvis WHERE id LIKE 'vault::%%'
 ON CONFLICT (id) DO NOTHING;
 
--- Step 2: Memory/content rows → core.memories
-INSERT INTO core.memories (id, document, embedding, category, scope, project,
+-- Step 2: Memory/content rows → local.memories
+INSERT INTO local.memories (id, document, embedding, category, scope, project,
     source, importance_score, retrieval_count, status, superseded_by,
     metadata, created_at, updated_at)
 SELECT id, document, embedding,
@@ -230,30 +239,30 @@ FROM jarvis WHERE id NOT LIKE 'vault::%%'
 ON CONFLICT (id) DO NOTHING;
 
 -- Step 3: Migrate meta table
-INSERT INTO core.meta (key, value, updated_at)
+INSERT INTO local.meta (key, value, updated_at)
 SELECT key, value, updated_at FROM jarvis_meta
 ON CONFLICT (key) DO NOTHING;
 
 -- Step 4: Bump schema version
-INSERT INTO core.meta (key, value) VALUES ('schema_version', '{{"version": 3}}')
+INSERT INTO local.meta (key, value) VALUES ('schema_version', '{{"version": 3}}')
 ON CONFLICT (key) DO UPDATE SET value = '{{"version": 3}}'::jsonb;
 """
 
 
 CONSOLIDATION_SCHEMA_SQL = """\
 -- Phase 8: LLM-driven consolidation support
-ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+ALTER TABLE local.memories ADD COLUMN IF NOT EXISTS
     consolidation_run_id TEXT;
 
 -- Self-supersession prevention
 DO $$ BEGIN
-    ALTER TABLE core.memories ADD CONSTRAINT chk_no_self_supersession
+    ALTER TABLE local.memories ADD CONSTRAINT chk_no_self_supersession
         CHECK (id != superseded_by);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- Cycle prevention trigger (A→B→A and longer chains)
-CREATE OR REPLACE FUNCTION core.prevent_supersession_cycle() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION local.prevent_supersession_cycle() RETURNS trigger AS $$
 BEGIN
     IF NEW.superseded_by IS NULL THEN
         RETURN NEW;
@@ -263,7 +272,7 @@ BEGIN
             SELECT NEW.superseded_by AS node_id
             UNION ALL
             SELECT m.superseded_by
-            FROM core.memories m
+            FROM local.memories m
             JOIN chain c ON m.id = c.node_id
             WHERE m.superseded_by IS NOT NULL
         )
@@ -281,36 +290,36 @@ BEGIN
         SELECT 1 FROM pg_trigger WHERE tgname = 'trg_supersession_cycle'
     ) THEN
         CREATE TRIGGER trg_supersession_cycle
-            BEFORE INSERT OR UPDATE OF superseded_by ON core.memories
+            BEFORE INSERT OR UPDATE OF superseded_by ON local.memories
             FOR EACH ROW WHEN (NEW.superseded_by IS NOT NULL)
-            EXECUTE FUNCTION core.prevent_supersession_cycle();
+            EXECUTE FUNCTION local.prevent_supersession_cycle();
     END IF;
 END;
 $$;
 
 -- Index for consolidation run queries
-CREATE INDEX IF NOT EXISTS idx_core_consolidation_run
-    ON core.memories (consolidation_run_id)
+CREATE INDEX IF NOT EXISTS idx_local_consolidation_run
+    ON local.memories (consolidation_run_id)
     WHERE consolidation_run_id IS NOT NULL;
 """
 
 
 SYNC_SCHEMA_SQL = """\
--- Phase 7: Multi-remote sync columns on core.memories
-ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+-- Phase 7: Multi-remote sync columns on local.memories
+ALTER TABLE local.memories ADD COLUMN IF NOT EXISTS
     synced_to TEXT[] NOT NULL DEFAULT '{}';
-ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+ALTER TABLE local.memories ADD COLUMN IF NOT EXISTS
     origin TEXT NOT NULL DEFAULT 'local';
 
 -- Routing composite index (only local, active memories need routing)
-CREATE INDEX IF NOT EXISTS idx_core_routing
-    ON core.memories (category, scope, project)
+CREATE INDEX IF NOT EXISTS idx_local_routing
+    ON local.memories (category, scope, project)
     WHERE status = 'active' AND origin = 'local';
 
 -- Sync outbox queue
-CREATE TABLE IF NOT EXISTS core.sync_queue (
+CREATE TABLE IF NOT EXISTS local.sync_queue (
     id SERIAL PRIMARY KEY,
-    memory_id TEXT NOT NULL REFERENCES core.memories(id) ON DELETE CASCADE,
+    memory_id TEXT NOT NULL REFERENCES local.memories(id) ON DELETE CASCADE,
     destination TEXT NOT NULL,
     version INT NOT NULL DEFAULT 1,
     status TEXT NOT NULL DEFAULT 'pending'
@@ -325,9 +334,9 @@ CREATE TABLE IF NOT EXISTS core.sync_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_queue_pending
-    ON core.sync_queue (next_retry_at) WHERE status = 'pending';
+    ON local.sync_queue (next_retry_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_sync_queue_dlq
-    ON core.sync_queue (destination) WHERE status = 'dlq';
+    ON local.sync_queue (destination) WHERE status = 'dlq';
 """
 
 
@@ -380,11 +389,32 @@ def reset_pool() -> None:
     _pool_cache_key = None
 
 
+RENAME_SCHEMA_SQL = """\
+-- Rename old schema names to new ones (idempotent)
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'core')
+       AND NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'local')
+    THEN
+        ALTER SCHEMA core RENAME TO local;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'vault')
+       AND NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'obsidian')
+    THEN
+        ALTER SCHEMA vault RENAME TO obsidian;
+    END IF;
+END $$;
+"""
+
+
 def ensure_schema() -> None:
     """Create both schemas, tables, and indexes. Run migration if needed.
 
-    Safe to call multiple times (all DDL uses IF NOT EXISTS / IF NOT EXISTS guards).
+    Safe to call multiple times (all DDL uses IF NOT EXISTS guards).
     Called at server startup to handle first-run setup and migrations.
+    Renames core→local and vault→obsidian on existing databases.
     """
     from .config import get_embedding_config
 
@@ -403,10 +433,13 @@ def ensure_schema() -> None:
             if row:
                 logger.info("pgvector version: %s", row[0])
 
+            # Rename old schemas if they exist (core→local, vault→obsidian)
+            conn.execute(RENAME_SCHEMA_SQL)
+
             # Create both schemas and tables (idempotent)
-            conn.execute(CORE_SCHEMA_SQL.format(dimensions=dims))
-            conn.execute(VAULT_SCHEMA_SQL.format(dimensions=dims))
-            conn.execute(CORE_META_SQL)
+            conn.execute(LOCAL_SCHEMA_SQL.format(dimensions=dims))
+            conn.execute(OBSIDIAN_SCHEMA_SQL.format(dimensions=dims))
+            conn.execute(LOCAL_META_SQL)
 
             # Phase 7: sync columns + queue table (idempotent)
             conn.execute(SYNC_SCHEMA_SQL)
@@ -414,7 +447,7 @@ def ensure_schema() -> None:
             # Phase 8: consolidation support (idempotent)
             conn.execute(CONSOLIDATION_SCHEMA_SQL)
 
-            # Check if migration is needed
+            # Check if migration is needed (from legacy public.jarvis)
             old_table = conn.execute(
                 "SELECT to_regclass('public.jarvis')"
             ).fetchone()
@@ -423,7 +456,7 @@ def ensure_schema() -> None:
             if has_old_table:
                 # Check if migration already done
                 schema_ver = conn.execute(
-                    "SELECT value FROM core.meta WHERE key = 'schema_version'"
+                    "SELECT value FROM local.meta WHERE key = 'schema_version'"
                 ).fetchone()
                 already_migrated = (
                     schema_ver
@@ -432,7 +465,7 @@ def ensure_schema() -> None:
                 )
 
                 if not already_migrated:
-                    logger.info("Migrating data from public.jarvis to core/vault schemas...")
+                    logger.info("Migrating data from public.jarvis to local/obsidian schemas...")
                     conn.execute(MIGRATION_SQL.format(dimensions=dims))
                     logger.info("Migration complete")
 
@@ -548,16 +581,16 @@ def jsonb_to_metadata(jsonb_val) -> dict:
     return dict(jsonb_val)
 
 
-# ── core.meta CRUD ───────────────────────────────────────────────────
+# ── local.meta CRUD ──────────────────────────────────────────────────
 
 
 def get_meta(key: str) -> dict | None:
-    """Get a value from core.meta by key.
+    """Get a value from local.meta by key.
 
     Returns the JSONB value as a dict, or None if the key doesn't exist.
     """
     result = execute_query(
-        "SELECT value FROM core.meta WHERE key = %s",
+        "SELECT value FROM local.meta WHERE key = %s",
         (key,),
         fetch="one",
     )
@@ -570,12 +603,12 @@ def get_meta(key: str) -> dict | None:
 
 
 def set_meta(key: str, value: dict) -> None:
-    """Upsert a value into core.meta.
+    """Upsert a value into local.meta.
 
     Uses ON CONFLICT DO UPDATE for atomic upsert.
     """
     execute_write(
-        """INSERT INTO core.meta (key, value)
+        """INSERT INTO local.meta (key, value)
            VALUES (%s, %s)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
         (key, json.dumps(value, default=str)),
@@ -583,8 +616,8 @@ def set_meta(key: str, value: dict) -> None:
 
 
 def get_all_meta() -> dict[str, dict]:
-    """Get all rows from core.meta as a {key: value} dict."""
-    rows = execute_query("SELECT key, value FROM core.meta", fetch="all")
+    """Get all rows from local.meta as a {key: value} dict."""
+    rows = execute_query("SELECT key, value FROM local.meta", fetch="all")
     result = {}
     for row in rows:
         val = row["value"]
@@ -598,7 +631,7 @@ def get_all_meta() -> dict[str, dict]:
 
 
 class ModelMismatchError(Exception):
-    """Raised when the embedding config doesn't match what's stored in core.meta.
+    """Raised when the embedding config doesn't match what's stored in local.meta.
 
     Mixed embedding spaces produce garbage search results silently.
     This error forces the operator to either align the config or
@@ -608,7 +641,7 @@ class ModelMismatchError(Exception):
 
 
 def check_model_consistency() -> None:
-    """Verify embedding config matches what's stored in core.meta.
+    """Verify embedding config matches what's stored in local.meta.
 
     First run: records the current config + schema version.
     Subsequent runs: compares model name and dimensions.
@@ -630,8 +663,8 @@ def check_model_consistency() -> None:
             "dimensions": emb["dimensions"],
             "vector_type": "halfvec",
         })
-        set_meta("schema_version", {"version": 5})
-        logger.info("Recorded embedding config in core.meta: %s (%dd)",
+        set_meta("schema_version", {"version": 6})
+        logger.info("Recorded embedding config in local.meta: %s (%dd)",
                      emb["model"], emb["dimensions"])
         return
 

@@ -222,7 +222,7 @@ def test_hard_delete(e2e_config):
     db_url = e2e_config["db_url"]
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
-        cur.execute("SELECT id FROM core.memories WHERE id = %s", (doc_id,))
+        cur.execute("SELECT id FROM local.memories WHERE id = %s", (doc_id,))
         assert cur.fetchone() is None
     conn.close()
 
@@ -243,7 +243,7 @@ def test_category_column_stored(e2e_config):
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT category, metadata FROM core.memories WHERE id = %s",
+            "SELECT category, metadata FROM local.memories WHERE id = %s",
             (doc_id,),
         )
         row = cur.fetchone()

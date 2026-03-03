@@ -2,7 +2,7 @@
 
 Three layered fixtures:
   e2e_database_url  (session) — CREATE/DROP disposable jarvis_e2e_test database
-  e2e_schema        (session) — run dual-schema DDL (core + vault)
+  e2e_schema        (session) — run dual-schema DDL (local + obsidian)
   e2e_config        (function, autouse) — env vars, mock embedding, pool reset,
                                           TRUNCATE on teardown
 """
@@ -62,18 +62,18 @@ def e2e_database_url():
 
 @pytest.fixture(scope="session")
 def e2e_schema(e2e_database_url):
-    """Initialize dual-schema DDL (core + vault) in the test database."""
+    """Initialize dual-schema DDL (local + obsidian) in the test database."""
     from tools.schema import (
-        CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL,
+        LOCAL_SCHEMA_SQL, OBSIDIAN_SCHEMA_SQL, LOCAL_META_SQL,
         SYNC_SCHEMA_SQL, CONSOLIDATION_SCHEMA_SQL,
     )
 
     conn = psycopg.connect(e2e_database_url, autocommit=True)
     try:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        conn.execute(CORE_SCHEMA_SQL.format(dimensions=384))
-        conn.execute(VAULT_SCHEMA_SQL.format(dimensions=384))
-        conn.execute(CORE_META_SQL)
+        conn.execute(LOCAL_SCHEMA_SQL.format(dimensions=384))
+        conn.execute(OBSIDIAN_SCHEMA_SQL.format(dimensions=384))
+        conn.execute(LOCAL_META_SQL)
         conn.execute(SYNC_SCHEMA_SQL)
         conn.execute(CONSOLIDATION_SCHEMA_SQL)
     finally:
@@ -191,7 +191,7 @@ def e2e_config(e2e_schema, tmp_path, monkeypatch):
     # ── Teardown: TRUNCATE tables, reset pool ─────────────────────
     try:
         conn = psycopg.connect(db_url, autocommit=True)
-        conn.execute("TRUNCATE core.memories, vault.documents, core.meta, core.sync_queue")
+        conn.execute("TRUNCATE local.memories, obsidian.documents, local.meta, local.sync_queue")
         conn.close()
     except Exception:
         pass

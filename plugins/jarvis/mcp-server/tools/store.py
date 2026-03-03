@@ -14,7 +14,7 @@ All .md file writes are auto-indexed for semantic search.
 import logging
 from typing import Optional
 
-from .namespaces import CONTENT_TYPES, parse_id, schema_for_id, SCHEMA_CORE
+from .namespaces import CONTENT_TYPES, parse_id, schema_for_id, SCHEMA_LOCAL
 from .format_support import is_indexable
 from .routing_utils import validate_exactly_one, parse_memory_scope
 
@@ -169,9 +169,9 @@ def _store_by_id(
             skip_secret_scan=skip_secret_scan,
         )
 
-    # Core content (obs::, pattern::, etc.)
+    # Local content (obs::, pattern::, etc.)
     schema = schema_for_id(doc_id)
-    if schema == SCHEMA_CORE:
+    if schema == SCHEMA_LOCAL:
         return _update_content(
             doc_id=doc_id,
             content=content,

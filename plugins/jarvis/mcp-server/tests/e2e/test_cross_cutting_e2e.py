@@ -1,7 +1,7 @@
 """Cross-cutting e2e tests — metadata fidelity, idempotency, triggers, schema.
 
 Verifies JSONB round-trip, ingest_event_id dedup, supersession via columns,
-updated_at trigger, halfvec storage, schema idempotence, and core.meta.
+updated_at trigger, halfvec storage, schema idempotence, and local.meta.
 """
 
 import os
@@ -116,7 +116,7 @@ def test_mark_superseded_column_update(e2e_config):
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT status, superseded_by FROM core.memories WHERE id = %s",
+            "SELECT status, superseded_by FROM local.memories WHERE id = %s",
             (old["id"],),
         )
         row = cur.fetchone()
@@ -127,7 +127,7 @@ def test_mark_superseded_column_update(e2e_config):
 
 
 def test_trigger_updates_timestamp(e2e_config):
-    """trg_core_memories_updated_at PG trigger auto-updates updated_at column."""
+    """trg_local_memories_updated_at PG trigger auto-updates updated_at column."""
     import psycopg
     from tools.content import content_write
 
@@ -144,7 +144,7 @@ def test_trigger_updates_timestamp(e2e_config):
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT updated_at FROM core.memories WHERE id = %s", (doc_id,)
+            "SELECT updated_at FROM local.memories WHERE id = %s", (doc_id,)
         )
         initial_ts = cur.fetchone()[0]
     conn.close()
@@ -155,12 +155,12 @@ def test_trigger_updates_timestamp(e2e_config):
     conn = psycopg.connect(db_url)
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE core.memories SET document = 'Modified content' WHERE id = %s",
+            "UPDATE local.memories SET document = 'Modified content' WHERE id = %s",
             (doc_id,),
         )
         conn.commit()
         cur.execute(
-            "SELECT updated_at FROM core.memories WHERE id = %s", (doc_id,)
+            "SELECT updated_at FROM local.memories WHERE id = %s", (doc_id,)
         )
         new_ts = cur.fetchone()[0]
     conn.close()
@@ -185,7 +185,7 @@ def test_halfvec_roundtrip(e2e_config):
     with conn.cursor() as cur:
         cur.execute(
             "SELECT embedding <=> embedding AS self_distance "
-            "FROM core.memories WHERE id = %s",
+            "FROM local.memories WHERE id = %s",
             (doc_id,),
         )
         row = cur.fetchone()
@@ -196,7 +196,7 @@ def test_halfvec_roundtrip(e2e_config):
 
 
 def test_vault_halfvec_roundtrip(e2e_config):
-    """halfvec in vault.documents — same cosine distance validation."""
+    """halfvec in obsidian.documents — same cosine distance validation."""
     import psycopg
     from tools.memory import index_file
 
@@ -210,7 +210,7 @@ def test_vault_halfvec_roundtrip(e2e_config):
     with conn.cursor() as cur:
         cur.execute(
             "SELECT embedding <=> embedding AS self_distance "
-            "FROM vault.documents LIMIT 1"
+            "FROM obsidian.documents LIMIT 1"
         )
         row = cur.fetchone()
         if row:
@@ -236,7 +236,7 @@ def test_ensure_schema_idempotent(e2e_config):
 
 
 def test_meta_upsert_and_read(e2e_config):
-    """core.meta JSONB upsert + read roundtrip."""
+    """local.meta JSONB upsert + read roundtrip."""
     from tools.schema import set_meta, get_meta
 
     set_meta("test_config", {"version": 1, "enabled": True})
@@ -255,7 +255,7 @@ def test_meta_upsert_and_read(e2e_config):
 
 
 def test_meta_read_nonexistent(e2e_config):
-    """SELECT from core.meta returns None for missing key."""
+    """SELECT from local.meta returns None for missing key."""
     from tools.schema import get_meta
 
     result = get_meta("nonexistent_key_xyz")
@@ -263,7 +263,7 @@ def test_meta_read_nonexistent(e2e_config):
 
 
 def test_meta_list_all(e2e_config):
-    """SELECT all from core.meta returns {key: value} dict."""
+    """SELECT all from local.meta returns {key: value} dict."""
     from tools.schema import set_meta, get_all_meta
 
     set_meta("list_test_a", {"data": "alpha"})
@@ -277,7 +277,7 @@ def test_meta_list_all(e2e_config):
 
 
 def test_active_memories_view_excludes_deleted(e2e_config):
-    """core.active_memories view filters out deleted and superseded records."""
+    """local.active_memories view filters out deleted and superseded records."""
     import psycopg
     from tools.content import content_write, content_delete
 
@@ -300,7 +300,7 @@ def test_active_memories_view_excludes_deleted(e2e_config):
     with conn.cursor() as cur:
         # Active view should only show the active record
         cur.execute(
-            "SELECT id FROM core.active_memories WHERE id IN (%s, %s)",
+            "SELECT id FROM local.active_memories WHERE id IN (%s, %s)",
             (active["id"], deleted["id"]),
         )
         found_ids = [row[0] for row in cur.fetchall()]

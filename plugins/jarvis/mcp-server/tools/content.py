@@ -1,6 +1,6 @@
 """Content CRUD operations backed by PostgreSQL + pgvector.
 
-Stores memory content in the core.memories table with proper columns
+Stores memory content in the local.memories table with proper columns
 for classification (category, scope, source, importance_score).
 
 Content types: observation, pattern, summary, relationship, hint,
@@ -81,7 +81,7 @@ def content_write(
     extra_metadata: Optional[dict] = None,
     skip_secret_scan: bool = False,
 ) -> dict:
-    """Write content to core.memories with proper column values.
+    """Write content to local.memories with proper column values.
 
     Args:
         content: Document content (markdown)
@@ -219,7 +219,7 @@ def content_write(
         # Idempotency for retry/replay pipelines
         if ingest_event_id:
             existing = execute_query(
-                "SELECT id FROM core.memories WHERE metadata->>'ingest_event_id' = %s LIMIT 1",
+                "SELECT id FROM local.memories WHERE metadata->>'ingest_event_id' = %s LIMIT 1",
                 (ingest_event_id,),
                 fetch="one",
             )
@@ -239,12 +239,12 @@ def content_write(
         now = datetime.now(timezone.utc)
         now_ts = now
 
-        # Insert into core.memories with proper columns
+        # Insert into local.memories with proper columns
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, category, scope, project,
                         source, importance_score, retrieval_count, status,
                         metadata, created_at, updated_at)
@@ -332,7 +332,7 @@ def content_write(
 
 
 def content_read(doc_id: str) -> dict:
-    """Read content from core.memories and increment retrieval count.
+    """Read content from local.memories and increment retrieval count.
 
     Args:
         doc_id: Document ID to read
@@ -348,7 +348,7 @@ def content_read(doc_id: str) -> dict:
             with conn.cursor() as cur:
                 # Atomic read + increment retrieval count
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET retrieval_count = retrieval_count + 1,
                            updated_at = now()
                        WHERE id = %s AND status = 'active'
@@ -414,7 +414,7 @@ def content_list(
     session_id: Optional[str] = None,
     include_content: bool = True,
 ) -> dict:
-    """List content from core.memories with column-based filtering.
+    """List content from local.memories with column-based filtering.
 
     Args:
         content_type: Filter by category (observation, pattern, etc.)
@@ -467,7 +467,7 @@ def content_list(
         order_clause = _SORT_SQL.get(sort_by, "")
 
         # Get total count
-        count_sql = f"SELECT count(*) AS cnt FROM core.memories WHERE {where_clause}"
+        count_sql = f"SELECT count(*) AS cnt FROM local.memories WHERE {where_clause}"
         count_result = execute_query(count_sql, tuple(params), fetch="one")
         total = count_result["cnt"] if count_result else 0
 
@@ -475,7 +475,7 @@ def content_list(
         select_cols = "id, category, scope, project, source, importance_score, metadata"
         if include_content:
             select_cols += ", document"
-        fetch_sql = f"SELECT {select_cols} FROM core.memories WHERE {where_clause} {order_clause} LIMIT %s"
+        fetch_sql = f"SELECT {select_cols} FROM local.memories WHERE {where_clause} {order_clause} LIMIT %s"
         rows = execute_query(fetch_sql, tuple(params) + (limit,))
 
         docs = []
@@ -504,7 +504,7 @@ def content_list(
 
 
 def content_delete(doc_id: str, hard: bool = False) -> dict:
-    """Delete content from core.memories.
+    """Delete content from local.memories.
 
     Soft delete by default (sets status='deleted', deleted_at=now()).
     Hard delete removes the row entirely.
@@ -523,12 +523,12 @@ def content_delete(doc_id: str, hard: bool = False) -> dict:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 if hard:
-                    cur.execute("DELETE FROM core.memories WHERE id = %s", (doc_id,))
+                    cur.execute("DELETE FROM local.memories WHERE id = %s", (doc_id,))
                     deleted = cur.rowcount > 0
                 else:
                     # Soft delete: also propagate to synced remotes
                     cur.execute(
-                        """UPDATE core.memories
+                        """UPDATE local.memories
                            SET status = 'deleted', deleted_at = now(), updated_at = now()
                            WHERE id = %s
                            RETURNING synced_to""",
@@ -618,7 +618,7 @@ def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, category, scope, project,
                         source, importance_score, metadata, created_at, updated_at)
                        VALUES (%s, %s, %s::halfvec, %s, %s, %s, %s, %s,

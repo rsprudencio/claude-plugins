@@ -89,10 +89,10 @@ def retrieve(
 
 def _read_by_id(doc_id: str, include_metadata: bool):
     """Route ID-based reads by schema prefix and normalize the response format."""
-    from .namespaces import schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
+    from .namespaces import schema_for_id, SCHEMA_LOCAL
 
     schema = schema_for_id(doc_id)
-    if schema == SCHEMA_CORE:
+    if schema == SCHEMA_LOCAL:
         # Core memory: use content_read (increments retrieval_count)
         from .content import content_read
 

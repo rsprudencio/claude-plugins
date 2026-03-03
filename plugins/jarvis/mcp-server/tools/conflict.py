@@ -12,7 +12,7 @@ that the new one contradicts.  Detection uses a hybrid approach:
 
 Superseded entries get ``status = 'superseded'`` and ``superseded_by``
 column values; they are then filtered out of query paths (per-prompt
-injection, pattern detection) automatically via core.active_memories view.
+injection, pattern detection) automatically via local.active_memories view.
 """
 
 import json
@@ -68,7 +68,7 @@ def find_conflict_candidates(
     content: str,
     config: dict,
 ) -> list[dict]:
-    """Query core.active_memories for entries that may conflict with *content*.
+    """Query local.active_memories for entries that may conflict with *content*.
 
     Uses pgvector similarity search to find entries on the same topic,
     then applies word Jaccard divergence to detect contradictions
@@ -91,7 +91,7 @@ def find_conflict_candidates(
                     """SELECT id, document, category, scope, source,
                               importance_score, metadata,
                               embedding <=> %s::halfvec AS distance
-                       FROM core.active_memories
+                       FROM local.active_memories
                        ORDER BY distance ASC
                        LIMIT %s""",
                     (query_embedding, config["max_candidates"]),
@@ -251,7 +251,7 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET status = 'superseded',
                            superseded_by = %s,
                            updated_at = now()

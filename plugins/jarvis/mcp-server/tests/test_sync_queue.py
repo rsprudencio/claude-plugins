@@ -40,7 +40,7 @@ class TestEnqueueSync:
         assert result == 1
         cur.execute.assert_called_once()
         args = cur.execute.call_args[0]
-        assert "INSERT INTO core.sync_queue" in args[0]
+        assert "INSERT INTO local.sync_queue" in args[0]
         assert args[1] == ("obs::123", "remote-a", 1)
 
     def test_enqueue_multiple_destinations(self):

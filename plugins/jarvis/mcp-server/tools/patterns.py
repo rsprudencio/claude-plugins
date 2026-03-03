@@ -2,7 +2,7 @@
 
 Analyses recent observations for token-set similarity, clusters them into
 in-memory candidates, and promotes candidates that exceed a frequency threshold
-to durable ``pattern::`` entries in core.memories.
+to durable ``pattern::`` entries in local.memories.
 
 The detection loop runs as a background asyncio task alongside the MCP server.
 All database operations are synchronous, so each scan is offloaded to a thread
@@ -418,7 +418,7 @@ def cleanup_candidates(max_candidates: int, expiry_days: int) -> int:
 def _find_existing_pattern_match(
     signature: frozenset, merge_threshold: float
 ) -> Optional[str]:
-    """Check if a similar pattern already exists in core.memories.
+    """Check if a similar pattern already exists in local.memories.
 
     Returns the existing pattern's doc ID if Jaccard >= merge_threshold, else None.
     """
@@ -438,7 +438,7 @@ def _find_existing_pattern_match(
 
 
 def promote_candidate(candidate: PatternCandidate, merge_threshold: float) -> dict:
-    """Promote a candidate to a durable pattern:: entry in core.memories.
+    """Promote a candidate to a durable pattern:: entry in local.memories.
 
     Checks for existing similar patterns first (dedup). If a match is found,
     the existing pattern is not duplicated — we return a note about the merge.

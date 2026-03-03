@@ -1,7 +1,7 @@
 """Schema migration e2e tests — real PostgreSQL.
 
 Verifies migration from the legacy public.jarvis single table to the
-dual-schema architecture (core.memories + vault.documents).
+dual-schema architecture (local.memories + obsidian.documents).
 Tests data fidelity, column promotion from JSONB, and edge cases.
 """
 
@@ -199,7 +199,7 @@ def migration_db(e2e_config):
 
 
 def test_migration_moves_vault_to_vault_schema(migration_db):
-    """Vault rows migrate to vault.documents with proper columns."""
+    """Vault rows migrate to obsidian.documents with proper columns."""
     from tools.schema import MIGRATION_SQL
 
     db_url = migration_db["db_url"]
@@ -211,7 +211,7 @@ def test_migration_moves_vault_to_vault_schema(migration_db):
         cur.execute(
             "SELECT id, parent_file, directory, vault_type, title, "
             "chunk_index, chunk_total, importance_score "
-            "FROM vault.documents WHERE id = %s",
+            "FROM obsidian.documents WHERE id = %s",
             (migration_db["vault_id"],),
         )
         row = cur.fetchone()
@@ -228,7 +228,7 @@ def test_migration_moves_vault_to_vault_schema(migration_db):
 
 
 def test_migration_moves_observations_to_core(migration_db):
-    """Observation rows migrate to core.memories with proper columns."""
+    """Observation rows migrate to local.memories with proper columns."""
     from tools.schema import MIGRATION_SQL
 
     db_url = migration_db["db_url"]
@@ -239,7 +239,7 @@ def test_migration_moves_observations_to_core(migration_db):
         cur.execute(
             "SELECT category, scope, source, importance_score, "
             "retrieval_count, status "
-            "FROM core.memories WHERE id = %s",
+            "FROM local.memories WHERE id = %s",
             (migration_db["obs_id"],),
         )
         row = cur.fetchone()
@@ -264,7 +264,7 @@ def test_migration_memory_prefix_gets_category_memory(migration_db):
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT category, scope FROM core.memories WHERE id = %s",
+            "SELECT category, scope FROM local.memories WHERE id = %s",
             (migration_db["mem_id"],),
         )
         row = cur.fetchone()
@@ -285,7 +285,7 @@ def test_migration_preserves_superseded_status(migration_db):
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT status, superseded_by FROM core.memories WHERE id = %s",
+            "SELECT status, superseded_by FROM local.memories WHERE id = %s",
             (migration_db["sup_id"],),
         )
         row = cur.fetchone()
@@ -306,7 +306,7 @@ def test_migration_strips_promoted_fields_from_metadata(migration_db):
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT metadata FROM core.memories WHERE id = %s",
+            "SELECT metadata FROM local.memories WHERE id = %s",
             (migration_db["obs_id"],),
         )
         row = cur.fetchone()
@@ -331,7 +331,7 @@ def test_migration_strips_promoted_fields_from_metadata(migration_db):
 
 
 def test_migration_meta_table(migration_db):
-    """jarvis_meta data migrates to core.meta."""
+    """jarvis_meta data migrates to local.meta."""
     from tools.schema import MIGRATION_SQL
 
     db_url = migration_db["db_url"]
@@ -341,7 +341,7 @@ def test_migration_meta_table(migration_db):
     with conn.cursor() as cur:
         # Schema version should be bumped to 3
         cur.execute(
-            "SELECT value FROM core.meta WHERE key = 'schema_version'"
+            "SELECT value FROM local.meta WHERE key = 'schema_version'"
         )
         row = cur.fetchone()
         sv = row[0] if isinstance(row[0], dict) else json.loads(row[0])
@@ -349,7 +349,7 @@ def test_migration_meta_table(migration_db):
 
         # Original embedding_model should be preserved
         cur.execute(
-            "SELECT value FROM core.meta WHERE key = 'embedding_model'"
+            "SELECT value FROM local.meta WHERE key = 'embedding_model'"
         )
         row = cur.fetchone()
         assert row is not None
@@ -369,10 +369,10 @@ def test_migration_row_count_matches(migration_db):
         cur.execute("SELECT count(*) FROM jarvis")
         original = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM core.memories")
+        cur.execute("SELECT count(*) FROM local.memories")
         core_count = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM vault.documents")
+        cur.execute("SELECT count(*) FROM obsidian.documents")
         vault_count = cur.fetchone()[0]
 
         assert core_count + vault_count == original
@@ -392,10 +392,10 @@ def test_migration_is_idempotent(migration_db):
     conn.execute(MIGRATION_SQL.format(dimensions=384))
 
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM core.memories")
+        cur.execute("SELECT count(*) FROM local.memories")
         core_count = cur.fetchone()[0]
 
-        cur.execute("SELECT count(*) FROM vault.documents")
+        cur.execute("SELECT count(*) FROM obsidian.documents")
         vault_count = cur.fetchone()[0]
 
         # Should be same as one run (3 memories + 1 vault doc)

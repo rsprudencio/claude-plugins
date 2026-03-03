@@ -8,7 +8,7 @@ Routes deletes based on parameters:
 import os
 from typing import Optional
 
-from .namespaces import schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
+from .namespaces import schema_for_id, SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 from .routing_utils import validate_exactly_one, parse_memory_scope
 
 
@@ -73,7 +73,7 @@ def remove(
     if id:
         schema = schema_for_id(id)
 
-        if schema == SCHEMA_VAULT:
+        if schema == SCHEMA_OBSIDIAN:
             return _remove_vault_file(id, confirm=confirm)
 
         if id.startswith("memory::"):
@@ -89,8 +89,8 @@ def remove(
                 confirm=confirm,
             )
 
-        # Core content (obs::, pattern::, learning::, etc.)
-        if schema == SCHEMA_CORE:
+        # Local content (obs::, pattern::, learning::, etc.)
+        if schema == SCHEMA_LOCAL:
             # Ownership check for multi-user deployments
             from jarvis_common.auth import get_current_user
 

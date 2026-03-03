@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _insert_memory(e2e_config, doc_id="obs::test-1", content="test content"):
-    """Insert a test memory directly into core.memories."""
+    """Insert a test memory directly into local.memories."""
     from tools.content import content_write
 
     result = content_write(
@@ -38,7 +38,7 @@ def _insert_memory_raw(db_url, doc_id, embedding_dims=384):
     conn = psycopg.connect(db_url, autocommit=True)
     try:
         conn.execute(
-            """INSERT INTO core.memories
+            """INSERT INTO local.memories
                (id, document, embedding, category, scope, source,
                 importance_score, status, metadata)
                VALUES (%s, 'test', %s::halfvec, 'observation', 'global',
@@ -58,7 +58,7 @@ class TestSyncQueueDDL:
         conn = psycopg.connect(db_url)
         try:
             row = conn.execute(
-                "SELECT to_regclass('core.sync_queue')"
+                "SELECT to_regclass('local.sync_queue')"
             ).fetchone()
             assert row[0] is not None
         finally:
@@ -70,7 +70,7 @@ class TestSyncQueueDDL:
         try:
             rows = conn.execute(
                 """SELECT column_name FROM information_schema.columns
-                   WHERE table_schema = 'core' AND table_name = 'sync_queue'
+                   WHERE table_schema = 'local' AND table_name = 'sync_queue'
                    ORDER BY ordinal_position"""
             ).fetchall()
             columns = [r[0] for r in rows]
@@ -85,13 +85,13 @@ class TestSyncQueueDDL:
             conn.close()
 
     def test_memories_has_sync_columns(self, e2e_config):
-        """Verify synced_to and origin columns were added to core.memories."""
+        """Verify synced_to and origin columns were added to local.memories."""
         db_url = e2e_config["db_url"]
         conn = psycopg.connect(db_url)
         try:
             rows = conn.execute(
                 """SELECT column_name FROM information_schema.columns
-                   WHERE table_schema = 'core' AND table_name = 'memories'
+                   WHERE table_schema = 'local' AND table_name = 'memories'
                      AND column_name IN ('synced_to', 'origin')
                    ORDER BY column_name"""
             ).fetchall()
@@ -174,7 +174,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM core.sync_queue WHERE id = %s",
+                    "SELECT status FROM local.sync_queue WHERE id = %s",
                     (ids[0],),
                 )
                 row = cur.fetchone()
@@ -196,7 +196,7 @@ class TestSyncQueueOperations:
                 enqueue_sync(cur, "obs::fail-1", ["remote-a"])
                 # Override max_attempts
                 cur.execute(
-                    "UPDATE core.sync_queue SET max_attempts = 2 "
+                    "UPDATE local.sync_queue SET max_attempts = 2 "
                     "WHERE memory_id = 'obs::fail-1'"
                 )
             conn.commit()
@@ -208,7 +208,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status, attempts FROM core.sync_queue WHERE id = %s",
+                    "SELECT status, attempts FROM local.sync_queue WHERE id = %s",
                     (entries[0]["id"],),
                 )
                 row = cur.fetchone()
@@ -220,7 +220,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE core.sync_queue SET next_retry_at = now() "
+                    "UPDATE local.sync_queue SET next_retry_at = now() "
                     "WHERE id = %s",
                     (entries[0]["id"],),
                 )
@@ -233,7 +233,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status FROM core.sync_queue WHERE id = %s",
+                    "SELECT status FROM local.sync_queue WHERE id = %s",
                     (entries2[0]["id"],),
                 )
                 row = cur.fetchone()
@@ -253,7 +253,7 @@ class TestSyncQueueOperations:
                 enqueue_sync(cur, "obs::dlq-1", ["remote-a"])
                 # Force into DLQ
                 cur.execute(
-                    "UPDATE core.sync_queue SET status = 'dlq', attempts = 5 "
+                    "UPDATE local.sync_queue SET status = 'dlq', attempts = 5 "
                     "WHERE memory_id = 'obs::dlq-1'"
                 )
             conn.commit()
@@ -264,7 +264,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT status, attempts FROM core.sync_queue "
+                    "SELECT status, attempts FROM local.sync_queue "
                     "WHERE memory_id = 'obs::dlq-1'"
                 )
                 row = cur.fetchone()
@@ -288,11 +288,11 @@ class TestSyncQueueOperations:
         # Delete the memory
         conn = psycopg.connect(db_url, autocommit=True)
         try:
-            conn.execute("DELETE FROM core.memories WHERE id = 'obs::cascade-1'")
+            conn.execute("DELETE FROM local.memories WHERE id = 'obs::cascade-1'")
 
             # Queue entries should be gone
             row = conn.execute(
-                "SELECT count(*) FROM core.sync_queue WHERE memory_id = 'obs::cascade-1'"
+                "SELECT count(*) FROM local.sync_queue WHERE memory_id = 'obs::cascade-1'"
             ).fetchone()
             assert row[0] == 0
         finally:
@@ -315,7 +315,7 @@ class TestSyncQueueOperations:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT synced_to FROM core.memories WHERE id = 'obs::synced-1'"
+                    "SELECT synced_to FROM local.memories WHERE id = 'obs::synced-1'"
                 )
                 row = cur.fetchone()
                 assert sorted(row[0]) == ["remote-a", "remote-b"]
@@ -328,7 +328,7 @@ class TestSyncQueueOperations:
         conn = psycopg.connect(db_url)
         try:
             row = conn.execute(
-                "SELECT origin FROM core.memories WHERE id = 'obs::origin-1'"
+                "SELECT origin FROM local.memories WHERE id = 'obs::origin-1'"
             ).fetchone()
             assert row[0] == "local"
         finally:
@@ -388,7 +388,7 @@ class TestTransactionalOutbox:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT destination FROM core.sync_queue WHERE memory_id = %s",
+                    "SELECT destination FROM local.sync_queue WHERE memory_id = %s",
                     (result["id"],),
                 )
                 rows = cur.fetchall()
@@ -415,7 +415,7 @@ class TestTransactionalOutbox:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT count(*) FROM core.sync_queue WHERE memory_id = %s",
+                    "SELECT count(*) FROM local.sync_queue WHERE memory_id = %s",
                     (result["id"],),
                 )
                 row = cur.fetchone()
@@ -444,7 +444,7 @@ class TestTransactionalOutbox:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT destination FROM core.sync_queue
+                    """SELECT destination FROM local.sync_queue
                        WHERE memory_id = 'obs::delete-prop-1'
                        ORDER BY destination"""
                 )
@@ -461,7 +461,7 @@ class TestTransactionalOutbox:
         try:
             row = conn.execute(
                 """SELECT indexname FROM pg_indexes
-                   WHERE schemaname = 'core' AND tablename = 'sync_queue'
+                   WHERE schemaname = 'local' AND tablename = 'sync_queue'
                      AND indexname = 'idx_sync_queue_pending'"""
             ).fetchone()
             assert row is not None, "idx_sync_queue_pending index not found"
@@ -469,15 +469,15 @@ class TestTransactionalOutbox:
             conn.close()
 
     def test_routing_index_exists(self, e2e_config):
-        """The idx_core_routing composite index exists on core.memories."""
+        """The idx_local_routing composite index exists on local.memories."""
         db_url = e2e_config["db_url"]
         conn = psycopg.connect(db_url)
         try:
             row = conn.execute(
                 """SELECT indexname FROM pg_indexes
-                   WHERE schemaname = 'core' AND tablename = 'memories'
-                     AND indexname = 'idx_core_routing'"""
+                   WHERE schemaname = 'local' AND tablename = 'memories'
+                     AND indexname = 'idx_local_routing'"""
             ).fetchone()
-            assert row is not None, "idx_core_routing index not found"
+            assert row is not None, "idx_local_routing index not found"
         finally:
             conn.close()

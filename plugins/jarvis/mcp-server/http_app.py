@@ -121,7 +121,7 @@ async def health_response(scope, receive, send):
     try:
         from tools.schema import execute_query
         count_result = execute_query(
-            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
             fetch="one",
         )
         pg_info["doc_count"] = count_result["cnt"] if count_result else 0

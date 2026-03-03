@@ -39,7 +39,7 @@ class ContentType(str, Enum):
     VAULT = "vault"
     # Memory (strategic, file-backed)
     MEMORY = "memory"
-    # Content categories (stored in core.memories)
+    # Content categories (stored in local.memories)
     OBSERVATION = "observation"
     PATTERN = "pattern"
     LEARNING = "learning"
@@ -54,7 +54,7 @@ class ContentType(str, Enum):
 
 ALL_TYPES = [t.value for t in ContentType]
 
-# Content types stored in core.memories (everything except VAULT)
+# Content types stored in local.memories (everything except VAULT)
 CONTENT_TYPES = [
     t.value for t in ContentType if t != ContentType.VAULT
 ]
@@ -62,7 +62,7 @@ CONTENT_TYPES = [
 # Backward compatibility alias — will be removed in v3.1
 TIER2_TYPES = CONTENT_TYPES
 
-# Valid categories for the core.memories.category column
+# Valid categories for the local.memories.category column
 VALID_CATEGORIES = (
     "observation",
     "pattern",
@@ -79,13 +79,17 @@ VALID_CATEGORIES = (
 
 # --- Schema Constants ---
 
-SCHEMA_CORE = "core"
-SCHEMA_VAULT = "vault"
+SCHEMA_LOCAL = "local"
+SCHEMA_OBSIDIAN = "obsidian"
 
-# Prefixes that route to vault.documents
+# Deprecated aliases — use SCHEMA_LOCAL / SCHEMA_OBSIDIAN
+SCHEMA_CORE = SCHEMA_LOCAL
+SCHEMA_VAULT = SCHEMA_OBSIDIAN
+
+# Prefixes that route to obsidian.documents
 _VAULT_PREFIXES = frozenset({"vault::"})
 
-# Prefixes that route to core.memories
+# Prefixes that route to local.memories
 _CORE_PREFIXES = frozenset(
     {
         "memory::",
@@ -110,12 +114,12 @@ def schema_for_id(doc_id: str) -> str:
     """Determine target schema from document ID prefix.
 
     Returns:
-        SCHEMA_VAULT for vault:: IDs
-        SCHEMA_CORE for everything else (memory, obs, pattern, etc.)
+        SCHEMA_OBSIDIAN for vault:: IDs
+        SCHEMA_LOCAL for everything else (memory, obs, pattern, etc.)
     """
     if doc_id.startswith("vault::"):
-        return SCHEMA_VAULT
-    return SCHEMA_CORE
+        return SCHEMA_OBSIDIAN
+    return SCHEMA_LOCAL
 
 
 # --- ID Generators ---
@@ -217,7 +221,7 @@ class ParsedId:
     namespace: str  # "vault", "memory", "obs", "pattern", etc.
     full_prefix: str  # "vault::", "memory::global::", "obs::", etc.
     content_id: str  # The part after the prefix
-    schema: str = SCHEMA_CORE  # "core" or "vault"
+    schema: str = SCHEMA_LOCAL  # "local" or "obsidian"
     chunk: Optional[int] = None  # For vault chunks only
     project: Optional[str] = None  # For project-scoped memories
 
@@ -278,7 +282,7 @@ def parse_id(doc_id: str) -> ParsedId:
         return ParsedId("worklog", "worklog::", doc_id[9:], schema)
 
     # Bare path without namespace prefix — default to vault
-    return ParsedId("vault", "vault::", doc_id, SCHEMA_VAULT)
+    return ParsedId("vault", "vault::", doc_id, SCHEMA_OBSIDIAN)
 
 
 # --- Helpers ---

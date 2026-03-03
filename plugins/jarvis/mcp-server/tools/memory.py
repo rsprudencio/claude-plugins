@@ -4,7 +4,7 @@ Provides bulk and incremental indexing of vault .md files into PostgreSQL
 with pgvector. Embeddings are generated explicitly via EmbeddingService
 (granite-embedding-small-english-r2, 384d, ONNX backend).
 
-All documents are stored in the vault.documents table with proper columns
+All documents are stored in the obsidian.documents table with proper columns
 for vault-specific fields (parent_file, directory, vault_type, etc.).
 Remaining flexible metadata goes into a JSONB column.
 """
@@ -41,7 +41,7 @@ _BATCH_SIZE = 10
 # Directories to skip during indexing (non-content directories)
 _SKIP_DIRS = {"templates", ".obsidian", ".git", ".trash", ".serena"}
 
-# Fields that are proper columns in vault.documents (not JSONB)
+# Fields that are proper columns in obsidian.documents (not JSONB)
 _VAULT_COLUMNS = frozenset({
     "parent_file", "directory", "vault_type", "title",
     "chunk_index", "chunk_total", "chunk_heading", "importance_score",
@@ -188,7 +188,7 @@ def _should_skip(relative_path: str, include_sensitive: bool) -> bool:
 def _delete_existing_chunks(relative_path: str) -> int:
     """Delete all existing chunks for a file before re-indexing.
 
-    Deletes from vault.documents using the parent_file column
+    Deletes from obsidian.documents using the parent_file column
     and legacy single-doc vault::path IDs.
 
     Returns number of deleted documents.
@@ -202,14 +202,14 @@ def _delete_existing_chunks(relative_path: str) -> int:
         with conn.cursor() as cur:
             # Delete chunks by parent_file column
             cur.execute(
-                "DELETE FROM vault.documents WHERE parent_file = %s",
+                "DELETE FROM obsidian.documents WHERE parent_file = %s",
                 (relative_path,),
             )
             deleted += cur.rowcount
 
             # Also delete legacy single-doc ID if it exists
             legacy_id = vault_id(relative_path)
-            cur.execute("DELETE FROM vault.documents WHERE id = %s", (legacy_id,))
+            cur.execute("DELETE FROM obsidian.documents WHERE id = %s", (legacy_id,))
             deleted += cur.rowcount
 
             conn.commit()
@@ -283,7 +283,7 @@ def _index_single_file(
 def _split_columns_metadata(meta: dict) -> tuple:
     """Split a flat metadata dict into (columns_dict, jsonb_dict).
 
-    Column fields go into vault.documents columns directly.
+    Column fields go into obsidian.documents columns directly.
     Everything else goes into the JSONB metadata column.
     """
     columns = {}
@@ -297,7 +297,7 @@ def _split_columns_metadata(meta: dict) -> tuple:
 
 
 def _upsert_batch(ids: list, docs: list, metas: list) -> None:
-    """Embed and upsert a batch of documents into vault.documents."""
+    """Embed and upsert a batch of documents into obsidian.documents."""
     if not ids:
         return
 
@@ -313,7 +313,7 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
             for doc_id, doc, meta, emb in zip(ids, docs, metas, embeddings):
                 columns, jsonb = _split_columns_metadata(meta)
                 cur.execute(
-                    """INSERT INTO vault.documents
+                    """INSERT INTO obsidian.documents
                        (id, document, embedding,
                         parent_file, directory, vault_type, title,
                         chunk_index, chunk_total, chunk_heading,
@@ -395,7 +395,7 @@ def index_vault(
     if not force:
         try:
             rows = execute_query(
-                "SELECT id, parent_file FROM vault.documents"
+                "SELECT id, parent_file FROM obsidian.documents"
             )
             for row in rows:
                 parent = row.get("parent_file")
@@ -511,9 +511,9 @@ def index_vault(
         logger.error("Final batch upsert failed: %s", e)
         errors.append({"file": "final_batch", "error": str(e)})
 
-    # Get total count from vault.documents
+    # Get total count from obsidian.documents
     count_result = execute_query(
-        "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+        "SELECT count(*) AS cnt FROM obsidian.documents", fetch="one"
     )
     total = count_result["cnt"] if count_result else 0
 

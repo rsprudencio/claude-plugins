@@ -1,6 +1,6 @@
 """Tests for content CRUD operations backed by PostgreSQL + pgvector.
 
-Tests the core.memories table with proper columns (category, scope, source,
+Tests the local.memories table with proper columns (category, scope, source,
 importance_score, retrieval_count, status) instead of JSONB metadata.
 """
 

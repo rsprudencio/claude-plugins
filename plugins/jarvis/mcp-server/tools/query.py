@@ -1,7 +1,7 @@
 """Vault memory querying for semantic search.
 
-Provides query, read, and stats operations across core.memories and
-vault.documents schemas with pgvector embeddings. Uses per-schema CTEs
+Provides query, read, and stats operations across local.memories and
+obsidian.documents schemas with pgvector embeddings. Uses per-schema CTEs
 with UNION ALL for cross-schema search (DAR F5: preserves HNSW index usage).
 
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
@@ -15,7 +15,7 @@ from typing import Optional
 
 from .schema import execute_query, jsonb_to_metadata, metadata_to_jsonb
 from .paths import get_path, SENSITIVE_PATHS
-from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
+from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 from .expansion import expand_query as _expand_query
 from .config import (
     get_decay_config, get_expansion_config, get_per_prompt_config,
@@ -161,7 +161,7 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
 def _build_core_filter(
     filter_dict: Optional[dict] = None, user: Optional[str] = None
 ) -> tuple:
-    """Build WHERE conditions for core.memories using columns.
+    """Build WHERE conditions for local.memories using columns.
 
     Returns:
         Tuple of (conditions_list, params_list) for SQL WHERE clause.
@@ -204,7 +204,7 @@ def _build_core_filter(
 def _build_vault_filter(
     filter_dict: Optional[dict] = None, user: Optional[str] = None
 ) -> tuple:
-    """Build WHERE conditions for vault.documents using columns.
+    """Build WHERE conditions for obsidian.documents using columns.
 
     Returns:
         Tuple of (conditions_list, params_list) for SQL WHERE clause.
@@ -260,7 +260,7 @@ def _display_path(doc_id: str) -> str:
 
 
 def _format_core_result(row: dict) -> dict:
-    """Format a core.memories row into a result dict.
+    """Format a local.memories row into a result dict.
 
     Promotes columns (category, scope, source, importance_score) to
     top-level keys. Remaining metadata stays in 'metadata'.
@@ -276,7 +276,7 @@ def _format_core_result(row: dict) -> dict:
 
 
 def _format_vault_result(row: dict) -> dict:
-    """Format a vault.documents row into a result dict.
+    """Format a obsidian.documents row into a result dict.
 
     Promotes columns (parent_file, directory, vault_type, etc.) to
     metadata dict for downstream compat.
@@ -295,10 +295,10 @@ def _format_vault_result(row: dict) -> dict:
 
 
 def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
-    """Batch increment retrieval counts for core.memories documents.
+    """Batch increment retrieval counts for local.memories documents.
 
     Best-effort operation: errors are logged but don't block query response.
-    Only updates core.memories (vault documents don't track retrieval counts).
+    Only updates local.memories (vault documents don't track retrieval counts).
 
     Uses a single SQL UPDATE with column-level increment (much more efficient
     than the old JSONB string extraction pattern).
@@ -316,7 +316,7 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
 
         # Filter to only core (non-vault) IDs
         core_ids = [doc_id for doc_id in doc_ids
-                    if schema_for_id(doc_id) == SCHEMA_CORE]
+                    if schema_for_id(doc_id) == SCHEMA_LOCAL]
         if not core_ids:
             return
 
@@ -324,7 +324,7 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET retrieval_count = retrieval_count + %s,
                            updated_at = now()
                        WHERE id = ANY(%s) AND status = 'active'""",
@@ -342,7 +342,7 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
 def _cross_schema_search(query_embedding, fetch_count: int,
                          filter_dict: Optional[dict] = None,
                          user: Optional[str] = None) -> list:
-    """Execute per-schema search across core + vault.
+    """Execute per-schema search across local + obsidian.
 
     DAR F5: Each query uses its own HNSW index via ORDER BY ... LIMIT.
     Results are merged in Python by distance.
@@ -353,7 +353,7 @@ def _cross_schema_search(query_embedding, fetch_count: int,
         filter_dict: Optional metadata filter dict
         user: Optional user filter for multi-user isolation
 
-    Returns list of row dicts with _schema column ('core' or 'vault').
+    Returns list of row dicts with _schema column ('local' or 'obsidian').
     """
     from .schema import _get_pool
 
@@ -373,8 +373,8 @@ def _cross_schema_search(query_embedding, fetch_count: int,
                            category, scope, source, importance_score,
                            retrieval_count, created_at,
                            embedding <=> %s::halfvec AS distance,
-                           'core' AS _schema
-                    FROM core.memories
+                           'local' AS _schema
+                    FROM local.memories
                     WHERE {core_where}
                     ORDER BY embedding <=> %s::halfvec ASC
                     LIMIT %s""",
@@ -393,8 +393,8 @@ def _cross_schema_search(query_embedding, fetch_count: int,
                            chunk_index, chunk_total, chunk_heading,
                            importance_score,
                            embedding <=> %s::halfvec AS distance,
-                           'vault' AS _schema
-                    FROM vault.documents
+                           'obsidian' AS _schema
+                    FROM obsidian.documents
                     {vault_where_clause}
                     ORDER BY embedding <=> %s::halfvec ASC
                     LIMIT %s""",
@@ -417,7 +417,7 @@ def query_vault(
 ) -> dict:
     """Semantic search across vault memory.
 
-    Searches both core.memories and vault.documents using per-schema CTEs
+    Searches both local.memories and obsidian.documents using per-schema CTEs
     for optimal HNSW index usage.
 
     Args:
@@ -435,11 +435,11 @@ def query_vault(
     try:
         # Check total across both schemas
         core_count = execute_query(
-            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
             fetch="one",
         )
         vault_count = execute_query(
-            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+            "SELECT count(*) AS cnt FROM obsidian.documents", fetch="one"
         )
         total = (core_count["cnt"] if core_count else 0) + (
             vault_count["cnt"] if vault_count else 0
@@ -491,9 +491,9 @@ def query_vault(
 
     raw_entries = []
     for row in rows:
-        schema = row.get("_schema", "vault")
+        schema = row.get("_schema", "obsidian")
 
-        if schema == "core":
+        if schema == "local":
             meta = _format_core_result(row)
         else:
             meta = _format_vault_result(row)
@@ -511,7 +511,7 @@ def query_vault(
                 pass
 
         # Two-phase ranking: blended score with decay (core only)
-        if use_decay and schema == "core":
+        if use_decay and schema == "local":
             from .ranking import compute_blended_score
             blended, eff_imp = compute_blended_score(
                 similarity=similarity,
@@ -601,8 +601,8 @@ def query_vault(
         tags = meta.get("tags", "")
         chunk_heading = meta.get("chunk_heading", "")
 
-        schema = entry.get("_schema", "vault")
-        if schema == "vault":
+        schema = entry.get("_schema", "obsidian")
+        if schema == "obsidian":
             source = "vault"
         else:
             source = meta.get("category", meta.get("type", "memory"))
@@ -667,7 +667,7 @@ def semantic_context(
 ) -> dict:
     """Search vault memories for per-prompt context injection.
 
-    Searches both core.memories and vault.documents. Differs from query_vault():
+    Searches both local.memories and obsidian.documents. Differs from query_vault():
     - Applies minimum relevance threshold (filters low-scoring results)
     - Budget-based allocation: core content shown in full, vault as references
     - Fractionally increments retrieval counts (configurable, default 0.01)
@@ -701,11 +701,11 @@ def semantic_context(
         from .schema import _get_pool
 
         core_count = execute_query(
-            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
             fetch="one",
         )
         vault_count = execute_query(
-            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+            "SELECT count(*) AS cnt FROM obsidian.documents", fetch="one"
         )
         total = (core_count["cnt"] if core_count else 0) + (
             vault_count["cnt"] if vault_count else 0
@@ -745,9 +745,9 @@ def semantic_context(
     skipped_sensitive = 0
 
     for row in rows:
-        schema = row.get("_schema", "vault")
+        schema = row.get("_schema", "obsidian")
 
-        if schema == "core":
+        if schema == "local":
             meta = _format_core_result(row)
         else:
             meta = _format_vault_result(row)
@@ -776,7 +776,7 @@ def semantic_context(
                 pass
 
         # Two-phase ranking with decay (core only)
-        if use_decay and schema == "core":
+        if use_decay and schema == "local":
             from .ranking import compute_blended_score
             blended, eff_imp = compute_blended_score(
                 similarity=similarity,
@@ -842,8 +842,8 @@ def semantic_context(
     selected = []
 
     for entry in deduped:
-        schema = entry.get("_schema", "vault")
-        is_vault = schema == "vault"
+        schema = entry.get("_schema", "obsidian")
+        is_vault = schema == "obsidian"
 
         if is_vault:
             cost = VAULT_REF_COST
@@ -934,7 +934,7 @@ def semantic_context(
 def doc_read(ids: list, include_metadata: bool = True) -> dict:
     """Read specific documents from PostgreSQL by ID.
 
-    Routes by ID prefix: vault:: → vault.documents, else → core.memories.
+    Routes by ID prefix: vault:: → obsidian.documents, else → local.memories.
 
     Accepts both namespaced IDs (vault::notes/my-note.md) and bare paths
     (notes/my-note.md). Bare paths are automatically prefixed with vault::.
@@ -973,7 +973,7 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
         # Read vault documents
         if vault_ids:
             meta_cols = ", metadata, parent_file, directory, vault_type, title, chunk_index, chunk_total, chunk_heading, importance_score" if include_metadata else ""
-            sql = f"SELECT id, document{meta_cols} FROM vault.documents WHERE id = ANY(%s)"
+            sql = f"SELECT id, document{meta_cols} FROM obsidian.documents WHERE id = ANY(%s)"
             rows = execute_query(sql, (vault_ids,))
             for row in rows:
                 entry = {
@@ -989,7 +989,7 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
         # Read core memories
         if core_ids:
             meta_cols = ", metadata, category, scope, source, importance_score" if include_metadata else ""
-            sql = f"SELECT id, document{meta_cols} FROM core.memories WHERE id = ANY(%s)"
+            sql = f"SELECT id, document{meta_cols} FROM local.memories WHERE id = ANY(%s)"
             rows = execute_query(sql, (core_ids,))
             for row in rows:
                 entry = {
@@ -1020,7 +1020,7 @@ def doc_read(ids: list, include_metadata: bool = True) -> dict:
 def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     """Get memory system health and statistics.
 
-    Queries both core.memories and vault.documents.
+    Queries both local.memories and obsidian.documents.
 
     Args:
         sample_size: Number of sample entries to peek
@@ -1031,11 +1031,11 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     """
     try:
         core_count = execute_query(
-            "SELECT count(*) AS cnt FROM core.memories WHERE status = 'active'",
+            "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
             fetch="one",
         )
         vault_count = execute_query(
-            "SELECT count(*) AS cnt FROM vault.documents", fetch="one"
+            "SELECT count(*) AS cnt FROM obsidian.documents", fetch="one"
         )
         core_total = core_count["cnt"] if core_count else 0
         vault_total = vault_count["cnt"] if vault_count else 0
@@ -1058,7 +1058,7 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     try:
         # Core samples
         core_rows = execute_query(
-            "SELECT id, metadata, category FROM core.memories WHERE status = 'active' LIMIT %s",
+            "SELECT id, metadata, category FROM local.memories WHERE status = 'active' LIMIT %s",
             (half_sample,),
         )
         for row in core_rows:
@@ -1069,13 +1069,13 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
                     "path": _display_path(row["id"]),
                     "title": meta.get("title", row["id"]),
                     "type": row.get("category", meta.get("type", "unknown")),
-                    "schema": "core",
+                    "schema": "local",
                 }
             )
 
         # Vault samples
         vault_rows = execute_query(
-            "SELECT id, metadata, vault_type, title FROM vault.documents LIMIT %s",
+            "SELECT id, metadata, vault_type, title FROM obsidian.documents LIMIT %s",
             (half_sample,),
         )
         for row in vault_rows:
@@ -1085,7 +1085,7 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
                     "path": _display_path(row["id"]),
                     "title": row.get("title", row["id"]),
                     "type": row.get("vault_type", "document"),
-                    "schema": "vault",
+                    "schema": "obsidian",
                 }
             )
     except Exception as e:
@@ -1105,7 +1105,7 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
             # Core breakdown by category
             cat_rows = execute_query(
                 """SELECT category, count(*) AS cnt
-                   FROM core.memories
+                   FROM local.memories
                    WHERE status = 'active'
                    GROUP BY category"""
             )
@@ -1114,7 +1114,7 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
             # Vault breakdown by vault_type
             vt_rows = execute_query(
                 """SELECT vault_type, count(*) AS cnt
-                   FROM vault.documents
+                   FROM obsidian.documents
                    GROUP BY vault_type"""
             )
             vault_type_counts = {row["vault_type"]: row["cnt"] for row in vt_rows}
@@ -1124,8 +1124,8 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
 
             # Storage size (both tables)
             for table, label in [
-                ("core.memories", "core_storage"),
-                ("vault.documents", "vault_storage"),
+                ("local.memories", "core_storage"),
+                ("obsidian.documents", "vault_storage"),
             ]:
                 try:
                     size_result = execute_query(

@@ -360,7 +360,7 @@ class TestCollectionStats:
         assert not sample["path"].startswith("vault::")
         # Samples should have schema field
         assert "schema" in sample
-        assert sample["schema"] in ("core", "vault")
+        assert sample["schema"] in ("local", "obsidian")
 
     def test_collection_stats_detailed(self, mock_config):
         self._index_test_files(mock_config)
@@ -386,7 +386,7 @@ class TestCollectionStats:
 
 
 class TestCrossSchemaQuery:
-    """Tests for cross-schema query results (core.memories + vault.documents)."""
+    """Tests for cross-schema query results (local.memories + obsidian.documents)."""
 
     def test_query_includes_schema_field(self, mock_config):
         """Test that query results include schema field instead of tier."""
@@ -405,7 +405,7 @@ class TestCrossSchemaQuery:
         # Check schema field (replaces old tier field)
         for res in result["results"]:
             assert "schema" in res
-            assert res["schema"] == "vault"  # Vault files are in vault schema
+            assert res["schema"] == "obsidian"  # Vault files are in vault schema
 
     def test_query_includes_source_field(self, mock_config):
         """Test that query results include source field."""
@@ -451,7 +451,7 @@ class TestCrossSchemaQuery:
 
         # Should have both schemas
         schemas = {res["schema"] for res in result["results"]}
-        assert "vault" in schemas or "core" in schemas
+        assert "obsidian" in schemas or "local" in schemas
 
     def test_query_increments_core_retrieval_count(self, mock_config):
         """Test that querying increments core retrieval counts."""
@@ -525,7 +525,7 @@ class TestIncrementRetrievalCountsFractional:
         assert row["retrieval_count"] == pytest.approx(1.0)
 
     def test_skips_vault_ids(self, mock_config):
-        """Vault (vault::) IDs are not incremented — only core.memories tracks counts."""
+        """Vault (vault::) IDs are not incremented — only local.memories tracks counts."""
         from tools.memory import index_file
 
         notes_dir = mock_config.vault_path / "notes"

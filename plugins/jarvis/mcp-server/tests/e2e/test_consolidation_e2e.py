@@ -21,12 +21,12 @@ class TestConsolidationDDL:
     """Verify Phase 8 schema changes are applied correctly."""
 
     def test_consolidation_run_id_column_exists(self, e2e_config):
-        """core.memories has consolidation_run_id column."""
+        """local.memories has consolidation_run_id column."""
         from tools.schema import execute_query
 
         rows = execute_query(
             """SELECT column_name FROM information_schema.columns
-               WHERE table_schema = 'core' AND table_name = 'memories'
+               WHERE table_schema = 'local' AND table_name = 'memories'
                AND column_name = 'consolidation_run_id'"""
         )
         assert len(rows) == 1
@@ -37,8 +37,8 @@ class TestConsolidationDDL:
 
         rows = execute_query(
             """SELECT indexname FROM pg_indexes
-               WHERE tablename = 'memories' AND schemaname = 'core'
-               AND indexname = 'idx_core_consolidation_run'"""
+               WHERE tablename = 'memories' AND schemaname = 'local'
+               AND indexname = 'idx_local_consolidation_run'"""
         )
         assert len(rows) == 1
 
@@ -56,7 +56,7 @@ class TestSupersessionConstraints:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories (id, document, embedding, status)
+                    """INSERT INTO local.memories (id, document, embedding, status)
                        VALUES ('self-ref-test', 'test doc', %s::halfvec, 'active')""",
                     (emb.encode("test"),),
                 )
@@ -66,7 +66,7 @@ class TestSupersessionConstraints:
             with pool.connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        """UPDATE core.memories
+                        """UPDATE local.memories
                            SET status = 'superseded', superseded_by = 'self-ref-test'
                            WHERE id = 'self-ref-test'"""
                     )
@@ -82,14 +82,14 @@ class TestSupersessionConstraints:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories (id, document, embedding, status)
+                    """INSERT INTO local.memories (id, document, embedding, status)
                        VALUES ('cycle-a', 'doc a', %s::halfvec, 'active'),
                               ('cycle-b', 'doc b', %s::halfvec, 'active')""",
                     (emb.encode("a"), emb.encode("b")),
                 )
                 # A superseded by B
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET status = 'superseded', superseded_by = 'cycle-b'
                        WHERE id = 'cycle-a'"""
                 )
@@ -100,7 +100,7 @@ class TestSupersessionConstraints:
             with pool.connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        """UPDATE core.memories
+                        """UPDATE local.memories
                            SET status = 'superseded', superseded_by = 'cycle-a'
                            WHERE id = 'cycle-b'"""
                     )
@@ -116,13 +116,13 @@ class TestSupersessionConstraints:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories (id, document, embedding, status)
+                    """INSERT INTO local.memories (id, document, embedding, status)
                        VALUES ('valid-old', 'old doc', %s::halfvec, 'active'),
                               ('valid-new', 'new doc', %s::halfvec, 'active')""",
                     (emb.encode("old"), emb.encode("new")),
                 )
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET status = 'superseded', superseded_by = 'valid-new'
                        WHERE id = 'valid-old'"""
                 )
@@ -131,7 +131,7 @@ class TestSupersessionConstraints:
         # Verify it worked
         from tools.schema import execute_query
         row = execute_query(
-            "SELECT status, superseded_by FROM core.memories WHERE id = 'valid-old'",
+            "SELECT status, superseded_by FROM local.memories WHERE id = 'valid-old'",
             fetch="one",
         )
         assert row["status"] == "superseded"
@@ -151,7 +151,7 @@ class TestConsolidationRunTracking:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, consolidation_run_id)
                        VALUES ('consol-1', 'doc', %s::halfvec, 'run-abc')""",
                     (emb.encode("doc"),),
@@ -159,7 +159,7 @@ class TestConsolidationRunTracking:
                 conn.commit()
 
         row = execute_query(
-            "SELECT consolidation_run_id FROM core.memories WHERE id = 'consol-1'",
+            "SELECT consolidation_run_id FROM local.memories WHERE id = 'consol-1'",
             fetch="one",
         )
         assert row["consolidation_run_id"] == "run-abc"
@@ -175,7 +175,7 @@ class TestConsolidationRunTracking:
             with conn.cursor() as cur:
                 for i in range(3):
                     cur.execute(
-                        """INSERT INTO core.memories
+                        """INSERT INTO local.memories
                            (id, document, embedding, consolidation_run_id)
                            VALUES (%s, %s, %s::halfvec, 'run-xyz')""",
                         (f"batch-{i}", f"doc {i}", emb.encode(f"doc {i}")),
@@ -183,7 +183,7 @@ class TestConsolidationRunTracking:
                 conn.commit()
 
         rows = execute_query(
-            "SELECT id FROM core.memories WHERE consolidation_run_id = 'run-xyz'"
+            "SELECT id FROM local.memories WHERE consolidation_run_id = 'run-xyz'"
         )
         assert len(rows) == 3
 
@@ -203,7 +203,7 @@ class TestTransactionalConsolidation:
             with conn.cursor() as cur:
                 for i in range(3):
                     cur.execute(
-                        """INSERT INTO core.memories
+                        """INSERT INTO local.memories
                            (id, document, embedding, importance_score, status)
                            VALUES (%s, %s, %s::halfvec, 0.7, 'active')""",
                         (f"orig-{i}", f"original {i}", emb.encode(f"original {i}")),
@@ -216,7 +216,7 @@ class TestTransactionalConsolidation:
             with conn.cursor() as cur:
                 # Insert consolidated
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, category, importance_score,
                         source, status, consolidation_run_id, metadata)
                        VALUES ('consolidated-rt', 'consolidated summary', %s::halfvec,
@@ -226,7 +226,7 @@ class TestTransactionalConsolidation:
                 )
                 # Supersede originals
                 cur.execute(
-                    """UPDATE core.memories
+                    """UPDATE local.memories
                        SET status = 'superseded',
                            superseded_by = 'consolidated-rt',
                            consolidation_run_id = %s
@@ -237,13 +237,13 @@ class TestTransactionalConsolidation:
 
         # Verify originals are superseded
         active = execute_query(
-            "SELECT id FROM core.active_memories WHERE id LIKE 'orig-%%'"
+            "SELECT id FROM local.active_memories WHERE id LIKE 'orig-%%'"
         )
         assert len(active) == 0
 
         # Verify consolidated is active
         consol = execute_query(
-            "SELECT id FROM core.active_memories WHERE id = 'consolidated-rt'",
+            "SELECT id FROM local.active_memories WHERE id = 'consolidated-rt'",
             fetch="one",
         )
         assert consol is not None
@@ -256,20 +256,20 @@ class TestTransactionalConsolidation:
 
         # Verify originals are back
         active_after = execute_query(
-            "SELECT id FROM core.active_memories WHERE id LIKE 'orig-%%'"
+            "SELECT id FROM local.active_memories WHERE id LIKE 'orig-%%'"
         )
         assert len(active_after) == 3
 
         # Verify consolidated is gone from active view
         consol_after = execute_query(
-            "SELECT id FROM core.active_memories WHERE id = 'consolidated-rt'",
+            "SELECT id FROM local.active_memories WHERE id = 'consolidated-rt'",
             fetch="one",
         )
         assert consol_after is None
 
 
 class TestActiveViewWithSupersession:
-    """core.active_memories view correctly excludes superseded entries."""
+    """local.active_memories view correctly excludes superseded entries."""
 
     def test_superseded_excluded_from_active(self, e2e_config):
         from tools.schema import _get_pool, execute_query
@@ -280,18 +280,18 @@ class TestActiveViewWithSupersession:
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories (id, document, embedding, status)
+                    """INSERT INTO local.memories (id, document, embedding, status)
                        VALUES ('act-1', 'active doc', %s::halfvec, 'active')""",
                     (emb.encode("active"),),
                 )
                 cur.execute(
-                    """INSERT INTO core.memories (id, document, embedding, status, superseded_by)
+                    """INSERT INTO local.memories (id, document, embedding, status, superseded_by)
                        VALUES ('sup-1', 'superseded doc', %s::halfvec, 'superseded', 'act-1')""",
                     (emb.encode("superseded"),),
                 )
                 conn.commit()
 
-        active = execute_query("SELECT id FROM core.active_memories")
+        active = execute_query("SELECT id FROM local.active_memories")
         active_ids = {r["id"] for r in active}
         assert "act-1" in active_ids
         assert "sup-1" not in active_ids

@@ -7,7 +7,7 @@ Storage locations:
 - Global:  <vault>/.jarvis/strategic/<name>.md
 - Project: <vault>/.jarvis/memories/<project>/<name>.md
 
-Database: core.memories with category='memory'
+Database: local.memories with category='memory'
 """
 
 import logging
@@ -160,7 +160,7 @@ def memory_write(
     if not write_result.get("success"):
         return write_result
 
-    # Index in PostgreSQL (core.memories with category='memory')
+    # Index in PostgreSQL (local.memories with category='memory')
     indexed = False
     doc_id = _build_doc_id(name, scope, project)
     try:
@@ -186,12 +186,12 @@ def memory_write(
 
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # Upsert into core.memories with proper columns
+        # Upsert into local.memories with proper columns
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, category, scope, project,
                         source, importance_score, metadata,
                         created_at, updated_at)
@@ -263,7 +263,7 @@ def memory_read(
         row = execute_query(
             """SELECT id, document, category, scope, project, source,
                       importance_score, metadata
-               FROM core.memories WHERE id = %s""",
+               FROM local.memories WHERE id = %s""",
             (doc_id,),
             fetch="one",
         )
@@ -368,7 +368,7 @@ def memory_list(
             mem["id"] = doc_id
             try:
                 row = execute_query(
-                    "SELECT id FROM core.memories WHERE id = %s",
+                    "SELECT id FROM local.memories WHERE id = %s",
                     (doc_id,),
                     fetch="one",
                 )
@@ -452,7 +452,7 @@ def memory_delete(
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM core.memories WHERE id = %s", (doc_id,))
+                cur.execute("DELETE FROM local.memories WHERE id = %s", (doc_id,))
                 index_deleted = cur.rowcount > 0
                 conn.commit()
     except Exception as e:

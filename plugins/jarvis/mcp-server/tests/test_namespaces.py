@@ -30,6 +30,8 @@ from tools.namespaces import (
     CONTENT_TYPES,
     TIER2_TYPES,
     VALID_CATEGORIES,
+    SCHEMA_LOCAL,
+    SCHEMA_OBSIDIAN,
     SCHEMA_CORE,
     SCHEMA_VAULT,
     schema_for_id,
@@ -405,52 +407,57 @@ class TestSchemaConstants:
     """Tests for schema routing constants and function."""
 
     def test_schema_constants(self):
-        assert SCHEMA_CORE == "core"
-        assert SCHEMA_VAULT == "vault"
+        assert SCHEMA_LOCAL == "local"
+        assert SCHEMA_OBSIDIAN == "obsidian"
+
+    def test_deprecated_aliases(self):
+        """Deprecated aliases still work for backward compat."""
+        assert SCHEMA_CORE == SCHEMA_LOCAL
+        assert SCHEMA_VAULT == SCHEMA_OBSIDIAN
 
     def test_schema_for_vault_id(self):
-        assert schema_for_id("vault::notes/test.md") == SCHEMA_VAULT
+        assert schema_for_id("vault::notes/test.md") == SCHEMA_OBSIDIAN
 
     def test_schema_for_observation_id(self):
-        assert schema_for_id("obs::12345") == SCHEMA_CORE
+        assert schema_for_id("obs::12345") == SCHEMA_LOCAL
 
     def test_schema_for_pattern_id(self):
-        assert schema_for_id("pattern::test-pattern") == SCHEMA_CORE
+        assert schema_for_id("pattern::test-pattern") == SCHEMA_LOCAL
 
     def test_schema_for_memory_id(self):
-        assert schema_for_id("memory::global::test") == SCHEMA_CORE
+        assert schema_for_id("memory::global::test") == SCHEMA_LOCAL
 
     def test_schema_for_content_ids(self):
-        assert schema_for_id("rel::a::b") == SCHEMA_CORE
-        assert schema_for_id("hint::topic::0") == SCHEMA_CORE
-        assert schema_for_id("plan::test-plan") == SCHEMA_CORE
-        assert schema_for_id("learning::1738857000000") == SCHEMA_CORE
-        assert schema_for_id("decision::use-python") == SCHEMA_CORE
-        assert schema_for_id("worklog::1738857000000") == SCHEMA_CORE
+        assert schema_for_id("rel::a::b") == SCHEMA_LOCAL
+        assert schema_for_id("hint::topic::0") == SCHEMA_LOCAL
+        assert schema_for_id("plan::test-plan") == SCHEMA_LOCAL
+        assert schema_for_id("learning::1738857000000") == SCHEMA_LOCAL
+        assert schema_for_id("decision::use-python") == SCHEMA_LOCAL
+        assert schema_for_id("worklog::1738857000000") == SCHEMA_LOCAL
 
-    def test_bare_path_defaults_to_core(self):
-        """Bare paths (no prefix) default to SCHEMA_CORE."""
-        assert schema_for_id("notes/test.md") == SCHEMA_CORE
+    def test_bare_path_defaults_to_local(self):
+        """Bare paths (no prefix) default to SCHEMA_LOCAL."""
+        assert schema_for_id("notes/test.md") == SCHEMA_LOCAL
 
 
 class TestParsedIdSchema:
     """Tests for schema field in ParsedId."""
 
-    def test_vault_id_has_schema_vault(self):
+    def test_vault_id_has_schema_obsidian(self):
         parsed = parse_id("vault::notes/test.md")
-        assert parsed.schema == SCHEMA_VAULT
+        assert parsed.schema == SCHEMA_OBSIDIAN
 
-    def test_observation_id_has_schema_core(self):
+    def test_observation_id_has_schema_local(self):
         parsed = parse_id("obs::12345")
-        assert parsed.schema == SCHEMA_CORE
+        assert parsed.schema == SCHEMA_LOCAL
 
-    def test_memory_id_has_schema_core(self):
+    def test_memory_id_has_schema_local(self):
         parsed = parse_id("memory::global::test")
-        assert parsed.schema == SCHEMA_CORE
+        assert parsed.schema == SCHEMA_LOCAL
 
-    def test_bare_path_has_schema_vault(self):
+    def test_bare_path_has_schema_obsidian(self):
         parsed = parse_id("notes/test.md")
-        assert parsed.schema == SCHEMA_VAULT
+        assert parsed.schema == SCHEMA_OBSIDIAN
 
 
 class TestValidCategories:
@@ -580,4 +587,4 @@ class TestWorklogId:
         assert "worklog" in CONTENT_TYPES
 
     def test_schema_for_worklog(self):
-        assert schema_for_id("worklog::1738857000000") == SCHEMA_CORE
+        assert schema_for_id("worklog::1738857000000") == SCHEMA_LOCAL

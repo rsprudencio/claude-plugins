@@ -24,7 +24,7 @@ class TestConstraintEnforcement:
 
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, category)
                    VALUES (%s, %s, %s::halfvec, %s)""",
                 ("test::invalid-cat", "test", str(emb), "INVALID_CATEGORY"),
@@ -38,7 +38,7 @@ class TestConstraintEnforcement:
 
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, status)
                    VALUES (%s, %s, %s::halfvec, %s)""",
                 ("test::invalid-status", "test", str(emb), "archived"),
@@ -52,7 +52,7 @@ class TestConstraintEnforcement:
 
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, importance_score)
                    VALUES (%s, %s, %s::halfvec, %s)""",
                 ("test::bad-importance", "test", str(emb), 1.5),
@@ -86,7 +86,7 @@ class TestConstraintEnforcement:
 
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, scope, project)
                    VALUES (%s, %s, %s::halfvec, 'project', NULL)""",
                 ("test::no-project", "test", str(emb)),
@@ -112,7 +112,7 @@ class TestConstraintEnforcement:
 
         with pytest.raises(psycopg.errors.CheckViolation):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, status, superseded_by)
                    VALUES (%s, %s, %s::halfvec, 'superseded', NULL)""",
                 ("test::bad-supersede", "test", str(emb)),
@@ -141,7 +141,7 @@ class TestTriggerBehavior:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT updated_at FROM core.memories WHERE id = %s",
+                "SELECT updated_at FROM local.memories WHERE id = %s",
                 (r1["id"],),
             )
             ts1 = cur.fetchone()[0]
@@ -161,7 +161,7 @@ class TestTriggerBehavior:
 
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT updated_at FROM core.memories WHERE id = %s",
+                "SELECT updated_at FROM local.memories WHERE id = %s",
                 (r2["id"],),
             )
             ts2 = cur.fetchone()[0]
@@ -175,7 +175,7 @@ class TestTriggerBehavior:
         emb = e2e_config["embedding_service"].encode("test")
 
         conn.execute(
-            """INSERT INTO core.memories
+            """INSERT INTO local.memories
                (id, document, embedding, category)
                VALUES (%s, %s, %s::halfvec, 'observation')""",
             ("test::trigger-direct", "original", str(emb)),
@@ -183,7 +183,7 @@ class TestTriggerBehavior:
 
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT updated_at FROM core.memories WHERE id = %s",
+                "SELECT updated_at FROM local.memories WHERE id = %s",
                 ("test::trigger-direct",),
             )
             ts1 = cur.fetchone()[0]
@@ -191,13 +191,13 @@ class TestTriggerBehavior:
         time.sleep(0.05)
 
         conn.execute(
-            "UPDATE core.memories SET document = 'changed' WHERE id = %s",
+            "UPDATE local.memories SET document = 'changed' WHERE id = %s",
             ("test::trigger-direct",),
         )
 
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT updated_at FROM core.memories WHERE id = %s",
+                "SELECT updated_at FROM local.memories WHERE id = %s",
                 ("test::trigger-direct",),
             )
             ts2 = cur.fetchone()[0]
@@ -239,7 +239,7 @@ class TestSoftDeleteBehavior:
         assert r["id"] not in ids_after
 
     def test_soft_deleted_still_in_base_table(self, e2e_config):
-        """Soft-deleted records still exist in core.memories (not via view)."""
+        """Soft-deleted records still exist in local.memories (not via view)."""
         from tools.content import content_write, content_delete
 
         r = content_write(
@@ -252,7 +252,7 @@ class TestSoftDeleteBehavior:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT status FROM core.memories WHERE id = %s",
+                "SELECT status FROM local.memories WHERE id = %s",
                 (r["id"],),
             )
             row = cur.fetchone()
@@ -261,7 +261,7 @@ class TestSoftDeleteBehavior:
 
             # Not in view
             cur.execute(
-                "SELECT id FROM core.active_memories WHERE id = %s",
+                "SELECT id FROM local.active_memories WHERE id = %s",
                 (r["id"],),
             )
             assert cur.fetchone() is None, "Should not appear in active view"
@@ -313,7 +313,7 @@ class TestHalfvecEdgeCases:
 
         with pytest.raises(psycopg.errors.DataException):
             conn.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, category)
                    VALUES (%s, %s, %s::halfvec, 'observation')""",
                 ("test::wrong-dims", "test", str(wrong_dims)),
@@ -328,7 +328,7 @@ class TestHalfvecEdgeCases:
         emb = e2e_config["embedding_service"].encode("some content")
 
         conn.execute(
-            """INSERT INTO core.memories
+            """INSERT INTO local.memories
                (id, document, embedding, category)
                VALUES (%s, %s, %s::halfvec, 'observation')""",
             ("test::zero-vec", "zero vector doc", str(zero_vec)),
@@ -338,7 +338,7 @@ class TestHalfvecEdgeCases:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, embedding <=> %s::halfvec AS distance
-                   FROM core.memories WHERE id = %s""",
+                   FROM local.memories WHERE id = %s""",
                 (str(emb), "test::zero-vec"),
             )
             row = cur.fetchone()
@@ -374,7 +374,7 @@ class TestMetadataFieldCollisions:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT metadata, category FROM core.memories WHERE id = %s",
+                "SELECT metadata, category FROM local.memories WHERE id = %s",
                 (result["id"],),
             )
             row = cur.fetchone()
@@ -419,7 +419,7 @@ class TestRetrievalCountEdgeCases:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT retrieval_count FROM core.memories WHERE id = %s",
+                "SELECT retrieval_count FROM local.memories WHERE id = %s",
                 (r["id"],),
             )
             count = cur.fetchone()[0]
@@ -443,7 +443,7 @@ class TestRetrievalCountEdgeCases:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT retrieval_count FROM core.memories WHERE id = %s",
+                "SELECT retrieval_count FROM local.memories WHERE id = %s",
                 (r["id"],),
             )
             count = cur.fetchone()[0]
@@ -491,7 +491,7 @@ class TestCrossSchemaEdgeCases:
     """Verify cross-schema UNION ALL search handles edge cases."""
 
     def test_search_with_only_vault_results(self, e2e_config):
-        """Search returns results even if core.memories is empty for query."""
+        """Search returns results even if local.memories is empty for query."""
         from tools.memory import index_file
         from tools.query import query_vault
 
@@ -508,7 +508,7 @@ class TestCrossSchemaEdgeCases:
                     for r in result["results"])
 
     def test_search_with_only_core_results(self, e2e_config):
-        """Search returns results even if vault.documents is empty for query."""
+        """Search returns results even if obsidian.documents is empty for query."""
         from tools.content import content_write
         from tools.query import query_vault
 
@@ -545,7 +545,7 @@ class TestVaultIndexingEdgeCases:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT COUNT(*) FROM vault.documents WHERE parent_file LIKE %s",
+                "SELECT COUNT(*) FROM obsidian.documents WHERE parent_file LIKE %s",
                 ("%reindex-test.md",),
             )
             count1 = cur.fetchone()[0]
@@ -556,7 +556,7 @@ class TestVaultIndexingEdgeCases:
 
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT COUNT(*) FROM vault.documents WHERE parent_file LIKE %s",
+                "SELECT COUNT(*) FROM obsidian.documents WHERE parent_file LIKE %s",
                 ("%reindex-test.md",),
             )
             count2 = cur.fetchone()[0]
@@ -566,7 +566,7 @@ class TestVaultIndexingEdgeCases:
         # Verify content is updated
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT document FROM vault.documents WHERE parent_file LIKE %s LIMIT 1",
+                "SELECT document FROM obsidian.documents WHERE parent_file LIKE %s LIMIT 1",
                 ("%reindex-test.md",),
             )
             doc = cur.fetchone()[0]
@@ -590,7 +590,7 @@ class TestVaultIndexingEdgeCases:
         conn = psycopg.connect(e2e_config["db_url"], autocommit=True)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT title, vault_type, metadata FROM vault.documents "
+                "SELECT title, vault_type, metadata FROM obsidian.documents "
                 "WHERE parent_file LIKE %s LIMIT 1",
                 ("%with-frontmatter.md",),
             )

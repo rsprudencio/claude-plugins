@@ -94,7 +94,7 @@ def find_consolidation_candidates(
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, importance_score, embedding
-                   FROM core.memories
+                   FROM local.memories
                    WHERE status = 'active'
                      AND importance_score >= %s
                    ORDER BY importance_score DESC""",
@@ -122,7 +122,7 @@ def find_consolidation_candidates(
 
                 cur.execute(
                     """SELECT id, embedding <=> %s::halfvec AS distance
-                       FROM core.memories
+                       FROM local.memories
                        WHERE status = 'active' AND id != %s
                        ORDER BY embedding <=> %s::halfvec ASC
                        LIMIT %s""",
@@ -198,7 +198,7 @@ def _load_cluster_contents(cluster: MemoryCluster) -> MemoryCluster:
         with conn.cursor() as cur:
             cur.execute(
                 """SELECT id, document, importance_score, category, metadata
-                   FROM core.memories
+                   FROM local.memories
                    WHERE id = ANY(%s) AND status = 'active'""",
                 (cluster.memory_ids,),
             )
@@ -318,7 +318,7 @@ def apply_consolidation(
         with conn.cursor() as cur:
             # Check idempotency: skip if already consolidated
             cur.execute(
-                "SELECT id FROM core.memories WHERE id = %s",
+                "SELECT id FROM local.memories WHERE id = %s",
                 (new_id,),
             )
             if cur.fetchone():
@@ -336,7 +336,7 @@ def apply_consolidation(
                 "contradictions": result.contradictions,
             }
             cur.execute(
-                """INSERT INTO core.memories
+                """INSERT INTO local.memories
                    (id, document, embedding, category, scope, importance_score,
                     source, status, consolidation_run_id, metadata)
                    VALUES (%s, %s, %s::halfvec, 'summary', 'global', %s,
@@ -347,7 +347,7 @@ def apply_consolidation(
 
             # 2. UPDATE originals: supersede them
             cur.execute(
-                """UPDATE core.memories
+                """UPDATE local.memories
                    SET status = 'superseded',
                        superseded_by = %s,
                        consolidation_run_id = %s,
@@ -390,7 +390,7 @@ def undo_consolidation(run_id: str) -> dict:
         with conn.cursor() as cur:
             # 1. Restore originals: clear supersession
             cur.execute(
-                """UPDATE core.memories
+                """UPDATE local.memories
                    SET status = 'active',
                        superseded_by = NULL,
                        consolidation_run_id = NULL,
@@ -403,7 +403,7 @@ def undo_consolidation(run_id: str) -> dict:
 
             # 2. Soft-delete consolidated summaries
             cur.execute(
-                """UPDATE core.memories
+                """UPDATE local.memories
                    SET status = 'deleted',
                        deleted_at = now(),
                        updated_at = now()

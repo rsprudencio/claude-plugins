@@ -5,7 +5,7 @@ Handles read/write for:
 - Project-scoped memories: <vault>/.jarvis/memories/<project>/<name>.md
 
 Files use YAML frontmatter for metadata, making them Obsidian-visible
-and git-auditable. Strategic memories are dual-written (file + core.memories).
+and git-auditable. Strategic memories are dual-written (file + local.memories).
 """
 
 import os

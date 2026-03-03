@@ -24,9 +24,12 @@ from jarvis_common.namespaces import (  # noqa: F401
     ALL_TYPES,
     CONTENT_TYPES,
     TIER2_TYPES,  # Backward compatibility alias — removed in v3.1
-    # Valid categories for core.memories.category column
+    # Valid categories for local.memories.category column
     VALID_CATEGORIES,
     # Schema constants
+    SCHEMA_LOCAL,
+    SCHEMA_OBSIDIAN,
+    # Deprecated aliases
     SCHEMA_CORE,
     SCHEMA_VAULT,
     # Schema routing

@@ -191,7 +191,7 @@ class TestFindConflictCandidates:
     def test_skip_already_superseded(self, mock_config):
         """Entries with status=superseded should be skipped.
 
-        The query uses core.active_memories which filters status='active',
+        The query uses local.active_memories which filters status='active',
         so superseded entries never appear in results.
         """
         _seed_doc(
@@ -384,7 +384,7 @@ class TestCrossTypeConflict:
             "Use singleton pattern for database connections",
             category="pattern",
         )
-        # The candidate finder queries core.active_memories, so patterns are included
+        # The candidate finder queries local.active_memories, so patterns are included
         config = {
             "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,

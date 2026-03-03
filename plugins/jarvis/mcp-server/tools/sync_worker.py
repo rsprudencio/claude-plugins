@@ -5,9 +5,9 @@ is offloaded via asyncio.to_thread(), the event loop stays responsive
 for MCP request handling.
 
 The worker:
-1. Claims pending entries from core.sync_queue (SKIP LOCKED)
+1. Claims pending entries from local.sync_queue (SKIP LOCKED)
 2. Groups them by destination
-3. Batch-upserts memories to each remote's core.memories table
+3. Batch-upserts memories to each remote's local.memories table
 4. Marks entries done or failed with exponential backoff
 """
 
@@ -113,7 +113,7 @@ def _fetch_memories(pool, memory_ids: list[str]) -> list[dict]:
                           source, importance_score, retrieval_count, status,
                           superseded_by, deleted_at, metadata, synced_to,
                           origin, created_at, updated_at
-                   FROM core.memories
+                   FROM local.memories
                    WHERE id = ANY(%s)""",
                 (memory_ids,),
             )
@@ -127,7 +127,7 @@ def _batch_upsert_to_remote(remote_url: str, memories: list[dict]) -> None:
     """Upsert memory records to a remote PostgreSQL instance.
 
     Connects directly to the remote and performs an atomic batch upsert.
-    The remote must have the same core.memories schema (Phase 7+).
+    The remote must have the same local.memories schema (Phase 7+).
 
     Args:
         remote_url: Resolved PostgreSQL connection URL.
@@ -144,7 +144,7 @@ def _batch_upsert_to_remote(remote_url: str, memories: list[dict]) -> None:
         with conn.cursor() as cur:
             for mem in memories:
                 cur.execute(
-                    """INSERT INTO core.memories
+                    """INSERT INTO local.memories
                        (id, document, embedding, category, scope, project,
                         source, importance_score, retrieval_count, status,
                         superseded_by, deleted_at, metadata, synced_to,

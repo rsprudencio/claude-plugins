@@ -370,10 +370,10 @@ class TestIntegrationCycle:
 
 
 class TestMemoryCategoryColumn:
-    """Tests for category column in core.memories."""
+    """Tests for category column in local.memories."""
 
     def test_memory_write_has_category_memory(self, mock_config):
-        """Test that memory_write sets category='memory' in core.memories."""
+        """Test that memory_write sets category='memory' in local.memories."""
         from tools.namespaces import global_memory_id
 
         result = memory_write(
