@@ -123,6 +123,14 @@ Jarvis supports syncing memories to multiple remote PostgreSQL instances via an 
 - **Security**: Credentials never logged; env var references (`$PG_REMOTE_URL`) resolved at runtime
 - Sync is **disabled by default** — zero overhead until explicitly enabled
 
+## Importance Decay & Consolidation
+Jarvis uses time-based importance decay and LLM-driven consolidation to maintain memory quality.
+- **Decay**: Memories lose effective importance over time unless reinforced by retrieval. Computed at query time — no background mutations.
+- **Two-phase retrieval**: pgvector HNSW finds candidates → Python re-ranks by blended score (similarity + effective importance).
+- **Consolidation**: ANN-based clustering finds redundant memory groups. LLM synthesizes summaries with provenance. Contradictions flagged, never auto-resolved.
+- **Management**: `/jarvis-consolidate` skill for dry-run, interactive review, and undo.
+- Consolidation is **disabled by default** — zero overhead until explicitly enabled.
+
 ## PKM Workflows
 PKM vault workflows (journal, audit, exploration) are provided by the jarvis-obsidian plugin.
 - **Indexing**: "index my vault" -> `jarvis_index_vault()`. "reindex" -> `jarvis_index_vault(force=True)`.

@@ -84,7 +84,7 @@ class TestModelConsistency:
         assert "granite" in stored["model"].lower() or stored["model"] != ""
 
         schema_ver = get_meta("schema_version")
-        assert schema_ver == {"version": 4}
+        assert schema_ver == {"version": 5}
 
     def test_matching_passes(self, mock_config):
         """Matching config passes without error."""
@@ -142,7 +142,7 @@ class TestModelConsistency:
         check_model_consistency()
         sv = get_meta("schema_version")
         assert sv is not None
-        assert sv["version"] == 4
+        assert sv["version"] == 5
 
     def test_vector_type_recorded(self, mock_config):
         """First run records vector_type: halfvec in embedding_config."""

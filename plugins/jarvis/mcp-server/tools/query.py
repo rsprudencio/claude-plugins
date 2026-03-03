@@ -17,9 +17,27 @@ from .schema import execute_query, jsonb_to_metadata, metadata_to_jsonb
 from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_CORE, SCHEMA_VAULT
 from .expansion import expand_query as _expand_query
-from .config import get_expansion_config, get_per_prompt_config, get_reranking_config, get_staleness_config
+from .config import (
+    get_decay_config, get_expansion_config, get_per_prompt_config,
+    get_ranking_config, get_reranking_config, get_staleness_config,
+)
 from .format_support import detect_format
 from .staleness import check_staleness, deserialize_mtimes
+
+
+def _parse_row_datetime(value) -> datetime:
+    """Parse a datetime from row data (str, datetime, or None → now)."""
+    if value is None:
+        return datetime.now(timezone.utc)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            pass
+    return datetime.now(timezone.utc)
 
 
 def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
@@ -348,11 +366,12 @@ def _cross_schema_search(query_embedding, fetch_count: int,
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            # Core query
+            # Core query (includes created_at + retrieval_count for decay ranking)
             core_where = " AND ".join(core_conditions)
             cur.execute(
                 f"""SELECT id, document, metadata,
                            category, scope, source, importance_score,
+                           retrieval_count, created_at,
                            embedding <=> %s::halfvec AS distance,
                            'core' AS _schema
                     FROM core.memories
@@ -466,6 +485,10 @@ def query_vault(
         return {"success": False, "error": f"Query failed: {e}"}
 
     # Build raw result entries with relevance scores
+    decay_config = get_decay_config()
+    ranking_cfg = get_ranking_config()
+    use_decay = decay_config.get("enabled", True)
+
     raw_entries = []
     for row in rows:
         schema = row.get("_schema", "vault")
@@ -476,11 +499,10 @@ def query_vault(
             meta = _format_vault_result(row)
 
         distance = float(row["distance"])
-        importance = meta.get("importance", "medium")
-        updated_at = meta.get("updated_at")
+        similarity = 1.0 - (distance / 2.0)
 
         # Use numeric importance_score
-        imp_score = None
+        imp_score = 0.5
         imp_str = meta.get("importance_score")
         if imp_str:
             try:
@@ -488,7 +510,25 @@ def query_vault(
             except (ValueError, TypeError):
                 pass
 
-        relevance = _compute_relevance(distance, importance, updated_at, imp_score)
+        # Two-phase ranking: blended score with decay (core only)
+        if use_decay and schema == "core":
+            from .ranking import compute_blended_score
+            blended, eff_imp = compute_blended_score(
+                similarity=similarity,
+                base_importance=imp_score,
+                created_at=_parse_row_datetime(row.get("created_at") or meta.get("created_at")),
+                last_retrieved_at=_parse_row_datetime(meta.get("last_retrieved_at")),
+                retrieval_count=int(float(meta.get("retrieval_count", 0))),
+                similarity_weight=ranking_cfg.get("similarity_weight", 0.7),
+                importance_weight=ranking_cfg.get("importance_weight", 0.3),
+                decay_config=decay_config,
+            )
+            relevance = blended
+        else:
+            # Vault docs + fallback: original relevance formula
+            importance = meta.get("importance", "medium")
+            updated_at = meta.get("updated_at")
+            relevance = _compute_relevance(distance, importance, updated_at, imp_score)
 
         # Determine parent file for chunk dedup
         parent_file = meta.get("parent_file")
@@ -697,6 +737,10 @@ def semantic_context(
         return {"matches": [], "query_ms": 0, "total_searched": total}
 
     # Build raw entries with relevance scores
+    decay_config = get_decay_config()
+    ranking_cfg = get_ranking_config()
+    use_decay = decay_config.get("enabled", True)
+
     raw_entries = []
     skipped_sensitive = 0
 
@@ -709,6 +753,7 @@ def semantic_context(
             meta = _format_vault_result(row)
 
         distance = float(row["distance"])
+        similarity = 1.0 - (distance / 2.0)
 
         # Filter sensitive directories
         directory = meta.get("directory", "")
@@ -721,10 +766,8 @@ def semantic_context(
         if meta.get("status") == "superseded":
             continue
 
-        importance = meta.get("importance", "medium")
-        updated_at = meta.get("updated_at")
-
-        imp_score = None
+        # Use numeric importance_score
+        imp_score = 0.5
         imp_str = meta.get("importance_score")
         if imp_str:
             try:
@@ -732,7 +775,24 @@ def semantic_context(
             except (ValueError, TypeError):
                 pass
 
-        relevance = _compute_relevance(distance, importance, updated_at, imp_score)
+        # Two-phase ranking with decay (core only)
+        if use_decay and schema == "core":
+            from .ranking import compute_blended_score
+            blended, eff_imp = compute_blended_score(
+                similarity=similarity,
+                base_importance=imp_score,
+                created_at=_parse_row_datetime(row.get("created_at") or meta.get("created_at")),
+                last_retrieved_at=_parse_row_datetime(meta.get("last_retrieved_at")),
+                retrieval_count=int(float(meta.get("retrieval_count", 0))),
+                similarity_weight=ranking_cfg.get("similarity_weight", 0.7),
+                importance_weight=ranking_cfg.get("importance_weight", 0.3),
+                decay_config=decay_config,
+            )
+            relevance = blended
+        else:
+            importance = meta.get("importance", "medium")
+            updated_at = meta.get("updated_at")
+            relevance = _compute_relevance(distance, importance, updated_at, imp_score)
 
         # Apply threshold
         if relevance < threshold:

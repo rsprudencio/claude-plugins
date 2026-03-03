@@ -63,7 +63,10 @@ def e2e_database_url():
 @pytest.fixture(scope="session")
 def e2e_schema(e2e_database_url):
     """Initialize dual-schema DDL (core + vault) in the test database."""
-    from tools.schema import CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL, SYNC_SCHEMA_SQL
+    from tools.schema import (
+        CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL,
+        SYNC_SCHEMA_SQL, CONSOLIDATION_SCHEMA_SQL,
+    )
 
     conn = psycopg.connect(e2e_database_url, autocommit=True)
     try:
@@ -72,6 +75,7 @@ def e2e_schema(e2e_database_url):
         conn.execute(VAULT_SCHEMA_SQL.format(dimensions=384))
         conn.execute(CORE_META_SQL)
         conn.execute(SYNC_SCHEMA_SQL)
+        conn.execute(CONSOLIDATION_SCHEMA_SQL)
     finally:
         conn.close()
 

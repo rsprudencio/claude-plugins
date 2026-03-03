@@ -240,6 +240,61 @@ ON CONFLICT (key) DO UPDATE SET value = '{{"version": 3}}'::jsonb;
 """
 
 
+CONSOLIDATION_SCHEMA_SQL = """\
+-- Phase 8: LLM-driven consolidation support
+ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
+    consolidation_run_id TEXT;
+
+-- Self-supersession prevention
+DO $$ BEGIN
+    ALTER TABLE core.memories ADD CONSTRAINT chk_no_self_supersession
+        CHECK (id != superseded_by);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Cycle prevention trigger (A→B→A and longer chains)
+CREATE OR REPLACE FUNCTION core.prevent_supersession_cycle() RETURNS trigger AS $$
+BEGIN
+    IF NEW.superseded_by IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF EXISTS (
+        WITH RECURSIVE chain AS (
+            SELECT NEW.superseded_by AS node_id
+            UNION ALL
+            SELECT m.superseded_by
+            FROM core.memories m
+            JOIN chain c ON m.id = c.node_id
+            WHERE m.superseded_by IS NOT NULL
+        )
+        SELECT 1 FROM chain WHERE node_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'Supersession cycle detected: % would create a loop', NEW.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_supersession_cycle'
+    ) THEN
+        CREATE TRIGGER trg_supersession_cycle
+            BEFORE INSERT OR UPDATE OF superseded_by ON core.memories
+            FOR EACH ROW WHEN (NEW.superseded_by IS NOT NULL)
+            EXECUTE FUNCTION core.prevent_supersession_cycle();
+    END IF;
+END;
+$$;
+
+-- Index for consolidation run queries
+CREATE INDEX IF NOT EXISTS idx_core_consolidation_run
+    ON core.memories (consolidation_run_id)
+    WHERE consolidation_run_id IS NOT NULL;
+"""
+
+
 SYNC_SCHEMA_SQL = """\
 -- Phase 7: Multi-remote sync columns on core.memories
 ALTER TABLE core.memories ADD COLUMN IF NOT EXISTS
@@ -355,6 +410,9 @@ def ensure_schema() -> None:
 
             # Phase 7: sync columns + queue table (idempotent)
             conn.execute(SYNC_SCHEMA_SQL)
+
+            # Phase 8: consolidation support (idempotent)
+            conn.execute(CONSOLIDATION_SCHEMA_SQL)
 
             # Check if migration is needed
             old_table = conn.execute(
@@ -572,7 +630,7 @@ def check_model_consistency() -> None:
             "dimensions": emb["dimensions"],
             "vector_type": "halfvec",
         })
-        set_meta("schema_version", {"version": 4})
+        set_meta("schema_version", {"version": 5})
         logger.info("Recorded embedding config in core.meta: %s (%dd)",
                      emb["model"], emb["dimensions"])
         return

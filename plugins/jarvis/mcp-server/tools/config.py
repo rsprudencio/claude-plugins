@@ -258,6 +258,42 @@ def get_todoist_prompt_alerts_config() -> dict:
     return _merge_with_defaults(defaults, todoist_alerts)
 
 
+def get_decay_config() -> dict:
+    """Get importance decay configuration with defaults."""
+    defaults = {
+        "enabled": True,
+        "rate_per_month": 0.05,
+        "retrieval_half_life_days": 30,
+        "retrieval_boost_max": 0.15,
+        "min_importance": 0.05,
+    }
+    return _merge_with_defaults(defaults, _get_memory_section("decay"))
+
+
+def get_ranking_config() -> dict:
+    """Get blended ranking configuration with defaults."""
+    defaults = {
+        "similarity_weight": 0.7,
+        "importance_weight": 0.3,
+        "overfetch_factor": 5,
+    }
+    return _merge_with_defaults(defaults, _get_memory_section("ranking"))
+
+
+def get_consolidation_config() -> dict:
+    """Get LLM-driven consolidation configuration with defaults."""
+    defaults = {
+        "enabled": False,
+        "similarity_threshold": 0.85,
+        "min_cluster_size": 3,
+        "max_clusters": 20,
+        "budget_seconds": 60,
+        "confidence_threshold": 0.85,
+        "auto_apply": False,
+    }
+    return _merge_with_defaults(defaults, _get_memory_section("consolidation"))
+
+
 def get_worklog_config() -> dict:
     """Get worklog configuration with defaults."""
     defaults = {

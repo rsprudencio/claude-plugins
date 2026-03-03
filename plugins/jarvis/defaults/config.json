@@ -86,6 +86,27 @@
       "lookback_minutes": 10,
       "merge_threshold": 0.7
     },
+    "decay": {
+      "enabled": true,
+      "rate_per_month": 0.05,
+      "retrieval_half_life_days": 30,
+      "retrieval_boost_max": 0.15,
+      "min_importance": 0.05
+    },
+    "ranking": {
+      "similarity_weight": 0.7,
+      "importance_weight": 0.3,
+      "overfetch_factor": 5
+    },
+    "consolidation": {
+      "enabled": false,
+      "similarity_threshold": 0.85,
+      "min_cluster_size": 3,
+      "max_clusters": 20,
+      "budget_seconds": 60,
+      "confidence_threshold": 0.85,
+      "auto_apply": false
+    },
     "sync": {
       "enabled": false,
       "strategy": "first-match",
