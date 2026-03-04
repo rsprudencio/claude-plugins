@@ -112,6 +112,7 @@
       "strategy": "first-match",
       "default_action": "local-only",
       "worker_interval_seconds": 30,
+      "pull_interval_seconds": 300,
       "remotes": {
         "_example_remote": {
           "url": "$PG_REMOTE_URL",

@@ -26,12 +26,14 @@ _remote_pools: dict[str, object] = {}  # name → ConnectionPool
 class RemoteConfig:
     """Configuration for a remote database connection."""
     name: str
-    host: str
+    host: str = "localhost"
     port: int = 5432
     database: str = "jarvis"
     user: str = "jarvis"
     password: Optional[str] = None
     auth_method: str = "password"  # "password", "iam", "mtls"
+    # URL-based connection (takes precedence over host/port/database/user)
+    url: Optional[str] = None
     # SSL/TLS options
     sslmode: str = "verify-full"
     sslrootcert: Optional[str] = None
@@ -49,11 +51,17 @@ class RemoteConfig:
 def _build_conninfo(config: RemoteConfig) -> str:
     """Build a psycopg conninfo string from RemoteConfig.
 
+    When config.url is set, returns it directly (already resolved).
+    Otherwise builds from individual fields.
+
     Handles password resolution for each auth method:
     - password: uses config.password directly
     - iam: generates short-lived token via boto3
     - mtls: no password, uses client cert
     """
+    if config.url:
+        return config.url
+
     password = config.password
 
     if config.auth_method == "iam":
@@ -145,8 +153,12 @@ def get_remote_pool(name: str):
     config = _load_remote_config(name)
     pool = _create_pool(config)
     _remote_pools[name] = pool
-    logger.info("Created remote pool: %s (%s@%s:%d/%s)",
-                name, config.user, config.host, config.port, config.database)
+    if config.url:
+        from .sync_config import redact_dsn
+        logger.info("Created remote pool: %s (%s)", name, redact_dsn(config.url))
+    else:
+        logger.info("Created remote pool: %s (%s@%s:%d/%s)",
+                    name, config.user, config.host, config.port, config.database)
     return pool
 
 
@@ -154,8 +166,11 @@ def _load_remote_config(name: str) -> RemoteConfig:
     """Load remote config from Jarvis config file.
 
     Reads from memory.sync.remotes.<name> in config.json.
+    URL-first: when ``url`` is present, resolve env vars and use it
+    as the conninfo directly instead of building from host/port/database.
     """
     from .config import get_sync_config
+    from .sync_config import resolve_env_vars
 
     sync_cfg = get_sync_config()
     remotes = sync_cfg.get("remotes", {})
@@ -164,8 +179,16 @@ def _load_remote_config(name: str) -> RemoteConfig:
         raise KeyError(f"Remote not configured: {name!r}")
 
     remote = remotes[name]
+
+    # URL takes precedence over individual fields
+    resolved_url = None
+    raw_url = remote.get("url")
+    if raw_url:
+        resolved_url = resolve_env_vars(raw_url)
+
     return RemoteConfig(
         name=name,
+        url=resolved_url,
         host=remote.get("host", "localhost"),
         port=remote.get("port", 5432),
         database=remote.get("database", "jarvis"),

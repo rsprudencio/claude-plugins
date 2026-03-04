@@ -428,6 +428,58 @@ $$;
 """
 
 
+LOCAL_MIRROR_SQL = """\
+CREATE SCHEMA IF NOT EXISTS {schema};
+
+CREATE TABLE IF NOT EXISTS {schema}.memories (
+    id TEXT PRIMARY KEY,
+    document TEXT NOT NULL,
+    embedding halfvec({dimensions}),
+
+    -- Classification columns (same as local.memories)
+    category TEXT DEFAULT 'observation',
+    scope TEXT DEFAULT 'global',
+    project TEXT,
+    source TEXT DEFAULT 'auto-extract',
+    importance_score FLOAT DEFAULT 0.5,
+    retrieval_count FLOAT DEFAULT 0,
+
+    -- Lifecycle
+    status TEXT DEFAULT 'active',
+    superseded_by TEXT,
+    deleted_at TIMESTAMPTZ,
+
+    -- Sync metadata
+    synced_to TEXT[] DEFAULT '{{}}',
+    origin TEXT DEFAULT 'local',
+    consolidation_run_id TEXT,
+
+    -- Remaining flexible metadata
+    metadata JSONB DEFAULT '{{}}'::jsonb,
+
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Active view for query convenience
+CREATE OR REPLACE VIEW {schema}.active_memories AS
+    SELECT * FROM {schema}.memories WHERE status = 'active';
+
+-- Reuse the shared updated_at trigger function (created by LOCAL_SCHEMA_SQL)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_{schema}_memories_updated_at'
+    ) THEN
+        CREATE TRIGGER trg_{schema}_memories_updated_at
+            BEFORE UPDATE ON {schema}.memories
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    END IF;
+END;
+$$;
+"""
+
+
 def _get_pool():
     """Get or create singleton connection pool with config-based invalidation.
 

@@ -115,6 +115,7 @@ def get_sync_config() -> dict:
         "strategy": "first-match",
         "default_action": "local-only",
         "worker_interval_seconds": 30,
+        "pull_interval_seconds": 300,
         "remotes": {},
         "rules": [],
         "project_groups": {},
