@@ -42,11 +42,27 @@ RUN wget -q "${HF_BASE}/onnx/model.onnx" -O model.onnx && \
     wget -q "${HF_BASE}/tokenizer.json" -O tokenizer.json && \
     echo "${TOKENIZER_HASH}  tokenizer.json" | sha256sum -c
 
-# ---- Embedding model: pre-baked onnx-community INT8 quantized ----
-# granite-embedding-small-english-r2 (384d, ModernBERT, INT8 quantized)
-# Source: onnx-community/granite-embedding-small-english-r2-ONNX
-# INT8 via optimum-cli with MHA fusion — 50MB on disk, ~400MB runtime.
-# Includes tokenizer + config + ONNX model. No HuggingFace download at build.
+# ---- Embedding model fetch: granite-embedding-small-english-r2 INT8 quantized ----
+FROM alpine:3.20 AS embedding-fetch
+
+RUN apk add --no-cache wget
+
+# onnx-community/granite-embedding-small-english-r2-ONNX (384d, ModernBERT, INT8)
+# ~52MB on disk. model_quantized.onnx renamed to model.onnx for runtime compat.
+ARG EMB_BASE=https://huggingface.co/onnx-community/granite-embedding-small-english-r2-ONNX/resolve/main
+WORKDIR /models/embedding/onnx
+RUN wget -q "${EMB_BASE}/onnx/model_quantized.onnx" -O model.onnx && \
+    echo "a3fad524afc3f060216a8ddbb1ac89c9b6498fba8995b5718bde879076a2e9ba  model.onnx" | sha256sum -c && \
+    wget -q "${EMB_BASE}/onnx/model_quantized.onnx_data" -O model.onnx_data && \
+    echo "1f4cf47e4adec7f7ae09db03d071ba8667e07f9a4203142c7efa8d37fe453597  model.onnx_data" | sha256sum -c
+
+WORKDIR /models/embedding
+RUN wget -q "${EMB_BASE}/tokenizer.json" -O tokenizer.json && \
+    echo "feeb83348dcb033bc6b9d2e1f7906ca9eb2d122845000c9416d894d7c2927149  tokenizer.json" | sha256sum -c && \
+    wget -q "${EMB_BASE}/config.json" -O config.json && \
+    echo "1a1710c20911da8c96179716bf44058e54cca6fa7952cce77be83ef05edae3ee  config.json" | sha256sum -c && \
+    wget -q "${EMB_BASE}/tokenizer_config.json" -O tokenizer_config.json && \
+    wget -q "${EMB_BASE}/special_tokens_map.json" -O special_tokens_map.json
 
 # ---- Runtime stage ----
 FROM python:3.12-slim
@@ -75,8 +91,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=model-fetch /models /app/models
 ENV JARVIS_MODEL_DIR=/app/models/cross-encoder
 
-# Copy pre-baked embedding model (onnx-community INT8 quantized, ~50MB)
-COPY docker/models/embedding /app/models/embedding
+# Copy pre-fetched embedding model (onnx-community INT8 quantized, ~52MB)
+COPY --from=embedding-fetch /models/embedding /app/models/embedding
 ARG EMBEDDING_DIMS=384
 ENV EMBEDDING_MODEL=/app/models/embedding
 ENV EMBEDDING_DIMENSIONS=${EMBEDDING_DIMS}
