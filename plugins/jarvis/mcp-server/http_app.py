@@ -107,56 +107,12 @@ async def _send_401(send, message: str):
 
 
 async def health_response(scope, receive, send):
-    """ASGI response for /health endpoint with PostgreSQL and auth status."""
-    from jarvis_common.auth import get_auth_config
-    from tools.config import get_postgres_config
-
-    cfg = get_postgres_config()
-    # Mask credentials in URL for health display
-    url = cfg["url"]
-    display_url = url.split("@")[-1] if "@" in url else url
-
-    pg_status = "ok"
-    pg_info = {"host": display_url}
-    try:
-        from tools.schema import execute_query
-        count_result = execute_query(
-            "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
-            fetch="one",
-        )
-        pg_info["doc_count"] = count_result["cnt"] if count_result else 0
-    except Exception as e:
-        pg_status = "disconnected"
-        pg_info["error"] = str(e)
-
-    data = {
-        "status": "ok" if pg_status == "ok" else "degraded",
+    """Minimal liveness check — no DB queries, no secrets, no auth required."""
+    await _json_response(send, {
+        "status": "ok",
         "server": "jarvis-core",
         "version": _VERSION,
-        "postgres": {**pg_info, "status": pg_status},
-    }
-
-    # Sync status (only present when enabled)
-    from tools.config import get_sync_config
-    sync_cfg = get_sync_config()
-    if sync_cfg.get("enabled"):
-        remotes = sync_cfg.get("remotes", {})
-        data["sync"] = {"enabled": True, "remotes": len(remotes)}
-
-    # Auth status (mTLS is a detail of auth, not a separate concern)
-    auth_cfg = get_auth_config()
-    if auth_cfg is not None:
-        tokens = auth_cfg.get("tokens", {})
-        mtls_configured = bool(os.environ.get("JARVIS_TLS_CA"))
-        data["auth"] = {
-            "enabled": True,
-            "users": len(tokens) if isinstance(tokens, dict) else 0,
-            "mtls": mtls_configured and _mtls_patch_ok,
-        }
-    else:
-        data["auth"] = {"enabled": False}
-
-    await _json_response(send, data)
+    })
 
 
 async def not_found(scope, receive, send):
@@ -164,33 +120,72 @@ async def not_found(scope, receive, send):
 
 
 async def telemetry_response(scope, receive, send):
-    """GET /telemetry — sync queue stats and per-remote health."""
+    """GET /telemetry — full operational status (authenticated)."""
     try:
-        from tools.config import get_sync_config
-        from tools.sync_queue import get_queue_stats
-        from tools.schema import _get_pool
+        from jarvis_common.auth import get_auth_config
+        from tools.config import get_postgres_config, get_sync_config
 
-        sync_cfg = get_sync_config()
-        if not sync_cfg.get("enabled"):
-            await _json_response(send, {"sync": {"enabled": False}})
-            return
+        # --- PostgreSQL status ---
+        cfg = get_postgres_config()
+        url = cfg["url"]
+        display_url = url.split("@")[-1] if "@" in url else url
 
-        pool = _get_pool()
-        stats = get_queue_stats(pool)
-        remotes = sync_cfg.get("remotes", {})
+        pg_status = "ok"
+        pg_info = {"host": display_url}
+        try:
+            from tools.schema import execute_query
+            count_result = execute_query(
+                "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
+                fetch="one",
+            )
+            pg_info["doc_count"] = count_result["cnt"] if count_result else 0
+        except Exception as e:
+            pg_status = "disconnected"
+            pg_info["error"] = str(e)
 
         data = {
-            "sync": {
+            "status": "ok" if pg_status == "ok" else "degraded",
+            "server": "jarvis-core",
+            "version": _VERSION,
+            "postgres": {**pg_info, "status": pg_status},
+        }
+
+        # --- Sync status ---
+        sync_cfg = get_sync_config()
+        if sync_cfg.get("enabled"):
+            from tools.sync_queue import get_queue_stats
+            from tools.schema import _get_pool
+
+            remotes = sync_cfg.get("remotes", {})
+            try:
+                pool = _get_pool()
+                queue_stats = get_queue_stats(pool)
+            except Exception:
+                queue_stats = {"error": "unavailable"}
+
+            data["sync"] = {
                 "enabled": True,
                 "strategy": sync_cfg.get("strategy", "first-match"),
                 "worker_interval_seconds": sync_cfg.get("worker_interval_seconds", 30),
-                "remotes": {
-                    name: {"configured": True}
-                    for name in remotes
-                },
-                "queue": stats,
+                "remotes": {name: {"configured": True} for name in remotes},
+                "queue": queue_stats,
             }
-        }
+        else:
+            data["sync"] = {"enabled": False}
+
+        # --- Auth status ---
+        auth_cfg = get_auth_config()
+        if auth_cfg is not None:
+            tokens = auth_cfg.get("tokens", {})
+            mtls_configured = bool(os.environ.get("JARVIS_TLS_CA"))
+            data["auth"] = {
+                "enabled": True,
+                "users": len(tokens) if isinstance(tokens, dict) else 0,
+                "mtls": mtls_configured and _mtls_patch_ok,
+            }
+        else:
+            data["auth"] = {"enabled": False}
+
         await _json_response(send, data)
     except Exception as e:
         await _json_response(send, {"error": str(e)}, status=500)

@@ -47,39 +47,18 @@ def test_app_creates_successfully():
     assert callable(app)
 
 
-def test_health_endpoint(client, monkeypatch):
-    """GET /health should return status ok with server name, version, and Postgres info."""
-    import tools.schema as schema_mod
-
-    monkeypatch.setattr(schema_mod, "execute_query", lambda *a, **kw: {"cnt": 42})
-
+def test_health_endpoint(client):
+    """GET /health should return minimal liveness response — no DB, no secrets."""
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
     assert data["server"] == "jarvis-core"
     assert "version" in data
-    # Health endpoint should include PostgreSQL connection info
-    assert "postgres" in data
-    assert "host" in data["postgres"]
-    assert data["postgres"]["doc_count"] == 42
-
-
-def test_health_endpoint_degraded(client, monkeypatch):
-    """GET /health returns degraded status when PG is unreachable."""
-    import tools.schema as schema_mod
-
-    def _fail(*a, **kw):
-        raise ConnectionError("connection refused")
-
-    monkeypatch.setattr(schema_mod, "execute_query", _fail)
-
-    response = client.get("/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "degraded"
-    assert data["postgres"]["status"] == "disconnected"
-    assert "error" in data["postgres"]
+    # Health must NOT contain operational details (those live on /telemetry)
+    assert "postgres" not in data
+    assert "sync" not in data
+    assert "auth" not in data
 
 
 def test_not_found(client):
