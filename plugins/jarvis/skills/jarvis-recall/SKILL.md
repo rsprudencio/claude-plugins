@@ -83,7 +83,7 @@ When enabled (default), results are reranked using a cross-encoder model after i
 - **Response metadata**: When reranking is applied, the response includes `reranking: {applied: true, alpha: 0.7, candidates: N, top_k: K}`
 - **Graceful fallback**: If the model isn't available or latency exceeds budget, vector scores are used silently
 - **First use**: The ONNX model (~23MB) is downloaded automatically to `~/.jarvis/models/cross-encoder/`
-- **Not applied to per-prompt search** (`semantic_context`) — only to explicit `/jarvis-recall` queries
+- **Not applied to context enrichment** (`semantic_context`) — only to explicit `/jarvis-recall` queries
 
 Configure via `memory.reranking` in `~/.jarvis/config.json` (or `/jarvis-settings` > Advanced > Memory system).
 

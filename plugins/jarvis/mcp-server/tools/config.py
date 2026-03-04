@@ -130,6 +130,15 @@ def get_sync_config() -> dict:
     return config
 
 
+def get_project_groups_config() -> dict:
+    """Get project groups configuration from the sync section.
+
+    Project groups map logical group names to lists of project identifiers,
+    used by sync rules for scoped replication.
+    """
+    return get_sync_config().get("project_groups", {})
+
+
 def get_memory_config() -> dict:
     """Get memory subsystem configuration with defaults."""
     defaults = {
@@ -176,8 +185,8 @@ def get_scoring_config() -> dict:
     return _merge_with_defaults(defaults, _get_memory_section("scoring"))
 
 
-def get_per_prompt_config() -> dict:
-    """Get per-prompt semantic search configuration with defaults."""
+def get_context_enrichment_config() -> dict:
+    """Get context enrichment (per-prompt search) configuration with defaults."""
     defaults = {
         "enabled": True,
         "threshold": 0.5,
@@ -185,7 +194,7 @@ def get_per_prompt_config() -> dict:
         "debug": False,
         "passive_retrieval_increment": 0.01,
     }
-    return _merge_with_defaults(defaults, _get_memory_section("per_prompt_search"))
+    return _merge_with_defaults(defaults, _get_memory_section("context_enrichment"))
 
 
 def get_expansion_config() -> dict:

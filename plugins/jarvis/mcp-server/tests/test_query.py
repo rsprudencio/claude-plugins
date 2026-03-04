@@ -552,7 +552,7 @@ class TestSemanticContextFractionalBump:
         """semantic_context() calls increment with configured value."""
         mock_config.set(
             memory={
-                "per_prompt_search": {"passive_retrieval_increment": 0.05},
+                "context_enrichment": {"passive_retrieval_increment": 0.05},
             }
         )
 
@@ -577,7 +577,7 @@ class TestSemanticContextFractionalBump:
         """passive_retrieval_increment=0 -> no increment call."""
         mock_config.set(
             memory={
-                "per_prompt_search": {"passive_retrieval_increment": 0},
+                "context_enrichment": {"passive_retrieval_increment": 0},
             }
         )
 

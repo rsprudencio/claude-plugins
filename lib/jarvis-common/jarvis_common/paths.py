@@ -174,7 +174,7 @@ def validate_paths_config() -> list:
         "embedding_device",
         "embedding_backend",
         "auto_extract",
-        "per_prompt_search",
+        "context_enrichment",
         "chunking",
         "scoring",
         "expansion",

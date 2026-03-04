@@ -56,7 +56,7 @@ AskUserQuestion:
         - label: "Statusline"
           description: "Install or update the Claude Code statusline"
         - label: "Advanced settings"
-          description: "Vault paths, memory tuning, per-prompt search"
+          description: "Vault paths, memory tuning, context enrichment"
       multiSelect: false
 ```
 
@@ -281,7 +281,7 @@ AskUserQuestion:
           description: "Where journals, notes, inbox, etc. are stored"
         - label: "Memory system"
           description: "Secret detection, importance scoring, DB location"
-        - label: "Per-prompt search"
+        - label: "Context enrichment"
           description: "Automatic vault memory injection on every message"
         - label: "Back to main menu"
       multiSelect: false
@@ -331,9 +331,9 @@ Let user change specific paths. All paths are relative to vault root.
 
 Config key: `memory.reranking`
 
-Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jarvis/models/cross-encoder/`. Not applied to per-prompt search.
+Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jarvis/models/cross-encoder/`. Not applied to context enrichment.
 
-#### Per-prompt search
+#### Context enrichment
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -348,7 +348,7 @@ Offer presets:
 - "Disabled" -> `enabled: false`
 - "Custom" -> Ask for each setting individually
 
-Config key: `memory.per_prompt_search`
+Config key: `memory.context_enrichment`
 
 ### 3h. View full config
 
@@ -370,7 +370,7 @@ importance_scoring:   true
 recency_boost_days:   7
 default_importance:   0.5
 
-=== Per-Prompt Search ===
+=== Context Enrichment ===
 enabled:              true
 threshold:            0.5
 budget:               8000

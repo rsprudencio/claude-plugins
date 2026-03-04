@@ -9,7 +9,7 @@ def test_get_prompt_context_disabled(monkeypatch):
     """Disabled config returns empty context and skips search."""
     monkeypatch.setattr(
         hook_endpoints,
-        "get_per_prompt_config",
+        "get_context_enrichment_config",
         lambda: {"enabled": False, "budget": 9000, "debug": True},
     )
     monkeypatch.setattr(
@@ -34,7 +34,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
     """Prompt context delegates to semantic_context and returns matches."""
     monkeypatch.setattr(
         hook_endpoints,
-        "get_per_prompt_config",
+        "get_context_enrichment_config",
         lambda: {"enabled": True, "threshold": 0.6, "budget": 1200, "debug": False},
     )
     monkeypatch.setattr(

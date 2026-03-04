@@ -18,7 +18,7 @@ from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 from .expansion import expand_query as _expand_query
 from .config import (
-    get_decay_config, get_expansion_config, get_per_prompt_config,
+    get_context_enrichment_config, get_decay_config, get_expansion_config,
     get_ranking_config, get_reranking_config, get_staleness_config,
 )
 from .format_support import detect_format
@@ -870,8 +870,8 @@ def semantic_context(
     # Fractional retrieval bump for passively surfaced results
     surfaced_ids = [entry["doc_id"] for entry in selected] if selected else []
     if selected and not skip_retrieval_increment:
-        per_prompt_config = get_per_prompt_config()
-        passive_increment = per_prompt_config.get("passive_retrieval_increment", 0.01)
+        enrichment_config = get_context_enrichment_config()
+        passive_increment = enrichment_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
             _increment_retrieval_counts(surfaced_ids, increment=passive_increment)
 

@@ -14,6 +14,14 @@ REGISTRY: dict[str, object] = {
     "gemini": GeminiProvider(),
 }
 
+# Optional providers — guarded to avoid breaking the registry
+# if provider-specific dependencies are missing.
+try:
+    from .anthropic import AnthropicProvider
+    REGISTRY["anthropic"] = AnthropicProvider()
+except ImportError:
+    pass
+
 
 def resolve_provider(name: str | None = None):
     """Look up a provider adapter by name, or auto-select the first available.

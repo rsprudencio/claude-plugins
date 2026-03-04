@@ -18,6 +18,7 @@ from providers.base import (
 from providers._registry import REGISTRY, resolve_provider
 from providers.codex import CodexProvider
 from providers.gemini import GeminiProvider
+from providers.anthropic import AnthropicProvider
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +101,10 @@ class TestRegistry:
 
     def test_resolve_none_returns_first_available(self):
         """resolve_provider(None) auto-selects first available CLI."""
-        with patch.object(CodexProvider, "is_available", return_value=(True, "/usr/bin/codex")):
+        with (
+            patch.object(CodexProvider, "is_available", return_value=(True, "/usr/bin/codex")),
+            patch.object(AnthropicProvider, "is_available", return_value=(False, None)),
+        ):
             adapter = resolve_provider(None)
             assert adapter is not None
             assert adapter.name == "codex"
@@ -110,8 +114,10 @@ class TestRegistry:
         with (
             patch.object(CodexProvider, "is_available", return_value=(False, None)),
             patch.object(GeminiProvider, "is_available", return_value=(False, None)),
+            patch.object(AnthropicProvider, "is_available", return_value=(False, None)),
             patch.object(CodexProvider, "has_api_key", return_value=False),
             patch.object(GeminiProvider, "has_api_key", return_value=True),
+            patch.object(AnthropicProvider, "has_api_key", return_value=False),
         ):
             adapter = resolve_provider(None)
             assert adapter is not None
@@ -122,8 +128,10 @@ class TestRegistry:
         with (
             patch.object(CodexProvider, "is_available", return_value=(False, None)),
             patch.object(GeminiProvider, "is_available", return_value=(False, None)),
+            patch.object(AnthropicProvider, "is_available", return_value=(False, None)),
             patch.object(CodexProvider, "has_api_key", return_value=False),
             patch.object(GeminiProvider, "has_api_key", return_value=False),
+            patch.object(AnthropicProvider, "has_api_key", return_value=False),
         ):
             adapter = resolve_provider(None)
             assert adapter is not None  # Still returns something

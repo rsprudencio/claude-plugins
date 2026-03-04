@@ -80,7 +80,7 @@ claude              # Then type /jarvis:jarvis to activate mid-session
 | `/jarvis-recall database decisions` | Searches your vault by meaning |
 | `/jarvis-orient` | Strategic briefing — what to focus on today |
 | `/jarvis-todoist` | Process your Todoist inbox with smart routing |
-| `/jarvis-promote` | Review and promote auto-captured observations |
+| `/jarvis-close` | End-of-session review checklist |
 
 ### How Jarvis Works
 
@@ -94,13 +94,15 @@ claude              # Then type /jarvis:jarvis to activate mid-session
 
 ## What's in the Box
 
-### 3 Composable Plugins
+### 5 Composable Plugins
 
 | Plugin | What | Install |
 |--------|------|---------|
-| **jarvis** (core) | Vault management, journals, git audit, semantic memory, auto-extract | Required |
+| **jarvis** (core) | Vault management, semantic memory, auto-extract, pattern detection | Required |
+| **jarvis-obsidian** | PKM: git audit trail, journal, vault exploration | Required |
 | **jarvis-todoist** | Smart task routing, inbox capture, Todoist sync | Optional (needs [API token](https://app.todoist.com/app/settings/integrations/developer)) |
 | **jarvis-strategic** | Orient briefings, catch-up, summaries, pattern analysis | Optional |
+| **jarvis-toolbelt** | Engineering: security review, adversarial review, TDD | Optional |
 
 ### 14 Skills (Slash Commands)
 
@@ -112,7 +114,7 @@ claude              # Then type /jarvis:jarvis to activate mid-session
 | `/jarvis-journal` | Create journal entries with intelligent vault linking |
 | `/jarvis-inbox` | Process and organize vault inbox items |
 | `/jarvis-recall <query>` | Semantic search across your vault |
-| `/jarvis-promote` | Browse and promote auto-captured observations |
+| `/jarvis-close` | Session closure checklist |
 | `/jarvis-memory-stats` | Memory system health and statistics |
 | `/jarvis-schedule` | Manage recurring Jarvis actions |
 | `/jarvis-audit` | Git audit protocol reference |
@@ -141,19 +143,19 @@ Jarvis delegates work to specialized agents that run in isolated context windows
 
 ### MCP Tools
 
-22-tool Python MCP server providing vault filesystem, git operations, semantic memory, content API, and path configuration. See [plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json) for the full reference.
+12-tool Python MCP server (jarvis-core) providing vault filesystem, semantic memory, content API, and path configuration. A second 9-tool MCP server (jarvis-obsidian) provides git audit trail, commit history, and file operations. See [plugins/jarvis/capabilities.json](plugins/jarvis/capabilities.json) for the full reference.
 
 ---
 
 ## Memory System
 
-Jarvis has a two-tier semantic memory powered by ChromaDB:
+Jarvis has a unified semantic memory powered by PostgreSQL + pgvector:
 
-**Tier 1 — File-Backed (Permanent)**
-Your vault files (`.md` or `.org`) and strategic memories. Git-tracked, visible in Obsidian/Emacs, searchable via `/jarvis-recall`.
+**Vault Documents (`obsidian.documents`)**
+Your vault files (`.md` or `.org`) — git-tracked, visible in Obsidian/Emacs, searchable via `/jarvis-recall`. Indexed with vector embeddings for semantic search.
 
-**Tier 2 — Ephemeral (Auto-Generated)**
-Observations captured from your conversations, patterns, summaries. Lives in ChromaDB only. Review with `/jarvis-promote` — valuable items get promoted to permanent vault files.
+**Auto-Generated Content (`local.memories`)**
+Observations, patterns, decisions, and worklogs captured from your conversations. Stored with importance scoring, retrieval tracking, and time-based decay.
 
 **Auto-Extract** runs passively after each conversation turn, using Haiku to identify insights worth remembering. Set to `background` (recommended) or `disabled` in `/jarvis-settings`.
 
@@ -268,10 +270,10 @@ If observations aren't being captured:
 
 If `/recall` returns no results or indexing fails:
 
-1. **Check database**: `ls ~/.jarvis/db/` — should contain ChromaDB files
-2. **Rebuild index**: Run `/jarvis-settings` → "Re-index vault"
-3. **Check stats**: Run `/memory-stats` to see document count
-4. **Verify container running**: ChromaDB runs inside the Docker container — check with `docker compose -f ~/.jarvis/docker-compose.yml ps`
+1. **Check container**: `docker compose -f ~/.jarvis/docker-compose.yml ps` — should show healthy
+2. **Verify PG connection**: `curl localhost:8741/health` — should show `"postgres": {"status": "ok"}`
+3. **Rebuild index**: Run `/jarvis-settings` → "Re-index vault"
+4. **Check stats**: Run `/jarvis-memory-stats` to see document count
 
 ### Windows-Specific Issues
 
@@ -307,11 +309,13 @@ If `/recall` returns no results or indexing fails:
 │   ├── jarvis/                   # Core plugin
 │   │   ├── agents/               # Journal, audit, explorer agents
 │   │   ├── skills/               # 9 core skills
-│   │   ├── mcp-server/           # Python MCP server (22 tools, 1480 tests)
+│   │   ├── mcp-server/           # Python MCP server (12 tools)
 │   │   ├── hooks/                # Auto-extract Stop hook
 │   │   └── statusline/           # Claude Code statusline
+│   ├── jarvis-obsidian/          # PKM: git audit, journal, exploration
 │   ├── jarvis-todoist/           # Todoist extension
-│   └── jarvis-strategic/         # Strategic analysis extension
+│   ├── jarvis-strategic/         # Strategic analysis extension
+│   └── jarvis-toolbelt/          # Engineering: security, adversarial review
 ├── CLAUDE.md                     # Development guide
 └── LICENSE                       # CC BY-NC 4.0
 ```
@@ -319,10 +323,12 @@ If `/recall` returns no results or indexing fails:
 ### Running Tests
 
 ```bash
-cd plugins/jarvis/mcp-server && python3 -m pytest -v
+make test        # unit tests (no DB required)
+make test-e2e    # e2e tests against real PostgreSQL
+make test-all    # both
 ```
 
-1480 unit tests covering config, file ops, git operations, memory, protocol, and server registration.
+Unit tests covering config, file ops, git operations, memory, protocol, and server registration.
 
 ### Documentation
 

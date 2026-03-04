@@ -12,7 +12,7 @@ from typing import Any
 
 from .config import (
     get_auto_extract_config,
-    get_per_prompt_config,
+    get_context_enrichment_config,
     get_todoist_prompt_alerts_config,
     get_worklog_config,
 )
@@ -159,7 +159,7 @@ def _build_common_metadata(context: dict, include_project_dir: bool = False) -> 
 
 def get_prompt_context(prompt: str) -> dict:
     """Return per-prompt semantic context and todoist alert config."""
-    config = get_per_prompt_config()
+    config = get_context_enrichment_config()
     todoist_cfg = get_todoist_prompt_alerts_config()
 
     budget = _safe_int(config.get("budget"), 8000)

@@ -1,7 +1,7 @@
 {
   "$schema": "jarvis-capabilities/v2",
   "description": "AI-first reference for Jarvis plugin capabilities. Designed for Jarvis to self-reference when answering user questions about features, workflows, and best practices.",
-  "last_updated": "2026-02-22",
+  "last_updated": "2026-03-03",
 
   "identity": {
     "name": "Jarvis",
@@ -12,12 +12,12 @@
       "Clarify before acting",
       "Progressive disclosure — load only what's needed"
     ],
-    "architecture": "modular plugin system with 4 composable plugins"
+    "architecture": "modular plugin system with 5 composable plugins"
   },
 
   "plugins": {
     "jarvis": {
-      "version": "2.0.3",
+      "version": "2.3.0",
       "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract, pattern detection",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-core", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
@@ -39,11 +39,17 @@
       "description": "Professional engineering skills and agents — security review, adversarial plan review, TDD workflows",
       "provides": ["agents/security", "agents/adversarial", "skills/security-review", "skills/adversarial-review"],
       "requires": ["jarvis"]
+    },
+    "jarvis-obsidian": {
+      "version": "1.0.0",
+      "description": "PKM vault workflows — JARVIS protocol git audit trail, journal entries, vault exploration",
+      "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-obsidian", "skills/obsidian"],
+      "requires": ["jarvis"]
     }
   },
 
   "skills": {
-    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 14 user-invocable skills across 4 plugins (plus jarvis-audit, a background reference skill).",
+    "_note": "Skills are user-invocable slash commands. Invoke with /jarvis:<skill-name> or just the trigger phrases. 14 user-invocable skills across 5 plugins (plus jarvis-audit, a background reference skill).",
 
     "jarvis": {
       "command": "/jarvis:jarvis",
@@ -483,7 +489,7 @@
       "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to PostgreSQL pgvector",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
       "recency_boost": "Recent content (within configurable days) gets boosted in search ranking",
-      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to per-prompt search."
+      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to context enrichment."
     }
   },
 
@@ -535,7 +541,7 @@
         "merge_threshold": { "type": "float", "default": 0.7, "description": "Jaccard threshold for dedup against existing patterns" }
       },
       "candidates": "In-memory only — lost on restart, re-derived from observations on next scan cycle",
-      "surfacing": "Patterns indexed in unified collection, surfaced via jarvis_retrieve and per-prompt search (no new MCP tools)"
+      "surfacing": "Patterns indexed in unified collection, surfaced via jarvis_retrieve and context enrichment (no new MCP tools)"
     }
   },
 
@@ -580,11 +586,11 @@
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging to ~/.jarvis/debug.auto-extraction.log" }
     },
 
-    "memory_per_prompt_search": {
+    "memory_context_enrichment": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
       "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.4=aggressive, 0.5=balanced, 0.6=conservative)" },
       "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (split 50/50 between core memories and vault references)" },
-      "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for per-prompt search" },
+      "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for context enrichment" },
       "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" }
     },
 
