@@ -1,6 +1,6 @@
 """Shared ANSI color codes and formatting helpers for debug logging.
 
-Used by extract_observation.py and prompt_search.py to maintain
+Used by extract_observation.py and context_enrichment.py to maintain
 consistent visual formatting across debug log files.
 """
 

@@ -1,5 +1,5 @@
 {
-  "description": "Jarvis hooks: per-prompt memory search + auto-extract observation capture + session cleanup",
+  "description": "Jarvis hooks: context enrichment + auto-extract + precompact dedup + session cleanup",
   "hooks": {
     "SessionStart": [
       {
@@ -17,8 +17,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/prompt-search.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/context-enrichment.sh",
             "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/precompact-dedup.sh",
+            "timeout": 2
           }
         ]
       }

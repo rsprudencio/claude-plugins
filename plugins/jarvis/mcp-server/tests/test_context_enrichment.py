@@ -1,11 +1,11 @@
-"""Tests for per-prompt semantic search (UserPromptSubmit hook).
+"""Tests for context enrichment semantic search (UserPromptSubmit hook).
 
 Tests cover:
 - Prompt filtering (_should_skip_prompt)
 - Prompt extraction from hook JSON (_extract_prompt)
 - semantic_context() search function
 - Output formatting (_format_memories)
-- Per-prompt config (get_per_prompt_config)
+- Context enrichment config (get_context_enrichment_config)
 """
 
 import json
@@ -13,14 +13,14 @@ import sys
 import os
 import pytest
 
-# Add hooks-handlers to path for importing prompt_search module
+# Add hooks-handlers to path for importing context_enrichment module
 HOOKS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "hooks-handlers"
 )
 sys.path.insert(0, HOOKS_DIR)
 
-import prompt_search as prompt_search_module
-from prompt_search import _should_skip_prompt, _extract_prompt, _format_memories
+import context_enrichment as context_enrichment_module
+from context_enrichment import _should_skip_prompt, _extract_prompt, _format_memories
 
 
 def _seed_docs(db, ids, documents, metadatas):
@@ -114,7 +114,7 @@ class TestPromptFiltering:
 
         This is a coupling guard: if EXTRACTION_PROMPT in extract_observation.py
         changes its prefix, this test breaks — forcing the filter in
-        prompt_search.py to be updated in sync.
+        context_enrichment.py to be updated in sync.
         """
         from extract_observation import EXTRACTION_PROMPT
 
@@ -130,7 +130,7 @@ class TestPromptFiltering:
         )
         skip, reason = _should_skip_prompt(real_prompt)
         assert skip is True, (
-            f"EXTRACTION_PROMPT changed but prompt_search filter didn't catch it. "
+            f"EXTRACTION_PROMPT changed but context_enrichment filter didn't catch it. "
             f"Update the auto_extract_prompt check in _should_skip_prompt()."
         )
         assert reason == "auto_extract_prompt"
@@ -304,7 +304,7 @@ class TestPromptSearchMain:
     def test_unavailable_endpoint_emits_warning(self, monkeypatch, capsys):
         """When /hook/prompt-context is unavailable, warning XML is emitted."""
         monkeypatch.setattr(
-            prompt_search_module,
+            context_enrichment_module,
             "post_json",
             lambda *args, **kwargs: {
                 "success": False,
@@ -315,11 +315,11 @@ class TestPromptSearchMain:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["prompt_search.py", "This is a substantive prompt for testing."],
+            ["context_enrichment.py", "This is a substantive prompt for testing."],
         )
 
         with pytest.raises(SystemExit) as exc:
-            prompt_search_module.main()
+            context_enrichment_module.main()
 
         assert exc.value.code == 0
         output = capsys.readouterr().out
@@ -635,33 +635,33 @@ class TestSemanticContext:
 # --- Per-Prompt Config Tests ---
 
 
-class TestPerPromptConfig:
-    """Tests for get_per_prompt_config()."""
+class TestContextEnrichmentConfig:
+    """Tests for get_context_enrichment_config()."""
 
     def test_defaults_when_no_config(self, mock_config):
         """Missing memory config uses defaults."""
-        from tools.config import get_per_prompt_config
+        from tools.config import get_context_enrichment_config
 
-        config = get_per_prompt_config()
+        config = get_context_enrichment_config()
         assert config["enabled"] is True
         assert config["threshold"] == 0.5
         assert config["budget"] == 8000
         assert config["passive_retrieval_increment"] == 0.01
 
     def test_disabled(self, mock_config):
-        """Config can disable per-prompt search."""
+        """Config can disable context enrichment."""
         import tools.config as config_module
 
         config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
-        config_data.setdefault("memory", {})["per_prompt_search"] = {"enabled": False}
+        config_data.setdefault("memory", {})["context_enrichment"] = {"enabled": False}
         mock_config.path.write_text(json.dumps(config_data))
         config_module.clear_config_cache()
 
-        from tools.config import get_per_prompt_config
+        from tools.config import get_context_enrichment_config
 
-        config = get_per_prompt_config()
+        config = get_context_enrichment_config()
         assert config["enabled"] is False
 
     def test_custom_threshold(self, mock_config):
@@ -671,13 +671,13 @@ class TestPerPromptConfig:
         config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
-        config_data.setdefault("memory", {})["per_prompt_search"] = {"threshold": 0.7}
+        config_data.setdefault("memory", {})["context_enrichment"] = {"threshold": 0.7}
         mock_config.path.write_text(json.dumps(config_data))
         config_module.clear_config_cache()
 
-        from tools.config import get_per_prompt_config
+        from tools.config import get_context_enrichment_config
 
-        config = get_per_prompt_config()
+        config = get_context_enrichment_config()
         assert config["threshold"] == 0.7
         # Other defaults preserved
         assert config["enabled"] is True
@@ -690,11 +690,115 @@ class TestPerPromptConfig:
         config_module.clear_config_cache()
 
         config_data = json.loads(mock_config.path.read_text())
-        config_data.setdefault("memory", {})["per_prompt_search"] = {"budget": 12000}
+        config_data.setdefault("memory", {})["context_enrichment"] = {"budget": 12000}
         mock_config.path.write_text(json.dumps(config_data))
         config_module.clear_config_cache()
 
-        from tools.config import get_per_prompt_config
+        from tools.config import get_context_enrichment_config
 
-        config = get_per_prompt_config()
+        config = get_context_enrichment_config()
         assert config["budget"] == 12000
+
+
+# --- Dedup Integration Tests ---
+
+
+class TestDedupIntegration:
+    """Tests for dedup wire-up in context enrichment main flow."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_state_dir(self, tmp_path):
+        """Redirect injection state to temp dir."""
+        from unittest.mock import patch
+        with patch("precompact_dedup.STATE_DIR", tmp_path), \
+             patch("context_enrichment.write_injection_state") as mock_write, \
+             patch("context_enrichment.filter_already_injected", side_effect=lambda m, s: m) as mock_filter:
+            self.mock_write = mock_write
+            self.mock_filter = mock_filter
+            self.tmp_path = tmp_path
+            yield
+
+    def _make_success_response(self, matches):
+        """Build a mock /hook/prompt-context success response."""
+        return {
+            "success": True,
+            "data": {
+                "enabled": True,
+                "debug": False,
+                "matches": matches,
+                "query_ms": 10,
+                "budget_used": {"core": 100, "vault": 200},
+                "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
+            },
+        }
+
+    def test_matches_filtered_when_injection_state_exists(self, monkeypatch, capsys):
+        """filter_already_injected is called with matches and session_id."""
+        matches = [
+            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
+        ]
+        monkeypatch.setattr(
+            context_enrichment_module, "post_json",
+            lambda *a, **kw: self._make_success_response(matches),
+        )
+        hook_input = json.dumps({"prompt": "What are my goals?", "session_id": "sess-42"})
+        monkeypatch.setattr(sys, "argv", ["context_enrichment.py", "--hook"])
+        monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(hook_input))
+
+        with pytest.raises(SystemExit):
+            context_enrichment_module.main()
+
+        self.mock_filter.assert_called_once()
+        call_args = self.mock_filter.call_args
+        assert call_args[0][0] == matches
+        assert call_args[0][1] == "sess-42"
+
+    def test_injection_state_written_after_output(self, monkeypatch, capsys):
+        """write_injection_state is called with correct hashes after injection."""
+        from precompact_dedup import compute_content_hash
+
+        matches = [
+            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
+            {"content": "memory two", "source": "b.md", "relevance": 0.8, "type": "note"},
+        ]
+        monkeypatch.setattr(
+            context_enrichment_module, "post_json",
+            lambda *a, **kw: self._make_success_response(matches),
+        )
+        hook_input = json.dumps({"prompt": "What are my goals?", "session_id": "sess-99"})
+        monkeypatch.setattr(sys, "argv", ["context_enrichment.py", "--hook"])
+        monkeypatch.setattr(sys, "stdin", __import__("io").StringIO(hook_input))
+
+        with pytest.raises(SystemExit):
+            context_enrichment_module.main()
+
+        output = capsys.readouterr().out
+        assert "relevant-vault-memories" in output
+
+        self.mock_write.assert_called_once()
+        call_args = self.mock_write.call_args
+        assert call_args[0][0] == "sess-99"
+        expected_hashes = [compute_content_hash(m["content"]) for m in matches]
+        assert call_args[0][1] == expected_hashes
+        assert call_args[0][2] == ["a.md", "b.md"]
+
+    def test_no_filter_when_no_session_id(self, monkeypatch, capsys):
+        """Direct mode (no --hook) passes empty session_id to filter."""
+        matches = [
+            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
+        ]
+        monkeypatch.setattr(
+            context_enrichment_module, "post_json",
+            lambda *a, **kw: self._make_success_response(matches),
+        )
+        monkeypatch.setattr(
+            sys, "argv",
+            ["context_enrichment.py", "What are my goals for the year?"],
+        )
+
+        with pytest.raises(SystemExit):
+            context_enrichment_module.main()
+
+        self.mock_filter.assert_called_once()
+        call_args = self.mock_filter.call_args
+        assert call_args[0][1] == ""  # No session_id in direct mode

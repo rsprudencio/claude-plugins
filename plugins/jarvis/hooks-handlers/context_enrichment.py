@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Per-prompt semantic search: queries vault memories relevant to user's prompt.
+"""Context enrichment: per-prompt semantic memory injection.
 
 Usage:
-  Hook mode:  echo '{"prompt":"..."}' | python3 prompt_search.py --hook
-  Direct:     python3 prompt_search.py "query text here"
+  Hook mode:  echo '{"prompt":"..."}' | python3 context_enrichment.py --hook
+  Direct:     python3 context_enrichment.py "query text here"
 
 Called by the UserPromptSubmit hook. Outputs XML-formatted vault memories
 to stdout for injection into Claude's context. Silent on errors (exit 0,
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Tuple
 
 from hook_http_client import post_json
+from precompact_dedup import compute_content_hash, filter_already_injected, write_injection_state
 
 
 # --- Debug Logging ---
@@ -231,6 +232,7 @@ def _format_memory_unavailable_warning(error_text: str = "") -> str:
 def main():
     """Run per-prompt semantic search and output results to stdout."""
     # Determine prompt text source
+    session_id = ""
     if len(sys.argv) >= 2 and sys.argv[1] == "--hook":
         # Hook mode: read JSON from stdin
         try:
@@ -238,6 +240,12 @@ def main():
         except Exception:
             sys.exit(0)
         prompt_text = _extract_prompt(hook_input)
+        # Extract session_id for dedup tracking
+        try:
+            hook_data = json.loads(hook_input)
+            session_id = hook_data.get("session_id", "")
+        except Exception:
+            pass
     elif len(sys.argv) >= 2:
         # Direct mode: prompt text as argument
         prompt_text = sys.argv[1]
@@ -291,9 +299,17 @@ def main():
 
     matches = result.get("matches", [])
 
+    # Filter out memories already injected in this compaction window
+    matches = filter_already_injected(matches, session_id)
+
     if matches:
         # Format vault/core memories
         output_parts.append(_format_memories(matches, result.get("query_ms", 0)))
+
+        # Record injected content for dedup on subsequent prompts
+        content_hashes = [compute_content_hash(m.get("content", "")) for m in matches]
+        sources = [m.get("source", "") for m in matches]
+        write_injection_state(session_id, content_hashes, sources)
 
         # JSONL telemetry (always on, lightweight)
         _write_telemetry(prompt_text, query_ms, matches, result)
