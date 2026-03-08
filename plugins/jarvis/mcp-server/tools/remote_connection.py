@@ -186,6 +186,10 @@ def _load_remote_config(name: str) -> RemoteConfig:
     if raw_url:
         resolved_url = resolve_env_vars(raw_url)
 
+    # Resolve env vars in password (e.g., "$AURORA_PASSWORD" → actual value)
+    raw_password = remote.get("password")
+    resolved_password = resolve_env_vars(raw_password) if raw_password else None
+
     return RemoteConfig(
         name=name,
         url=resolved_url,
@@ -193,7 +197,7 @@ def _load_remote_config(name: str) -> RemoteConfig:
         port=remote.get("port", 5432),
         database=remote.get("database", "jarvis"),
         user=remote.get("user", "jarvis"),
-        password=remote.get("password"),
+        password=resolved_password,
         auth_method=remote.get("auth_method", "password"),
         sslmode=remote.get("sslmode", "verify-full"),
         sslrootcert=remote.get("sslrootcert"),

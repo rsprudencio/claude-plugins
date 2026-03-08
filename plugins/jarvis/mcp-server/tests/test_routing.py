@@ -23,14 +23,20 @@ def _memory(
     project=None,
     importance_score=0.5,
     tags="",
+    project_path="",
 ):
     """Create a minimal memory dict for testing."""
+    meta = {}
+    if tags:
+        meta["tags"] = tags
+    if project_path:
+        meta["project_path"] = project_path
     return {
         "category": category,
         "scope": scope,
         "project": project,
         "importance_score": importance_score,
-        "metadata": {"tags": tags} if tags else {},
+        "metadata": meta,
     }
 
 
@@ -100,6 +106,83 @@ class TestMatchMemory:
         cond = MatchCondition(tags=["urgent"])
         assert not match_memory(_memory(tags=""), cond)
         assert not match_memory({"category": "observation", "metadata": {}}, cond)
+
+    def test_path_prefix_match(self):
+        cond = MatchCondition(path_prefix=["/home/alice/dev/"])
+        assert match_memory(
+            _memory(project_path="/home/alice/dev/my-project"), cond
+        )
+
+    def test_path_prefix_no_match(self):
+        cond = MatchCondition(path_prefix=["/home/alice/dev/"])
+        assert not match_memory(
+            _memory(project_path="/home/alice/personal/side-project"), cond
+        )
+
+    def test_path_prefix_no_project_path(self):
+        """Memory without project_path should not match path_prefix."""
+        cond = MatchCondition(path_prefix=["/home/alice/dev/"])
+        assert not match_memory(_memory(), cond)
+
+    def test_path_prefix_multiple(self):
+        cond = MatchCondition(path_prefix=["/opt/dev/", "/opt/work/"])
+        assert match_memory(
+            _memory(project_path="/opt/work/infra"), cond
+        )
+        assert not match_memory(
+            _memory(project_path="/opt/personal/foo"), cond
+        )
+
+    def test_path_prefix_trailing_slash_normalized(self):
+        """Prefix without trailing slash should still match directories."""
+        cond = MatchCondition(path_prefix=["/opt/projects"])
+        assert match_memory(
+            _memory(project_path="/opt/projects/my-app"), cond
+        )
+        # Should NOT match partial directory names
+        assert not match_memory(
+            _memory(project_path="/opt/projects-archived/old"), cond
+        )
+
+    def test_path_prefix_exact_directory_matches(self):
+        """project_path exactly equal to prefix (no subdirectory) should match."""
+        cond = MatchCondition(path_prefix=["/opt/projects"])
+        assert match_memory(
+            _memory(project_path="/opt/projects"), cond
+        )
+
+    def test_path_prefix_dotdot_normalized(self):
+        """Paths with .. are normalized before matching."""
+        cond = MatchCondition(path_prefix=["/home/alice/dev/"])
+        assert match_memory(
+            _memory(project_path="/home/alice/dev/../dev/my-project"), cond
+        )
+
+    def test_path_prefix_combined_with_category(self):
+        """path_prefix + category must both hold (AND logic)."""
+        cond = MatchCondition(
+            path_prefix=["/home/alice/dev/"],
+            category=["decision"],
+        )
+        # Both match
+        assert match_memory(
+            _memory(category="decision", project_path="/home/alice/dev/app"), cond
+        )
+        # Path matches, category doesn't
+        assert not match_memory(
+            _memory(category="observation", project_path="/home/alice/dev/app"), cond
+        )
+        # Category matches, path doesn't
+        assert not match_memory(
+            _memory(category="decision", project_path="/home/alice/personal/x"), cond
+        )
+
+    def test_path_prefix_non_string_project_path_rejected(self):
+        """Non-string project_path should not match."""
+        cond = MatchCondition(path_prefix=["/home/alice/dev/"])
+        mem = _memory()
+        mem["metadata"]["project_path"] = 42
+        assert not match_memory(mem, cond)
 
     def test_combined_conditions_and_logic(self):
         """All conditions must match (AND logic)."""
@@ -273,6 +356,17 @@ class TestParsing:
         assert cond.importance_min == 0.7
         assert cond.scope == "project"
 
+    def test_parse_match_condition_with_path_prefix(self):
+        raw = {"path_prefix": ["~/dev/", "~/work/"]}
+        cond = parse_match_condition(raw)
+        assert cond.path_prefix == ["~/dev/", "~/work/"]
+
+    def test_parse_match_condition_path_prefix_string_rejected(self):
+        """path_prefix as string (not list) should be ignored."""
+        raw = {"path_prefix": "~/dev/"}
+        cond = parse_match_condition(raw)
+        assert cond.path_prefix == []
+
     def test_parse_match_condition_defaults(self):
         cond = parse_match_condition({})
         assert cond.project == []
@@ -280,6 +374,7 @@ class TestParsing:
         assert cond.tags == []
         assert cond.importance_min is None
         assert cond.scope is None
+        assert cond.path_prefix == []
 
     def test_parse_routing_rule(self):
         raw = {

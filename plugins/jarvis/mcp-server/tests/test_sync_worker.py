@@ -52,8 +52,9 @@ class TestSyncIteration:
     @patch("tools.sync_worker._fetch_memories")
     @patch("tools.sync_worker.claim_pending_syncs")
     @patch("tools.sync_worker._get_pool")
+    @patch("tools.sync_worker.get_remote_pool")
     @patch("tools.sync_worker.get_sync_config")
-    def test_successful_sync(self, mock_cfg, mock_pool, mock_claim,
+    def test_successful_sync(self, mock_cfg, mock_remote_pool, mock_pool, mock_claim,
                              mock_fetch, mock_ensure, mock_upsert,
                              mock_synced, mock_update):
         from tools.sync_worker import _sync_iteration
@@ -64,6 +65,8 @@ class TestSyncIteration:
         }
         pool = MagicMock()
         mock_pool.return_value = pool
+        remote_pool = MagicMock()
+        mock_remote_pool.return_value = remote_pool
         mock_claim.return_value = [
             {"id": 1, "memory_id": "obs::123", "destination": "work",
              "version": 1, "attempts": 0},
@@ -107,10 +110,11 @@ class TestSyncIteration:
     @patch("tools.sync_worker._fetch_memories")
     @patch("tools.sync_worker.claim_pending_syncs")
     @patch("tools.sync_worker._get_pool")
+    @patch("tools.sync_worker.get_remote_pool")
     @patch("tools.sync_worker.get_sync_config")
-    def test_upsert_failure_marks_failed(self, mock_cfg, mock_pool, mock_claim,
-                                         mock_fetch, mock_ensure, mock_upsert,
-                                         mock_failed):
+    def test_upsert_failure_marks_failed(self, mock_cfg, mock_remote_pool, mock_pool,
+                                         mock_claim, mock_fetch, mock_ensure,
+                                         mock_upsert, mock_failed):
         from tools.sync_worker import _sync_iteration
 
         mock_cfg.return_value = {
@@ -119,6 +123,7 @@ class TestSyncIteration:
         }
         pool = MagicMock()
         mock_pool.return_value = pool
+        mock_remote_pool.return_value = MagicMock()
         mock_claim.return_value = [
             {"id": 1, "memory_id": "obs::123", "destination": "work",
              "version": 1, "attempts": 0},
@@ -138,10 +143,12 @@ class TestSyncIteration:
     @patch("tools.sync_worker._fetch_memories")
     @patch("tools.sync_worker.claim_pending_syncs")
     @patch("tools.sync_worker._get_pool")
+    @patch("tools.sync_worker.get_remote_pool")
     @patch("tools.sync_worker.get_sync_config")
-    def test_groups_by_destination(self, mock_cfg, mock_pool, mock_claim,
-                                   mock_fetch, mock_ensure, mock_upsert,
-                                   mock_failed, mock_synced, mock_update):
+    def test_groups_by_destination(self, mock_cfg, mock_remote_pool, mock_pool,
+                                   mock_claim, mock_fetch, mock_ensure,
+                                   mock_upsert, mock_failed, mock_synced,
+                                   mock_update):
         from tools.sync_worker import _sync_iteration
 
         mock_cfg.return_value = {
@@ -153,6 +160,7 @@ class TestSyncIteration:
         }
         pool = MagicMock()
         mock_pool.return_value = pool
+        mock_remote_pool.return_value = MagicMock()
         mock_claim.return_value = [
             {"id": 1, "memory_id": "obs::1", "destination": "work",
              "version": 1, "attempts": 0},
@@ -179,9 +187,10 @@ class TestRemoteSchema:
     @patch("tools.sync_worker._fetch_memories")
     @patch("tools.sync_worker.claim_pending_syncs")
     @patch("tools.sync_worker._get_pool")
+    @patch("tools.sync_worker.get_remote_pool")
     @patch("tools.sync_worker.get_sync_config")
     def test_explicit_schema_passed_to_upsert(
-        self, mock_cfg, mock_pool, mock_claim, mock_fetch,
+        self, mock_cfg, mock_remote_pool, mock_pool, mock_claim, mock_fetch,
         mock_ensure, mock_upsert, mock_synced, mock_update
     ):
         """Explicit schema field is threaded through to upsert."""
@@ -198,6 +207,8 @@ class TestRemoteSchema:
         }
         pool = MagicMock()
         mock_pool.return_value = pool
+        remote_pool = MagicMock()
+        mock_remote_pool.return_value = remote_pool
         mock_claim.return_value = [
             {"id": 1, "memory_id": "obs::1", "destination": "aurora",
              "version": 1, "attempts": 0},
@@ -207,7 +218,7 @@ class TestRemoteSchema:
         _sync_iteration()
 
         mock_ensure.assert_called_once_with(
-            "postgresql://h:5432/db", "personio"
+            remote_pool, "aurora", "personio"
         )
         mock_upsert.assert_called_once()
         _, kwargs = mock_upsert.call_args
@@ -220,9 +231,10 @@ class TestRemoteSchema:
     @patch("tools.sync_worker._fetch_memories")
     @patch("tools.sync_worker.claim_pending_syncs")
     @patch("tools.sync_worker._get_pool")
+    @patch("tools.sync_worker.get_remote_pool")
     @patch("tools.sync_worker.get_sync_config")
     def test_schema_defaults_to_remote_name(
-        self, mock_cfg, mock_pool, mock_claim, mock_fetch,
+        self, mock_cfg, mock_remote_pool, mock_pool, mock_claim, mock_fetch,
         mock_ensure, mock_upsert, mock_synced, mock_update
     ):
         """When schema field omitted, remote name is used as schema."""
@@ -236,6 +248,8 @@ class TestRemoteSchema:
         }
         pool = MagicMock()
         mock_pool.return_value = pool
+        remote_pool = MagicMock()
+        mock_remote_pool.return_value = remote_pool
         mock_claim.return_value = [
             {"id": 1, "memory_id": "obs::1", "destination": "aurora",
              "version": 1, "attempts": 0},
@@ -245,16 +259,13 @@ class TestRemoteSchema:
         _sync_iteration()
 
         mock_ensure.assert_called_once_with(
-            "postgresql://h:5432/db", "aurora"
+            remote_pool, "aurora", "aurora"
         )
         _, kwargs = mock_upsert.call_args
         assert kwargs["schema"] == "aurora"
 
     @patch("tools.embedding.get_embedding_service")
-    @patch("pgvector.psycopg.register_vector")
-    @patch("psycopg.connect")
-    def test_upsert_sql_contains_schema_name(self, mock_connect, mock_register,
-                                              mock_emb_svc):
+    def test_upsert_sql_contains_schema_name(self, mock_emb_svc):
         """_batch_upsert_to_remote generates SQL with the correct CAS tables."""
         from tools.sync_worker import _batch_upsert_to_remote
 
@@ -264,11 +275,11 @@ class TestRemoteSchema:
 
         mock_cur = MagicMock()
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
 
         mem = {
             "id": "obs::1", "document": "test", "embedding": [0.1],
@@ -279,7 +290,7 @@ class TestRemoteSchema:
             "metadata": {}, "synced_to": [], "origin": "local",
             "created_at": "2026-01-01", "updated_at": "2026-01-01",
         }
-        _batch_upsert_to_remote("postgresql://h/db", [mem], schema="personio")
+        _batch_upsert_to_remote(mock_pool, [mem], schema="personio")
 
         # Should have 2 execute calls: 1 content + 1 ref
         calls = mock_cur.execute.call_args_list
@@ -292,21 +303,20 @@ class TestRemoteSchema:
         assert "personio.memories" not in ref_sql
 
     @patch("tools.sync_worker.get_embedding_config")
-    @patch("psycopg.connect")
-    def test_ensure_remote_schema_runs_ddl(self, mock_connect, mock_emb):
+    def test_ensure_remote_schema_runs_ddl(self, mock_emb):
         """_ensure_remote_schema executes CAS DDL on first call."""
         import tools.sync_worker as mod
         from tools.sync_worker import _ensure_remote_schema
 
         mock_emb.return_value = {"dimensions": 384}
-        mod._ensured_schemas.discard(("postgresql://h/db", "personio"))
+        mod._ensured_schemas.discard(("aurora", "personio"))
 
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-        _ensure_remote_schema("postgresql://h/db", "personio")
+        _ensure_remote_schema(mock_pool, "aurora", "personio")
 
         mock_conn.execute.assert_called_once()
         ddl = mock_conn.execute.call_args[0][0]
@@ -314,56 +324,52 @@ class TestRemoteSchema:
         assert "personio.content" in ddl
         assert "personio.memory_refs" in ddl
 
-        mod._ensured_schemas.discard(("postgresql://h/db", "personio"))
+        mod._ensured_schemas.discard(("aurora", "personio"))
 
     @patch("tools.sync_worker.get_embedding_config")
-    @patch("psycopg.connect")
-    def test_ensure_remote_schema_cached(self, mock_connect, mock_emb):
-        """_ensure_remote_schema skips DDL on second call (same url+schema)."""
+    def test_ensure_remote_schema_cached(self, mock_emb):
+        """_ensure_remote_schema skips DDL on second call (same dest+schema)."""
         import tools.sync_worker as mod
         from tools.sync_worker import _ensure_remote_schema
 
         mock_emb.return_value = {"dimensions": 384}
-        mod._ensured_schemas.discard(("postgresql://h/db", "test_cached"))
+        mod._ensured_schemas.discard(("test_dest", "test_cached"))
 
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-        _ensure_remote_schema("postgresql://h/db", "test_cached")
-        assert mock_connect.call_count == 1
+        _ensure_remote_schema(mock_pool, "test_dest", "test_cached")
+        assert mock_pool.connection.call_count == 1
 
         # Second call — cached, no connection
-        _ensure_remote_schema("postgresql://h/db", "test_cached")
-        assert mock_connect.call_count == 1  # still 1
+        _ensure_remote_schema(mock_pool, "test_dest", "test_cached")
+        assert mock_pool.connection.call_count == 1  # still 1
 
-        mod._ensured_schemas.discard(("postgresql://h/db", "test_cached"))
+        mod._ensured_schemas.discard(("test_dest", "test_cached"))
 
     @patch("tools.sync_worker.get_embedding_config")
-    @patch("psycopg.connect")
-    def test_ensure_remote_schema_different_schemas_not_cached(
-        self, mock_connect, mock_emb
-    ):
-        """Different schema names on same URL are cached independently."""
+    def test_ensure_remote_schema_different_schemas_not_cached(self, mock_emb):
+        """Different schema names on same dest are cached independently."""
         import tools.sync_worker as mod
         from tools.sync_worker import _ensure_remote_schema
 
         mock_emb.return_value = {"dimensions": 384}
-        mod._ensured_schemas.discard(("postgresql://h/db", "schema_a"))
-        mod._ensured_schemas.discard(("postgresql://h/db", "schema_b"))
+        mod._ensured_schemas.discard(("test_dest", "schema_a"))
+        mod._ensured_schemas.discard(("test_dest", "schema_b"))
 
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-        _ensure_remote_schema("postgresql://h/db", "schema_a")
-        _ensure_remote_schema("postgresql://h/db", "schema_b")
-        assert mock_connect.call_count == 2
+        _ensure_remote_schema(mock_pool, "test_dest", "schema_a")
+        _ensure_remote_schema(mock_pool, "test_dest", "schema_b")
+        assert mock_pool.connection.call_count == 2
 
-        mod._ensured_schemas.discard(("postgresql://h/db", "schema_a"))
-        mod._ensured_schemas.discard(("postgresql://h/db", "schema_b"))
+        mod._ensured_schemas.discard(("test_dest", "schema_a"))
+        mod._ensured_schemas.discard(("test_dest", "schema_b"))
 
 
 class TestContentHash:
@@ -416,10 +422,7 @@ class TestCASBatchUpsert:
         }
 
     @patch("tools.embedding.get_embedding_service")
-    @patch("pgvector.psycopg.register_vector")
-    @patch("psycopg.connect")
-    def test_content_dedup_within_batch(self, mock_connect, mock_register,
-                                        mock_emb_svc):
+    def test_content_dedup_within_batch(self, mock_emb_svc):
         """Two memories with same document produce 1 content INSERT, 2 ref INSERTs."""
         from tools.sync_worker import _batch_upsert_to_remote
 
@@ -429,16 +432,16 @@ class TestCASBatchUpsert:
 
         mock_cur = MagicMock()
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
 
         mem1 = self._make_memory("obs::1", "same document")
         mem2 = self._make_memory("obs::2", "same document")  # same content
 
-        _batch_upsert_to_remote("postgresql://h/db", [mem1, mem2], schema="test")
+        _batch_upsert_to_remote(mock_pool, [mem1, mem2], schema="test")
 
         calls = mock_cur.execute.call_args_list
         content_calls = [c for c in calls if "content" in c[0][0] and "memory_refs" not in c[0][0]]
@@ -447,9 +450,7 @@ class TestCASBatchUpsert:
         assert len(ref_calls) == 2
 
     @patch("tools.embedding.get_embedding_service")
-    @patch("pgvector.psycopg.register_vector")
-    @patch("psycopg.connect")
-    def test_transaction_ordering(self, mock_connect, mock_register, mock_emb_svc):
+    def test_transaction_ordering(self, mock_emb_svc):
         """Content INSERTs execute before ref INSERTs."""
         from tools.sync_worker import _batch_upsert_to_remote
 
@@ -459,29 +460,27 @@ class TestCASBatchUpsert:
 
         mock_cur = MagicMock()
         mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_pool = MagicMock()
+        mock_pool.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_pool.connection.return_value.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-        mock_connect.return_value = mock_conn
 
         mem = self._make_memory()
-        _batch_upsert_to_remote("postgresql://h/db", [mem], schema="test")
+        _batch_upsert_to_remote(mock_pool, [mem], schema="test")
 
         calls = mock_cur.execute.call_args_list
         # First call should be content, second should be ref
         assert "content" in calls[0][0][0] and "memory_refs" not in calls[0][0][0]
         assert "memory_refs" in calls[1][0][0]
 
-    @patch("tools.embedding.get_embedding_service")
-    @patch("pgvector.psycopg.register_vector")
-    @patch("psycopg.connect")
-    def test_empty_batch_is_noop(self, mock_connect, mock_register, mock_emb_svc):
+    def test_empty_batch_is_noop(self):
         """Empty memories list doesn't connect to remote."""
         from tools.sync_worker import _batch_upsert_to_remote
 
-        _batch_upsert_to_remote("postgresql://h/db", [], schema="test")
-        mock_connect.assert_not_called()
+        mock_pool = MagicMock()
+        _batch_upsert_to_remote(mock_pool, [], schema="test")
+        mock_pool.connection.assert_not_called()
 
 
 class TestSyncPresets:

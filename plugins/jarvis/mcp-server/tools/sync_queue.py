@@ -39,8 +39,8 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
     inserted = 0
     for dest in destinations:
         cur.execute(
-            """INSERT INTO local.sync_queue (memory_id, destination, version)
-               VALUES (%s, %s, %s)
+            """INSERT INTO local.sync_queue (memory_id, destination, version, next_retry_at)
+               VALUES (%s, %s, %s, now())
                ON CONFLICT (memory_id, destination, version) DO NOTHING""",
             (memory_id, dest, version),
         )
@@ -69,7 +69,7 @@ def claim_pending_syncs(pool, batch_size: int = 50) -> list[dict]:
                    WHERE id IN (
                        SELECT id FROM local.sync_queue
                        WHERE status = 'pending'
-                         AND next_retry_at <= now()
+                         AND (next_retry_at IS NULL OR next_retry_at <= now())
                        ORDER BY next_retry_at
                        FOR UPDATE SKIP LOCKED
                        LIMIT %s

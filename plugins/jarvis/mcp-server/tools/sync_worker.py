@@ -18,6 +18,7 @@ import hashlib
 import logging
 
 from .config import get_sync_config, get_embedding_config
+from .remote_connection import get_remote_pool
 from .schema import _get_pool, REMOTE_SCHEMA_SQL
 from .sync_queue import (
     claim_pending_syncs,
@@ -25,7 +26,7 @@ from .sync_queue import (
     mark_failed,
     update_synced_to,
 )
-from .sync_config import resolve_env_vars, redact_dsn
+from .sync_config import redact_dsn
 
 logger = logging.getLogger("jarvis-core")
 
@@ -83,19 +84,18 @@ def _sync_iteration() -> dict:
             continue
 
         try:
-            raw_url = remote_cfg.get("url", "")
-            resolved_url = resolve_env_vars(raw_url)
             schema = remote_cfg.get("schema", dest)
+            remote_pool = get_remote_pool(dest)
 
             # Ensure target schema exists on remote (cached after first success)
-            _ensure_remote_schema(resolved_url, schema)
+            _ensure_remote_schema(remote_pool, dest, schema)
 
             # Fetch memory documents for this batch
             memory_ids = [e["memory_id"] for e in dest_entries]
             memories = _fetch_memories(pool, memory_ids)
 
             # Upsert to remote
-            _batch_upsert_to_remote(resolved_url, memories, schema=schema)
+            _batch_upsert_to_remote(remote_pool, memories, schema=schema)
 
             # Mark done and update synced_to
             ids = [e["id"] for e in dest_entries]
@@ -142,34 +142,34 @@ def _fetch_memories(pool, memory_ids: list[str]) -> list[dict]:
     return [dict(zip(columns, row)) for row in rows]
 
 
-def _ensure_remote_schema(remote_url: str, schema: str) -> None:
+def _ensure_remote_schema(remote_pool, dest: str, schema: str) -> None:
     """Ensure the target schema + memories table exist on the remote.
 
     Idempotent DDL — safe to call multiple times. Results are cached
-    per (url, schema) pair so DDL only runs once per process lifetime.
+    per (dest, schema) pair so DDL only runs once per process lifetime.
 
     Args:
-        remote_url: Resolved PostgreSQL connection URL.
+        remote_pool: psycopg_pool.ConnectionPool for the remote.
+        dest: Remote destination name (for cache key and logging).
         schema: Target schema name (already validated as safe PG identifier).
     """
-    cache_key = (remote_url, schema)
+    cache_key = (dest, schema)
     if cache_key in _ensured_schemas:
         return
-
-    import psycopg
 
     dims = get_embedding_config()["dimensions"]
     ddl = REMOTE_SCHEMA_SQL.format(schema=schema, dimensions=dims)
 
-    with psycopg.connect(remote_url, autocommit=True) as conn:
+    with remote_pool.connection() as conn:
+        conn.autocommit = True
         conn.execute(ddl)
 
     _ensured_schemas.add(cache_key)
-    logger.info("Ensured remote schema '%s' on %s", schema, redact_dsn(remote_url))
+    logger.info("Ensured remote schema '%s' on remote '%s'", schema, dest)
 
 
 def _batch_upsert_to_remote(
-    remote_url: str, memories: list[dict], schema: str = "local"
+    remote_pool, memories: list[dict], schema: str = "local"
 ) -> None:
     """Upsert memory records to a remote PostgreSQL instance using CAS.
 
@@ -179,16 +179,14 @@ def _batch_upsert_to_remote(
     satisfy the FK constraint).
 
     Args:
-        remote_url: Resolved PostgreSQL connection URL.
+        remote_pool: psycopg_pool.ConnectionPool for the remote.
         memories: List of memory dicts from _fetch_memories.
         schema: Target schema name on the remote (validated PG identifier).
     """
     if not memories:
         return
 
-    import psycopg
     from psycopg.types.json import Jsonb
-    from pgvector.psycopg import register_vector
 
     from .embedding import get_embedding_service
 
@@ -266,8 +264,7 @@ def _batch_upsert_to_remote(
             mem["updated_at"],
         ))
 
-    with psycopg.connect(remote_url, autocommit=False) as conn:
-        register_vector(conn)
+    with remote_pool.connection() as conn:
         with conn.cursor() as cur:
             # Content first (FK target must exist before refs)
             for content_tuple in content_rows.values():

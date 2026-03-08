@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -42,6 +43,7 @@ class MatchCondition:
     tags: list[str] = field(default_factory=list)
     importance_min: Optional[float] = None
     scope: Optional[str] = None
+    path_prefix: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,26 @@ def match_memory(memory: dict, condition: MatchCondition,
         mem_project = memory.get("project") or ""
         patterns = expand_project_groups(condition.project, project_groups or {})
         if not any(fnmatch.fnmatch(mem_project, p) for p in patterns):
+            return False
+
+    # Path prefix match (any prefix must match project_path)
+    if condition.path_prefix:
+        mem_path = ""
+        metadata = memory.get("metadata", {})
+        if isinstance(metadata, dict):
+            raw_path = metadata.get("project_path", "")
+            if isinstance(raw_path, str):
+                mem_path = raw_path
+        if not mem_path:
+            return False
+        mem_path = os.path.normpath(mem_path)
+        normalized = [
+            os.path.normpath(os.path.expanduser(p)) + "/"
+            for p in condition.path_prefix
+        ]
+        # Append / to mem_path too so exact-directory matches work
+        mem_check = mem_path if mem_path.endswith("/") else mem_path + "/"
+        if not any(mem_check.startswith(pfx) for pfx in normalized):
             return False
 
     # Tag match (all specified tags must be present)
@@ -187,12 +209,17 @@ def evaluate_routing(
 
 def parse_match_condition(raw: dict) -> MatchCondition:
     """Parse a raw match dict from config into a MatchCondition."""
+    path_prefix = raw.get("path_prefix", [])
+    if not isinstance(path_prefix, list):
+        logger.warning("path_prefix must be a list, got %s — ignoring", type(path_prefix).__name__)
+        path_prefix = []
     return MatchCondition(
         project=raw.get("project", []),
         category=raw.get("category", []),
         tags=raw.get("tags", []),
         importance_min=raw.get("importance_min"),
         scope=raw.get("scope"),
+        path_prefix=path_prefix,
     )
 
 

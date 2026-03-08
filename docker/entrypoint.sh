@@ -11,6 +11,7 @@ set -e
 CORE_PORT="${JARVIS_CORE_PORT:-8741}"
 TODOIST_PORT="${JARVIS_TODOIST_PORT:-8742}"
 OBSIDIAN_PORT="${JARVIS_OBSIDIAN_PORT:-8744}"
+EXPLORER_PORT="${JARVIS_EXPLORER_PORT:-8750}"
 # pgdata lives inside the container filesystem by default (not on the bind mount)
 # because macOS VirtioFS doesn't support chown, which PostgreSQL requires.
 # Use PGDATA env var to override (e.g., for a dedicated Docker volume).
@@ -18,6 +19,7 @@ PGDATA="${PGDATA:-/var/lib/postgresql/data}"
 CORE_PID=""
 TODOIST_PID=""
 OBSIDIAN_PID=""
+EXPLORER_PID=""
 PG_STARTED=false
 
 # --- Git configuration for mounted vault ---
@@ -61,6 +63,7 @@ cleanup() {
     [ -n "$CORE_PID" ] && kill "$CORE_PID" 2>/dev/null
     [ -n "$TODOIST_PID" ] && kill "$TODOIST_PID" 2>/dev/null
     [ -n "$OBSIDIAN_PID" ] && kill "$OBSIDIAN_PID" 2>/dev/null
+    [ -n "$EXPLORER_PID" ] && kill "$EXPLORER_PID" 2>/dev/null
     # Wait up to 10s for jarvis-core to drain in-flight requests
     local timeout=10
     while [ $timeout -gt 0 ] && kill -0 "$CORE_PID" 2>/dev/null; do
@@ -198,6 +201,13 @@ GRANT ALL PRIVILEGES ON DATABASE jarvis TO jarvis;
 GRANT ALL ON SCHEMA public TO jarvis;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO jarvis;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO jarvis;
+-- Read access to local/obsidian schemas (for memory-explorer and external tools)
+GRANT USAGE ON SCHEMA local TO jarvis;
+GRANT SELECT ON ALL TABLES IN SCHEMA local TO jarvis;
+ALTER DEFAULT PRIVILEGES IN SCHEMA local GRANT SELECT ON TABLES TO jarvis;
+GRANT USAGE ON SCHEMA obsidian TO jarvis;
+GRANT SELECT ON ALL TABLES IN SCHEMA obsidian TO jarvis;
+ALTER DEFAULT PRIVILEGES IN SCHEMA obsidian GRANT SELECT ON TABLES TO jarvis;
 ROLES
 
     echo "[jarvis] Embedded PostgreSQL initialized (database: jarvis)"
@@ -301,6 +311,16 @@ if has_todoist_token; then
 else
     echo "[jarvis] No Todoist token found, skipping jarvis-todoist."
 fi
+
+# --- Start memory-explorer ---
+echo "[jarvis] Starting memory-explorer on port ${EXPLORER_PORT}..."
+cd /app/memory-explorer
+uvicorn app:app \
+    --host 0.0.0.0 \
+    --port "${EXPLORER_PORT}" \
+    --log-level warning \
+    --no-access-log &
+EXPLORER_PID=$!
 
 # --- Wait for health ---
 wait_for_health "${HEALTH_SCHEME}://localhost:${CORE_PORT}/health" "jarvis-core" 30

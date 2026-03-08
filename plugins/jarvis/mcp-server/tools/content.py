@@ -286,12 +286,17 @@ def content_write(
 
                     sync_cfg = get_sync_config()
                     if sync_cfg.get("enabled"):
+                        # Include project_path from extra_metadata for path-based routing
+                        routing_metadata = dict(metadata)
+                        pp = extra_metadata.get("project_path") if extra_metadata else None
+                        if isinstance(pp, str) and pp:
+                            routing_metadata["project_path"] = pp
                         memory_dict = {
                             "category": content_type,
                             "scope": scope,
                             "project": project,
                             "importance_score": importance_score,
-                            "metadata": metadata,
+                            "metadata": routing_metadata,
                         }
                         rules = load_routing_rules(sync_cfg)
                         project_groups = sync_cfg.get("project_groups", {})

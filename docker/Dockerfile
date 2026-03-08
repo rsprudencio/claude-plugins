@@ -24,6 +24,8 @@ RUN uv pip install --system --no-cache \
     "psycopg[pool]>=3.1.0" \
     "pgvector>=0.3.0" \
     "todoist-api-python>=3.0.0" \
+    "boto3>=1.34.0" \
+    "fastapi>=0.110.0" \
     uvicorn
 
 # ---- Model fetch stage: download and verify cross-encoder ONNX model ----
@@ -53,8 +55,8 @@ ARG EMB_BASE=https://huggingface.co/onnx-community/granite-embedding-small-engli
 WORKDIR /models/embedding/onnx
 RUN wget -q "${EMB_BASE}/onnx/model_quantized.onnx" -O model.onnx && \
     echo "a3fad524afc3f060216a8ddbb1ac89c9b6498fba8995b5718bde879076a2e9ba  model.onnx" | sha256sum -c && \
-    wget -q "${EMB_BASE}/onnx/model_quantized.onnx_data" -O model.onnx_data && \
-    echo "1f4cf47e4adec7f7ae09db03d071ba8667e07f9a4203142c7efa8d37fe453597  model.onnx_data" | sha256sum -c
+    wget -q "${EMB_BASE}/onnx/model_quantized.onnx_data" && \
+    echo "1f4cf47e4adec7f7ae09db03d071ba8667e07f9a4203142c7efa8d37fe453597  model_quantized.onnx_data" | sha256sum -c
 
 WORKDIR /models/embedding
 RUN wget -q "${EMB_BASE}/tokenizer.json" -O tokenizer.json && \
@@ -116,6 +118,10 @@ COPY plugins/jarvis-todoist/mcp-server/ .
 WORKDIR /app/jarvis-obsidian
 COPY plugins/jarvis-obsidian/mcp-server/ .
 
+# ---- Copy memory-explorer ----
+WORKDIR /app/memory-explorer
+COPY apps/memory-explorer/app.py .
+
 # ---- PostgreSQL init script ----
 COPY docker/init.sql /app/init.sql
 
@@ -132,7 +138,7 @@ ENV JARVIS_CORE_PORT=8741
 ENV JARVIS_TODOIST_PORT=8742
 ENV JARVIS_OBSIDIAN_PORT=8744
 
-EXPOSE 8741 8742 8744
+EXPOSE 8741 8742 8744 8750
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -sf http://localhost:${JARVIS_CORE_PORT}/health || exit 1

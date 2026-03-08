@@ -13,6 +13,7 @@ services:
       - "${JARVIS_CORE_PORT:-8741}:8741"
       - "${JARVIS_TODOIST_PORT:-8742}:8742"
       - "${JARVIS_OBSIDIAN_PORT:-8744}:8744"
+      - "${JARVIS_EXPLORER_PORT:-8750}:8750"
     volumes:
       - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
       - "${JARVIS_HOME:-~/.jarvis}:/config"
@@ -25,6 +26,13 @@ services:
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
       - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
+      # AWS IAM database auth (pass from host SSO session)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-eu-central-1}
+      # Remote sync password auth (e.g., Aurora)
+      - AURORA_PASSWORD=${AURORA_PASSWORD:-}
     stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:

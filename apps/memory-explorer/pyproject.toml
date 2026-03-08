@@ -1,0 +1,23 @@
+[project]
+name = "memory-explorer"
+version = "0.1.0"
+description = "Read-only web UI for browsing Jarvis memory stores"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "psycopg[pool]>=3.1.0",
+    "pgvector>=0.3.0",
+    "numpy>=1.24.0",
+    "jarvis-common",
+    # Embedding stack (shared with jarvis-core)
+    "sentence-transformers[onnx]>=3.0.0",
+    "onnxruntime>=1.17.0",
+    "transformers>=4.40.0",
+]
+
+[project.optional-dependencies]
+iam = ["boto3>=1.28.0"]  # AWS IAM auth for Aurora remotes
+
+[tool.uv.sources]
+jarvis-common = { path = "../../lib/jarvis-common" }
