@@ -1292,21 +1292,55 @@ function switchTab(tab) {
     mem.style.display = 'flex';
     adm.style.display = 'none';
     adm.classList.remove('active');
+    if (adminAutoRefresh) { clearInterval(adminAutoRefresh); adminAutoRefresh = null; }
   }
+  // Persist tab in URL hash so page refresh stays on the same tab
+  history.replaceState(null, '', '#' + tab);
 }
 
+// On page load, restore tab from hash
+(function() {
+  var hash = location.hash.replace('#', '');
+  if (hash === 'admin') switchTab('admin');
+})();
+
 var adminLoaded = false;
+var adminAutoRefresh = null;
+
 function loadAdmin() {
   var el = document.getElementById('tab-admin');
-  el.innerHTML = '<div class="empty" style="padding:40px">Loading admin data...</div>';
+  // Only show full loading on first load; subsequent refreshes keep content visible
+  if (!adminLoaded) {
+    el.innerHTML = '<div class="empty" style="padding:40px">Loading admin data...</div>';
+  }
   fetch('/api/admin').then(r => r.json()).then(renderAdmin).catch(err => {
     el.innerHTML = '<div class="empty" style="color:var(--red)">Failed: ' + esc(String(err)) + '</div>';
   });
 }
 
+function toggleAutoRefresh() {
+  if (adminAutoRefresh) {
+    clearInterval(adminAutoRefresh);
+    adminAutoRefresh = null;
+  } else {
+    adminAutoRefresh = setInterval(loadAdmin, 10000);
+  }
+  // Update button state
+  var btn = document.getElementById('admin-auto-refresh');
+  if (btn) btn.classList.toggle('active', !!adminAutoRefresh);
+}
+
 function renderAdmin(d) {
+  adminLoaded = true;
   var el = document.getElementById('tab-admin');
   var h = '';
+
+  /* ── Toolbar ──────────────────────────────────────── */
+  var autoClass = adminAutoRefresh ? 'active' : '';
+  h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;justify-content:flex-end">';
+  h += '<button onclick="loadAdmin()" style="padding:4px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);cursor:pointer;font-size:13px">⟳ Refresh</button>';
+  h += '<button id="admin-auto-refresh" onclick="toggleAutoRefresh()" class="' + autoClass + '" style="padding:4px 12px;background:' + (adminAutoRefresh ? 'var(--green)' : 'var(--bg2)') + ';border:1px solid var(--border);border-radius:4px;color:' + (adminAutoRefresh ? '#000' : 'var(--fg)') + ';cursor:pointer;font-size:13px">Auto 10s</button>';
+  h += '</div>';
 
   /* ── Overview cards ──────────────────────────────── */
   h += '<div class="admin-grid">';
