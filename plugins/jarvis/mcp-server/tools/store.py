@@ -76,6 +76,8 @@ def store(
             extra_metadata=extra_metadata,
             auto_index=auto_index,
             skip_secret_scan=skip_secret_scan,
+            scope=scope,
+            project=project,
         )
 
     # Route 2: New vault file (no prior ID)
@@ -145,6 +147,8 @@ def _store_by_id(
     extra_metadata,
     auto_index,
     skip_secret_scan,
+    scope=None,
+    project=None,
 ):
     """Route updates by parsing the namespaced ID prefix."""
     parsed = parse_id(doc_id)
@@ -164,12 +168,12 @@ def _store_by_id(
 
     # Memory document (memory::global::name or memory::project::name)
     if parsed.namespace == "memory":
-        scope, project = parse_memory_scope(parsed)
+        mem_scope, mem_project = parse_memory_scope(parsed)
         return _store_memory(
             name=parsed.content_id,
             content=content,
-            scope=scope,
-            project=project,
+            scope=mem_scope,
+            project=mem_project,
             tags=tags,
             importance=importance,
             overwrite=True,  # ID-based = update existing
@@ -186,6 +190,8 @@ def _store_by_id(
             tags=tags,
             source=source,
             extra_metadata=extra_metadata,
+            scope=scope,
+            project=project,
         )
 
     return {
@@ -278,7 +284,8 @@ def _store_content(
     )
 
 
-def _update_content(doc_id, content, importance, tags, source, extra_metadata):
+def _update_content(doc_id, content, importance, tags, source, extra_metadata,
+                    scope=None, project=None):
     """Update existing content by ID.
 
     Reads existing doc, merges updates, upserts back.
@@ -298,6 +305,10 @@ def _update_content(doc_id, content, importance, tags, source, extra_metadata):
         metadata["tags"] = ",".join(tags) if tags else ""
     if source is not None:
         metadata["source"] = source
+    if scope is not None:
+        metadata["scope"] = scope
+    if project is not None:
+        metadata["project"] = project
     if extra_metadata:
         metadata.update(extra_metadata)
 
