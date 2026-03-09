@@ -10,6 +10,7 @@ import pytest
 from tools.conflict import (
     has_negation_signals,
     _tokenize,
+    _category_from_doc_id,
     find_conflict_candidates,
     verify_conflicts_with_llm,
     mark_superseded,
@@ -371,36 +372,171 @@ class TestMarkSuperseded:
         assert result is False
 
 
-# -- Cross-type conflict -----------------------------------------------------
+# -- _category_from_doc_id ---------------------------------------------------
 
 
-class TestCrossTypeConflict:
+class TestCategoryFromDocId:
 
-    def test_observation_vs_pattern(self, mock_config):
-        """New observation can supersede an old pattern."""
+    def test_observation(self):
+        assert _category_from_doc_id("obs::123") == "observation"
+
+    def test_worklog(self):
+        assert _category_from_doc_id("worklog::456") == "worklog"
+
+    def test_pattern(self):
+        assert _category_from_doc_id("pattern::use-singleton") == "pattern"
+
+    def test_learning(self):
+        assert _category_from_doc_id("learning::789") == "learning"
+
+    def test_decision(self):
+        assert _category_from_doc_id("decision::use-redux") == "decision"
+
+    def test_unknown_prefix(self):
+        assert _category_from_doc_id("unknown::123") is None
+
+    def test_no_namespace(self):
+        assert _category_from_doc_id("plain-id") is None
+
+    def test_all_namespaces(self):
+        expected = {
+            "obs": "observation", "pattern": "pattern", "summary": "summary",
+            "code": "code", "rel": "relationship", "hint": "hint",
+            "plan": "plan", "learning": "learning", "decision": "decision",
+            "worklog": "worklog",
+        }
+        for prefix, category in expected.items():
+            assert _category_from_doc_id(f"{prefix}::test") == category
+
+
+# -- Same-category filtering -------------------------------------------------
+
+
+class TestSameCategoryOnly:
+
+    def test_same_category_finds_match(self, mock_config):
+        """Observation query finds other observations."""
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use singleton pattern for database connections",
+            category="observation",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": True,
+        }
+        candidates = find_conflict_candidates(
+            "obs::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category="observation",
+        )
+        ids = [c["id"] for c in candidates]
+        assert "obs::old1" in ids
+
+    def test_same_category_excludes_different(self, mock_config):
+        """Observation query does NOT find worklogs when same_category_only=True."""
+        _seed_doc(
+            mock_config.db,
+            "worklog::old1",
+            "Worked on singleton pattern for database connections",
+            category="worklog",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": True,
+        }
+        candidates = find_conflict_candidates(
+            "obs::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category="observation",
+        )
+        ids = [c["id"] for c in candidates]
+        assert "worklog::old1" not in ids
+
+    def test_cross_category_when_disabled(self, mock_config):
+        """Cross-category matches allowed when same_category_only=False."""
         _seed_doc(
             mock_config.db,
             "pattern::use-singleton",
             "Use singleton pattern for database connections",
             category="pattern",
         )
-        # The candidate finder queries local.active_memories, so patterns are included
         config = {
             "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
             "max_candidates": 10,
+            "same_category_only": False,
         }
         candidates = find_conflict_candidates(
             "obs::new1",
             "Actually singleton is an anti-pattern for database connections",
             config,
+            category="observation",
         )
-        # Pattern should be in the candidate set (assuming it meets thresholds)
+        ids = [c["id"] for c in candidates]
+        assert "pattern::use-singleton" in ids
+
+    def test_no_category_skips_filter(self, mock_config):
+        """When category is None, no filtering applied (backward compat)."""
+        _seed_doc(
+            mock_config.db,
+            "pattern::use-singleton",
+            "Use singleton pattern for database connections",
+            category="pattern",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": True,
+        }
+        candidates = find_conflict_candidates(
+            "obs::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category=None,  # No category -> no filter
+        )
+        ids = [c["id"] for c in candidates]
+        assert "pattern::use-singleton" in ids
+
+
+# -- Cross-type conflict (legacy behavior with same_category_only=False) -----
+
+
+class TestCrossTypeConflict:
+
+    def test_observation_vs_pattern(self, mock_config):
+        """Cross-category still works when same_category_only=False."""
+        _seed_doc(
+            mock_config.db,
+            "pattern::use-singleton",
+            "Use singleton pattern for database connections",
+            category="pattern",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": False,
+        }
+        candidates = find_conflict_candidates(
+            "obs::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category="observation",
+        )
         ids = [c["id"] for c in candidates]
         assert "pattern::use-singleton" in ids
 
     def test_learning_vs_decision(self, mock_config):
-        """New learning can supersede an old decision."""
+        """Cross-category still works when same_category_only=False."""
         _seed_doc(
             mock_config.db,
             "decision::use-redux",
@@ -411,11 +547,13 @@ class TestCrossTypeConflict:
             "similarity_threshold": -2.0,
             "divergence_threshold": 1.0,
             "max_candidates": 10,
+            "same_category_only": False,
         }
         candidates = find_conflict_candidates(
             "learning::new1",
             "Actually Redux is overkill, use React context instead",
             config,
+            category="learning",
         )
         ids = [c["id"] for c in candidates]
         assert "decision::use-redux" in ids

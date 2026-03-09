@@ -230,6 +230,7 @@ def get_conflict_detection_config() -> dict:
         "similarity_threshold": 0.7,
         "divergence_threshold": 0.4,
         "max_candidates": 10,
+        "same_category_only": True,
     }
     return _merge_with_defaults(defaults, _get_memory_section("conflict_detection"))
 

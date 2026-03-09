@@ -70,7 +70,8 @@
       "use_llm": false,
       "similarity_threshold": 0.7,
       "divergence_threshold": 0.4,
-      "max_candidates": 10
+      "max_candidates": 10,
+      "same_category_only": true
     },
     "staleness": {
       "enabled": true,

@@ -842,15 +842,17 @@ class MockCursor:
         self._set_core_results(sql, rows)
 
     def _handle_core_vector_search(self, sql, params, active_only=False):
-        conditions = self._extract_column_conditions(sql, params)
-        param_offset = len(conditions)
+        # In vector search queries the embedding %s appears in the SELECT
+        # clause (before WHERE), so it's always params[0].  Column conditions
+        # in the WHERE clause consume params[1..N-1], and LIMIT is params[-1].
+        query_embedding = params[0] if params else []
 
-        # The embedding appears as the first non-condition %s (or it may be
-        # the first param if there are no column conditions before it)
-        query_embedding = params[param_offset] if param_offset < len(params) else []
+        # Extract WHERE conditions using params shifted past the embedding
+        conditions = self._extract_column_conditions(sql, params[1:]) if len(params) > 1 else []
+        param_offset = 1 + len(conditions)
 
         limit = 10
-        if len(params) > param_offset + 1:
+        if len(params) > param_offset:
             try:
                 limit = int(params[-1])
             except (ValueError, TypeError):

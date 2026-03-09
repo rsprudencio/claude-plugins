@@ -60,6 +60,30 @@ def _tokenize(text: str) -> set[str]:
     return tokens
 
 
+# -- Namespace → category mapping ------------------------------------------
+
+_NAMESPACE_TO_CATEGORY = {
+    "obs": "observation",
+    "pattern": "pattern",
+    "summary": "summary",
+    "code": "code",
+    "rel": "relationship",
+    "hint": "hint",
+    "plan": "plan",
+    "learning": "learning",
+    "decision": "decision",
+    "worklog": "worklog",
+}
+
+
+def _category_from_doc_id(doc_id: str) -> Optional[str]:
+    """Extract category from namespaced doc_id (e.g. 'obs::123' → 'observation')."""
+    if "::" not in doc_id:
+        return None
+    prefix = doc_id.split("::")[0]
+    return _NAMESPACE_TO_CATEGORY.get(prefix)
+
+
 # -- Candidate finding -----------------------------------------------------
 
 
@@ -67,6 +91,7 @@ def find_conflict_candidates(
     doc_id: str,
     content: str,
     config: dict,
+    category: Optional[str] = None,
 ) -> list[dict]:
     """Query local.active_memories for entries that may conflict with *content*.
 
@@ -85,17 +110,30 @@ def find_conflict_candidates(
 
     try:
         pool = _get_pool()
+        same_cat = config.get("same_category_only", True) and category
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """SELECT id, document, category, scope, source,
-                              importance_score, metadata,
-                              embedding <=> %s::halfvec AS distance
-                       FROM local.active_memories
-                       ORDER BY distance ASC
-                       LIMIT %s""",
-                    (query_embedding, config["max_candidates"]),
-                )
+                if same_cat:
+                    cur.execute(
+                        """SELECT id, document, category, scope, source,
+                                  importance_score, metadata,
+                                  embedding <=> %s::halfvec AS distance
+                           FROM local.active_memories
+                           WHERE category = %s
+                           ORDER BY distance ASC
+                           LIMIT %s""",
+                        (query_embedding, category, config["max_candidates"]),
+                    )
+                else:
+                    cur.execute(
+                        """SELECT id, document, category, scope, source,
+                                  importance_score, metadata,
+                                  embedding <=> %s::halfvec AS distance
+                           FROM local.active_memories
+                           ORDER BY distance ASC
+                           LIMIT %s""",
+                        (query_embedding, config["max_candidates"]),
+                    )
                 columns = [desc.name for desc in cur.description]
                 rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     except Exception:
@@ -327,7 +365,8 @@ def detect_conflicts(doc_id: str, content: str) -> list[str]:
         return []
 
     # Step 2: Find candidates via embedding similarity + Jaccard divergence
-    candidates = find_conflict_candidates(doc_id, content, config)
+    category = _category_from_doc_id(doc_id)
+    candidates = find_conflict_candidates(doc_id, content, config, category=category)
     if not candidates:
         return []
 
