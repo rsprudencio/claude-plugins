@@ -602,6 +602,10 @@ def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
         if scope not in ("global", "project"):
             scope = "global"
         project = metadata.pop("project", None)
+
+        # Guard: scope='project' requires a non-null project name (chk_scope_project)
+        if scope == "project" and not project:
+            scope = "global"
         source = metadata.pop("source", "auto-extract")
         importance_score = 0.5
         raw_imp = metadata.pop("importance_score", None)

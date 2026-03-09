@@ -550,6 +550,26 @@ class TestContentUpsert:
         # importance_score is a float column now
         assert read_result["importance_score"] == 0.9
 
+    def test_upsert_scope_project_without_project_falls_back_to_global(self, mock_config):
+        """content_upsert with scope='project' and no project key → stored as scope='global'."""
+        write_result = content_write(
+            content="Original",
+            content_type="observation",
+            importance_score=0.5,
+        )
+        doc_id = write_result["id"]
+
+        # Upsert with scope='project' but no project name — guard must downgrade scope
+        result = content_upsert(
+            doc_id,
+            "Updated",
+            {"type": "observation", "scope": "project", "importance_score": "0.5"},
+        )
+        assert result["success"]
+
+        read_result = content_read(doc_id)
+        assert read_result["scope"] == "global"
+
 
 class TestContentWorklog:
     """Test worklog content type."""

@@ -515,7 +515,7 @@
       },
       "dedup": {
         "observations": "Global dedup via pgvector embedding relevance score. If the nearest existing observation has relevance >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
-        "worklogs": "Session-scoped dedup via content listing + Jaccard word-overlap. Only prevents double-logging within same session. Configurable at memory.worklog.dedup_threshold (default 0.7)."
+        "worklogs": "Cross-session dedup via Jaccard word-overlap against last 20 worklogs globally. Prevents redundant entries across sessions for the same workstream. Configurable at memory.worklog.dedup_threshold (default 0.5)."
       }
     },
 
@@ -626,7 +626,7 @@
 
     "memory_worklog": {
       "enabled": { "type": "boolean", "default": true, "description": "Enable worklog extraction alongside observations" },
-      "dedup_threshold": { "type": "float", "default": 0.7, "description": "Jaccard word-overlap threshold for worklog dedup within a session. Higher = more similar (1.0 = identical). Lower value catches more duplicates." }
+      "dedup_threshold": { "type": "float", "default": 0.5, "description": "Jaccard word-overlap threshold for cross-session worklog dedup. Checked against last 20 worklogs globally. Higher = stricter (1.0 = identical). Lower value catches more near-duplicates." }
     },
 
     "memory_staleness": {
