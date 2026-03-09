@@ -69,6 +69,38 @@ class TestEnqueueSync:
         args = cur.execute.call_args[0]
         assert args[1] == ("obs::123", "remote-a", 2)
 
+    def test_enqueue_sql_uses_do_update_not_do_nothing(self):
+        from tools.sync_queue import enqueue_sync
+
+        cur = MagicMock()
+        cur.rowcount = 1
+        enqueue_sync(cur, "obs::123", ["remote-a"])
+        sql = cur.execute.call_args[0][0]
+        assert "DO UPDATE" in sql
+        assert "DO NOTHING" not in sql
+
+    def test_enqueue_reenqueue_done_entry(self):
+        """Conflict on (memory_id, dest, version) with status=done → resets to pending."""
+        from tools.sync_queue import enqueue_sync
+
+        cur = MagicMock()
+        cur.rowcount = 1  # Simulate: conflict found, WHERE matched (done/dlq), UPDATE applied
+        result = enqueue_sync(cur, "mem::abc", ["remote-a"])
+        assert result == 1
+        sql = cur.execute.call_args[0][0]
+        assert "status = 'pending'" in sql
+        assert "'done'" in sql
+        assert "'dlq'" in sql
+
+    def test_enqueue_leaves_pending_alone(self):
+        """Conflict on (memory_id, dest, version) with status=pending → WHERE prevents update."""
+        from tools.sync_queue import enqueue_sync
+
+        cur = MagicMock()
+        cur.rowcount = 0  # Simulate: conflict found, WHERE did NOT match (still pending)
+        result = enqueue_sync(cur, "mem::abc", ["remote-a"])
+        assert result == 0  # Nothing enqueued — entry was already pending
+
 
 class TestClaimPendingSyncs:
     def test_claim_returns_entries(self):

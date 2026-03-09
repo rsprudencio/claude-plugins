@@ -1,6 +1,7 @@
 """Tests for memory CRUD tool handlers."""
 
 import os
+from unittest.mock import MagicMock, patch
 import pytest
 from tools.memory_crud import (
     memory_write,
@@ -448,7 +449,7 @@ class TestMemoryListIncludeContent:
 
     def test_content_is_frontmatter_stripped(self, mock_config):
         """Content returned by include_content has frontmatter stripped."""
-        
+
 
         memory_write(
             name="fm-stripped",
@@ -466,5 +467,151 @@ class TestMemoryListIncludeContent:
                 assert "importance:" not in mem["content"]
                 assert mem["content"] == "Pure body only."
                 break
+
+
+_SYNC_CFG_ENABLED = {
+    "enabled": True,
+    "strategy": "first-match",
+    "project_groups": {},
+    "remotes": [{"name": "remote-a", "dsn": "postgresql://test:test@remote/db"}],
+    "rules": [{"name": "all", "match": {}, "action": "route-to", "destinations": ["remote-a"]}],
+}
+
+
+class TestMemoryWriteSyncRouting:
+    """Tests for sync routing in memory_write (Change #1 and #2)."""
+
+    def test_memory_write_enqueues_when_routing_matches(self, mock_config):
+        """memory_write enqueues when sync is enabled and routing returns destinations."""
+        mock_decision = MagicMock()
+        mock_decision.destinations = ["remote-a"]
+
+        with patch("tools.config.get_sync_config", return_value=_SYNC_CFG_ENABLED), \
+             patch("tools.sync_config.load_routing_rules", return_value=[]), \
+             patch("tools.routing.evaluate_routing", return_value=mock_decision), \
+             patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+
+            result = memory_write(
+                name="sync-routing-test",
+                content="Important strategic memory.",
+                scope="project",
+                project="personio-framework",
+                importance=0.9,
+            )
+
+        assert result["success"] is True
+        mock_enqueue.assert_called_once()
+        call_args = mock_enqueue.call_args[0]
+        assert call_args[1] == result["id"]
+        assert call_args[2] == ["remote-a"]
+
+    def test_memory_write_no_enqueue_when_no_match(self, mock_config):
+        """memory_write does not enqueue when routing returns no destinations."""
+        mock_decision = MagicMock()
+        mock_decision.destinations = []
+
+        with patch("tools.config.get_sync_config", return_value=_SYNC_CFG_ENABLED), \
+             patch("tools.sync_config.load_routing_rules", return_value=[]), \
+             patch("tools.routing.evaluate_routing", return_value=mock_decision), \
+             patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+
+            result = memory_write(name="no-match-mem", content="Global memory.")
+
+        assert result["success"] is True
+        mock_enqueue.assert_not_called()
+
+    def test_memory_write_no_enqueue_when_sync_disabled(self, mock_config):
+        """memory_write does not enqueue when sync.enabled is False."""
+        with patch("tools.config.get_sync_config", return_value={"enabled": False}), \
+             patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+
+            result = memory_write(name="sync-disabled-mem", content="Content.")
+
+        assert result["success"] is True
+        mock_enqueue.assert_not_called()
+
+    def test_memory_write_enqueue_failure_does_not_block_write(self, mock_config):
+        """Routing exception does not prevent memory_write from succeeding."""
+        with patch("tools.config.get_sync_config", side_effect=RuntimeError("config error")):
+            result = memory_write(
+                name="routing-error-mem",
+                content="Should still be written.",
+            )
+
+        assert result["success"] is True
+        assert result["indexed"] is True
+
+    def test_memory_overwrite_reenqueues(self, mock_config):
+        """Second write to same memory re-enqueues (verifies DO UPDATE fix in enqueue_sync)."""
+        mock_decision = MagicMock()
+        mock_decision.destinations = ["remote-a"]
+
+        with patch("tools.config.get_sync_config", return_value=_SYNC_CFG_ENABLED), \
+             patch("tools.sync_config.load_routing_rules", return_value=[]), \
+             patch("tools.routing.evaluate_routing", return_value=mock_decision), \
+             patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+
+            memory_write(name="overwrite-sync", content="V1", importance=0.8)
+            memory_write(name="overwrite-sync", content="V2", overwrite=True, importance=0.8)
+
+        # enqueue_sync must have been called for both writes
+        assert mock_enqueue.call_count == 2
+
+
+class TestMemoryDeleteSyncPropagation:
+    """Tests for delete propagation in memory_delete (Change #3)."""
+
+    def test_memory_delete_propagates_to_synced_remotes(self, mock_config):
+        """Deleting a memory that was synced enqueues a delete-sync entry."""
+        memory_write(name="synced-delete-me", content="Will be deleted.")
+
+        # Inject synced_to into the mock DB row to simulate a previously synced memory
+        from tools.namespaces import global_memory_id
+        doc_id = global_memory_id("synced-delete-me")
+        mock_config.db.core_rows[doc_id]["synced_to"] = ["remote-a"]
+
+        with patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+            result = memory_delete(name="synced-delete-me", confirm=True)
+
+        assert result["success"] is True
+        assert result["file_deleted"] is True
+        mock_enqueue.assert_called_once()
+        call_args = mock_enqueue.call_args[0]
+        assert call_args[1] == doc_id
+        assert call_args[2] == ["remote-a"]
+
+    def test_memory_delete_hard_deletes_when_never_synced(self, mock_config):
+        """Deleting a memory with no synced_to does a hard DELETE (no enqueue)."""
+        memory_write(name="unsynced-delete-me", content="Never synced.")
+
+        from tools.namespaces import global_memory_id
+        doc_id = global_memory_id("unsynced-delete-me")
+
+        with patch("tools.sync_queue.enqueue_sync") as mock_enqueue:
+            result = memory_delete(name="unsynced-delete-me", confirm=True)
+
+        assert result["success"] is True
+        assert result["file_deleted"] is True
+        assert result["index_deleted"] is True
+        mock_enqueue.assert_not_called()
+        # Row should be gone from mock DB (hard deleted, not soft deleted)
+        assert mock_config.db.core_rows.get(doc_id) is None
+
+    def test_memory_delete_enqueue_failure_still_soft_deletes(self, mock_config):
+        """If enqueue_sync raises, the soft-delete UPDATE still completes."""
+        memory_write(name="soft-del-fail", content="Synced but enqueue will fail.")
+
+        from tools.namespaces import global_memory_id
+        doc_id = global_memory_id("soft-del-fail")
+        mock_config.db.core_rows[doc_id]["synced_to"] = ["remote-a"]
+
+        with patch("tools.sync_queue.enqueue_sync", side_effect=RuntimeError("queue error")):
+            result = memory_delete(name="soft-del-fail", confirm=True)
+
+        assert result["success"] is True
+        # Row is soft-deleted (status='deleted'), not hard-deleted
+        row = mock_config.db.core_rows.get(doc_id)
+        assert row is not None
+        assert row["status"] == "deleted"
 
 

@@ -187,6 +187,10 @@ def content_write(
         if extra_metadata.get("project_dir"):
             project = project or extra_metadata["project_dir"]
 
+    # Guard: scope='project' requires a non-null project name (chk_scope_project)
+    if scope == "project" and not project:
+        scope = "global"
+
     # Build remaining metadata (everything NOT in columns)
     metadata = {}
     if tags:

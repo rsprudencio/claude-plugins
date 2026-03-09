@@ -21,8 +21,9 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
     """Enqueue sync intents for a memory to multiple destinations.
 
     Called within the content_write transaction — uses the caller's cursor.
-    Uses ON CONFLICT DO NOTHING for idempotency (same memory+dest+version
-    is silently ignored).
+    Uses ON CONFLICT DO UPDATE for idempotent re-enqueue: a done or dlq
+    entry is reset to pending so updates get re-synced; a pending or sending
+    entry is left untouched (the WHERE clause prevents mid-flight interference).
 
     Args:
         cur: Database cursor (caller owns the transaction).
@@ -31,7 +32,7 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
         version: Version counter for tracking re-syncs (default 1).
 
     Returns:
-        Number of rows actually inserted (excludes conflicts).
+        Number of rows inserted or re-enqueued (0 for already-pending conflicts).
     """
     if not destinations:
         return 0
@@ -41,7 +42,12 @@ def enqueue_sync(cur, memory_id: str, destinations: list[str],
         cur.execute(
             """INSERT INTO local.sync_queue (memory_id, destination, version, next_retry_at)
                VALUES (%s, %s, %s, now())
-               ON CONFLICT (memory_id, destination, version) DO NOTHING""",
+               ON CONFLICT (memory_id, destination, version) DO UPDATE
+               SET status = 'pending',
+                   attempts = 0,
+                   next_retry_at = now(),
+                   error = NULL
+               WHERE local.sync_queue.status IN ('done', 'dlq')""",
             (memory_id, dest, version),
         )
         inserted += cur.rowcount

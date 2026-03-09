@@ -219,6 +219,36 @@ def memory_write(
                         now_iso,
                     ),
                 )
+
+                # Transactional outbox: evaluate routing + enqueue sync
+                # within the same transaction as the memory INSERT
+                try:
+                    from .config import get_sync_config
+                    from .routing import evaluate_routing
+                    from .sync_queue import enqueue_sync
+                    from .sync_config import load_routing_rules
+
+                    sync_cfg = get_sync_config()
+                    if sync_cfg.get("enabled"):
+                        memory_dict = {
+                            "category": "memory",
+                            "scope": scope,
+                            "project": project,
+                            "importance_score": importance,
+                            "metadata": jsonb_meta,
+                        }
+                        rules = load_routing_rules(sync_cfg)
+                        project_groups = sync_cfg.get("project_groups", {})
+                        decision = evaluate_routing(
+                            memory_dict, rules,
+                            sync_cfg.get("strategy", "first-match"),
+                            project_groups,
+                        )
+                        if decision.destinations:
+                            enqueue_sync(cur, doc_id, decision.destinations)
+                except Exception as e:
+                    logger.warning(f"Sync routing failed for memory '{name}': {e}")
+
                 conn.commit()
         indexed = True
     except Exception as e:
@@ -443,7 +473,7 @@ def memory_delete(
     file_result = delete_memory_file(path)
     file_deleted = file_result.get("success", False)
 
-    # Delete database entry (hard delete for strategic memories)
+    # Delete database entry
     index_deleted = False
     doc_id = _build_doc_id(name, scope, project)
     try:
@@ -452,7 +482,36 @@ def memory_delete(
         pool = _get_pool()
         with pool.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM local.memories WHERE id = %s", (doc_id,))
+                # Read synced_to before destroying the row so we can
+                # propagate deletes to remotes that already have a copy
+                cur.execute(
+                    "SELECT synced_to FROM local.memories WHERE id = %s",
+                    (doc_id,),
+                )
+                row = cur.fetchone()
+                synced_remotes = row[0] if row and row[0] else []
+
+                if synced_remotes:
+                    # Soft-delete so the sync worker can propagate to remotes
+                    cur.execute(
+                        """UPDATE local.memories
+                           SET status = 'deleted', deleted_at = now(), updated_at = now()
+                           WHERE id = %s""",
+                        (doc_id,),
+                    )
+                    try:
+                        from .sync_queue import enqueue_sync
+                        enqueue_sync(cur, doc_id, synced_remotes)
+                    except Exception as e:
+                        logger.warning(
+                            f"Delete sync propagation failed for '{name}': {e}"
+                        )
+                else:
+                    # Never synced — safe to hard delete immediately
+                    cur.execute(
+                        "DELETE FROM local.memories WHERE id = %s", (doc_id,)
+                    )
+
                 index_deleted = cur.rowcount > 0
                 conn.commit()
     except Exception as e:
