@@ -19,7 +19,7 @@ from .config import (
 from .query import query_vault, semantic_context
 from .content import content_list, content_write
 
-_DEDUP_JACCARD_THRESHOLD = 0.7
+_DEDUP_JACCARD_THRESHOLD = 0.5
 _DEDUP_RELEVANCE_THRESHOLD = 0.95
 
 
@@ -81,10 +81,17 @@ def _is_duplicate_observation(content: str, threshold: float) -> bool:
 
 
 def _is_duplicate_worklog(task_summary: str, session_id: str, threshold: float) -> bool:
-    """Session-scoped Jaccard dedup for worklogs."""
+    """Cross-session Jaccard dedup for worklogs.
+
+    Checks the last 20 worklogs globally (not session-scoped) so that
+    repeated work on the same project across sessions doesn't generate
+    redundant entries.  The session_id parameter is accepted for API
+    compatibility but no longer used for filtering.
+    """
+    _ = session_id  # kept for call-site compat
     result = content_list(
         content_type="worklog",
-        session_id=session_id or None,
+        limit=20,
         sort_by="created_at_desc",
     )
     if not result.get("success") or not result.get("documents"):
@@ -284,6 +291,15 @@ def ingest_auto_extract(payload: dict) -> dict:
         scope = _safe_str(raw.get("scope"))
         if scope in ("project", "global"):
             metadata["scope"] = scope
+            # When scope='project', ensure project name is set so the
+            # chk_scope_project DB constraint is satisfied.
+            if scope == "project":
+                project_name = _safe_str(raw.get("project"))
+                if not project_name:
+                    project_path = metadata.get("project_path", "")
+                    project_name = os.path.basename(project_path) if project_path else ""
+                if project_name:
+                    metadata["project_dir"] = project_name
 
         ingest_event_id = _safe_str(raw.get("ingest_event_id"))
         if ingest_event_id:

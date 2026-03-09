@@ -136,7 +136,7 @@ def test_ingest_auto_extract_worklog_dedup_by_session(monkeypatch):
     assert result["worklog"]["status"] == "duplicate"
     content_list.assert_called_once_with(
         content_type="worklog",
-        session_id="session-42",
+        limit=20,
         sort_by="created_at_desc",
     )
     write.assert_not_called()
@@ -200,3 +200,92 @@ def test_ingest_event_id_passthrough(monkeypatch):
     wl_call = next(call for call in calls if call["content_type"] == "worklog")
     assert obs_call["extra_metadata"]["ingest_event_id"] == "obs:event:123"
     assert wl_call["extra_metadata"]["ingest_event_id"] == "worklog:event:456"
+
+
+def _make_obs_payload(scope, project_path=None, raw_project=None):
+    """Helper: build a minimal ingest_auto_extract payload for one observation."""
+    obs = {
+        "content": "Some project-specific insight",
+        "importance_score": 0.7,
+        "scope": scope,
+    }
+    if raw_project is not None:
+        obs["project"] = raw_project
+    context = {}
+    if project_path is not None:
+        context["project_path"] = project_path
+    return {
+        "observations": [obs],
+        "worklog": None,
+        "context": context,
+        "dedup": {"observation_threshold": 0.0, "worklog_threshold": 0.95},
+    }
+
+
+def test_observation_project_scope_uses_project_path(monkeypatch):
+    """scope='project' with no raw.project → project_dir set from context project_path basename."""
+    monkeypatch.setattr(
+        hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
+    )
+    calls = []
+    monkeypatch.setattr(
+        hook_endpoints,
+        "content_write",
+        lambda **kwargs: calls.append(kwargs) or {"success": True, "id": "obs::1"},
+    )
+
+    payload = _make_obs_payload(scope="project", project_path="/home/user/myrepo")
+    result = hook_endpoints.ingest_auto_extract(payload)
+
+    assert result["success"] is True
+    assert len(calls) == 1
+    meta = calls[0]["extra_metadata"]
+    assert meta.get("scope") == "project"
+    assert meta.get("project_dir") == "myrepo"
+
+
+def test_observation_project_scope_prefers_raw_project(monkeypatch):
+    """scope='project' with explicit raw.project → that value overrides path basename."""
+    monkeypatch.setattr(
+        hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
+    )
+    calls = []
+    monkeypatch.setattr(
+        hook_endpoints,
+        "content_write",
+        lambda **kwargs: calls.append(kwargs) or {"success": True, "id": "obs::1"},
+    )
+
+    payload = _make_obs_payload(
+        scope="project",
+        project_path="/home/user/myrepo",
+        raw_project="explicit-project-name",
+    )
+    result = hook_endpoints.ingest_auto_extract(payload)
+
+    assert result["success"] is True
+    assert len(calls) == 1
+    meta = calls[0]["extra_metadata"]
+    assert meta.get("project_dir") == "explicit-project-name"
+
+
+def test_observation_project_scope_no_path_no_project(monkeypatch):
+    """scope='project' with no project_path and no raw.project → project_dir not set."""
+    monkeypatch.setattr(
+        hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
+    )
+    calls = []
+    monkeypatch.setattr(
+        hook_endpoints,
+        "content_write",
+        lambda **kwargs: calls.append(kwargs) or {"success": True, "id": "obs::1"},
+    )
+
+    payload = _make_obs_payload(scope="project")
+    result = hook_endpoints.ingest_auto_extract(payload)
+
+    assert result["success"] is True
+    assert len(calls) == 1
+    meta = calls[0]["extra_metadata"]
+    assert meta.get("scope") == "project"
+    assert "project_dir" not in meta

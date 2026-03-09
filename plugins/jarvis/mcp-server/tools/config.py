@@ -309,7 +309,7 @@ def get_worklog_config() -> dict:
     """Get worklog configuration with defaults."""
     defaults = {
         "enabled": True,
-        "dedup_threshold": 0.7,
+        "dedup_threshold": 0.5,
     }
     return _merge_with_defaults(defaults, _get_memory_section("worklog"))
 

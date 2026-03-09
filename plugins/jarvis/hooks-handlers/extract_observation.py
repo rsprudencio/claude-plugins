@@ -1443,7 +1443,7 @@ def jaccard_similarity(text_a: str, text_b: str) -> float:
 # Dedup: embedding relevance for observations, Jaccard for worklogs
 # ---------------------------------------------------------------------------
 
-_DEDUP_JACCARD_THRESHOLD = 0.7
+_DEDUP_JACCARD_THRESHOLD = 0.5
 _DEDUP_RELEVANCE_THRESHOLD = 0.95
 
 

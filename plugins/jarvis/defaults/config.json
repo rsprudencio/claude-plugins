@@ -63,7 +63,7 @@
     },
     "worklog": {
       "enabled": true,
-      "dedup_threshold": 0.7
+      "dedup_threshold": 0.5
     },
     "conflict_detection": {
       "enabled": true,

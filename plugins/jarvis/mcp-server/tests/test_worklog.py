@@ -140,7 +140,7 @@ def test_legacy_duplicate_helpers_are_safe_defaults():
 
 def test_worklog_constants():
     """Core constants remain unchanged."""
-    assert _DEDUP_JACCARD_THRESHOLD == 0.7
+    assert _DEDUP_JACCARD_THRESHOLD == 0.5
     assert _DEDUP_RELEVANCE_THRESHOLD == 0.95
     assert _WORKLOG_ACTIVITY_TYPES == {
         "coding",

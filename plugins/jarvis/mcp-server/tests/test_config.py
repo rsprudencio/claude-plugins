@@ -199,7 +199,7 @@ class TestWorklogConfig:
 
         config = get_worklog_config()
         assert config["enabled"] is True
-        assert config["dedup_threshold"] == 0.7
+        assert config["dedup_threshold"] == 0.5
 
     def test_override_from_config(self, mock_config):
         """Should merge user config over defaults."""
