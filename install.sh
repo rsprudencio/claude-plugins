@@ -449,6 +449,7 @@ services:
       - "8741:8741"
       - "8742:8742"
       - "8744:8744"
+      - "8750:8750"
     volumes:
       - "$VAULT_PATH:/vault"
       - "$JARVIS_HOME:/config"
@@ -606,6 +607,7 @@ echo -e "  Vault:       ${CYAN}$VAULT_PATH${NC}"
 echo -e "  Compose:     ${CYAN}$JARVIS_HOME/docker-compose.yml${NC}"
 echo -e "  MCP Core:    ${CYAN}http://localhost:8741/mcp${NC}"
 echo -e "  MCP Todoist: ${CYAN}http://localhost:8742/mcp${NC}"
+echo -e "  Admin:       ${CYAN}http://localhost:8750${NC}"
 
 if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     echo -e "  Shell:       ${CYAN}jarvis${NC} installed to ${INSTALL_DIR:-PATH}"
