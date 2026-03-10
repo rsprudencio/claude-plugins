@@ -140,9 +140,13 @@ def _discover_sources(local_pool: psycopg_pool.ConnectionPool) -> dict[str, dict
             "metadata_filters": ["vault_type", "directory"],
         }
 
-    # Remotes from sync config
+    # Remotes from sync config (skip disabled and template entries)
     sync_cfg = get_sync_config()
     for rname, rcfg in sync_cfg.get("remotes", {}).items():
+        if not rcfg.get("enabled", True):
+            continue
+        if rname.startswith("_"):
+            continue
         src_id = f"remote:{rname}"
         schema = rcfg.get("schema", rname)
         try:
@@ -673,22 +677,26 @@ def _admin_sync() -> dict:
     sync_cfg = get_sync_config()
     enabled = sync_cfg.get("enabled", False)
 
-    # Remotes (no URLs or credentials)
+    # Remotes (no URLs or credentials; skip templates)
     remotes = []
     for rname, rcfg in sync_cfg.get("remotes", {}).items():
+        if rname.startswith("_"):
+            continue
         remote_ok = False
-        try:
-            pool = get_remote_pool(rname)
-            with pool.connection() as conn:
-                conn.execute("SELECT 1")
-            remote_ok = True
-        except Exception:
-            pass
+        is_enabled = rcfg.get("enabled", True)
+        if is_enabled:
+            try:
+                pool = get_remote_pool(rname)
+                with pool.connection() as conn:
+                    conn.execute("SELECT 1")
+                remote_ok = True
+            except Exception:
+                pass
         remotes.append({
             "name": rname,
             "schema": rcfg.get("schema", rname),
             "auth_method": rcfg.get("auth_method", "password"),
-            "enabled": rcfg.get("enabled", True),
+            "enabled": is_enabled,
             "connected": remote_ok,
         })
 
