@@ -418,31 +418,8 @@ echo ""
 # Write docker-compose.yml for user
 COMPOSE_FILE="$JARVIS_HOME/docker-compose.yml"
 cat > "$COMPOSE_FILE" << COMPOSEEOF
+# Jarvis — single-container deployment with embedded PostgreSQL
 services:
-  postgres:
-    image: pgvector/pgvector:pg17
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_USER=jarvis
-      - POSTGRES_PASSWORD=jarvis
-      - POSTGRES_DB=jarvis
-    command:
-      - "postgres"
-      - "-c"
-      - "wal_level=logical"
-      - "-c"
-      - "max_replication_slots=10"
-      - "-c"
-      - "max_wal_senders=10"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jarvis -d jarvis"]
-      interval: 5s
-      timeout: 3s
-      start_period: 5s
-      retries: 5
-    restart: unless-stopped
-
   jarvis:
     image: $DOCKER_IMAGE
     ports:
@@ -453,23 +430,19 @@ services:
     volumes:
       - "$VAULT_PATH:/vault"
       - "$JARVIS_HOME:/config"
+      - pgdata:/var/lib/postgresql/data
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
-      - POSTGRES_URL=postgresql://jarvis:jarvis@postgres:5432/jarvis
-      - TODOIST_API_TOKEN=${TODOIST_TOKEN:-}
-      - JARVIS_AUTOCRLF=false
-      - JARVIS_REPLICATION_MODE=disabled
-      - JARVIS_CENTRAL_URL=
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - TODOIST_API_TOKEN=\${TODOIST_API_TOKEN:-}
+      - AURORA_PASSWORD=\${AURORA_PASSWORD:-}
+    stop_grace_period: 30s
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8741/health"]
       interval: 30s
       timeout: 5s
-      start_period: 20s
+      start_period: 30s
       retries: 3
 
 volumes:
