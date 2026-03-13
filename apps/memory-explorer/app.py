@@ -993,9 +993,6 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 .rule-tester-body { display: none; }
 .rule-tester-body.show { display: block; }
 .test-results { margin-top: 10px; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
-.auth-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; display: flex; gap: 10px; align-items: center; }
-.auth-bar label { font-size: 11px; color: var(--muted); }
-.auth-bar input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 5px 8px; font: 12px inherit; }
 </style>
 </head>
 <body>
@@ -1379,12 +1376,7 @@ function renderAdmin(d) {
   var el = document.getElementById('tab-admin');
   var h = '';
 
-  /* ── Auth bar ──────────────────────────────────── */
-  var savedToken = getAdminToken();
-  h += '<div class="auth-bar">';
-  h += '<label>Auth Token</label>';
-  h += '<input id="admin-token" type="password" placeholder="Bearer token for write operations..." value="' + esc(savedToken) + '" onchange="setAdminToken(this.value)">';
-  h += '</div>';
+  /* ── Auth bar (hidden — auth handled server-side) ── */
 
   /* ── Toolbar ──────────────────────────────────────── */
   var autoClass = adminAutoRefresh ? 'active' : '';
@@ -1577,14 +1569,10 @@ function renderAdmin(d) {
   window._adminData = d;
 }
 
-/* ── Auth helpers ─────────────────────────────────── */
-function getAdminToken() { return localStorage.getItem('jarvis-admin-token') || ''; }
-function setAdminToken(t) { localStorage.setItem('jarvis-admin-token', t); }
+/* ── Admin fetch helper ───────────────────────────── */
 function adminFetch(url, opts) {
   opts = opts || {};
   opts.headers = opts.headers || {};
-  var token = getAdminToken();
-  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
   if (opts.body && typeof opts.body === 'object') {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(opts.body);
