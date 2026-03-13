@@ -33,3 +33,4 @@ htmlcov/
 .claude/worktrees/
 .serena/
 docker/models/
+infra/
