@@ -201,16 +201,30 @@ GRANT ALL PRIVILEGES ON DATABASE jarvis TO jarvis;
 GRANT ALL ON SCHEMA public TO jarvis;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO jarvis;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO jarvis;
--- Read access to local/obsidian schemas (for memory-explorer and external tools)
-GRANT USAGE ON SCHEMA local TO jarvis;
-GRANT SELECT ON ALL TABLES IN SCHEMA local TO jarvis;
-ALTER DEFAULT PRIVILEGES IN SCHEMA local GRANT SELECT ON TABLES TO jarvis;
-GRANT USAGE ON SCHEMA obsidian TO jarvis;
-GRANT SELECT ON ALL TABLES IN SCHEMA obsidian TO jarvis;
-ALTER DEFAULT PRIVILEGES IN SCHEMA obsidian GRANT SELECT ON TABLES TO jarvis;
 ROLES
 
     echo "[jarvis] Embedded PostgreSQL initialized (database: jarvis)"
+}
+
+# Grant read access on schemas created by jarvis-core (local, obsidian).
+# Must run AFTER jarvis-core is healthy, since schema.py creates these schemas at startup.
+grant_schema_access() {
+    echo "[jarvis] Granting jarvis role access to local/obsidian schemas..."
+    su postgres -c "psql -h 127.0.0.1 -p 5432 -d jarvis" <<'GRANTS'
+DO $$ BEGIN
+    -- Only grant if schemas exist (created by jarvis-core schema.py)
+    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'local') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA local TO jarvis';
+        EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA local TO jarvis';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA local GRANT SELECT ON TABLES TO jarvis';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'obsidian') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA obsidian TO jarvis';
+        EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA obsidian TO jarvis';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA obsidian GRANT SELECT ON TABLES TO jarvis';
+    END IF;
+END $$;
+GRANTS
 }
 
 # --- Wait for external PostgreSQL ---
@@ -312,7 +326,15 @@ else
     echo "[jarvis] No Todoist token found, skipping jarvis-todoist."
 fi
 
-# --- Start memory-explorer ---
+# --- Wait for jarvis-core health (creates schemas on startup) ---
+wait_for_health "${HEALTH_SCHEME}://localhost:${CORE_PORT}/health" "jarvis-core" 30
+
+# --- Grant schema access (after jarvis-core creates local/obsidian schemas) ---
+if [ "$PG_STARTED" = "true" ]; then
+    grant_schema_access
+fi
+
+# --- Start memory-explorer (after jarvis-core is healthy, needs DB schemas) ---
 echo "[jarvis] Starting memory-explorer on port ${EXPLORER_PORT}..."
 cd /app/memory-explorer
 uvicorn app:app \
@@ -321,9 +343,6 @@ uvicorn app:app \
     --log-level warning \
     --no-access-log &
 EXPLORER_PID=$!
-
-# --- Wait for health ---
-wait_for_health "${HEALTH_SCHEME}://localhost:${CORE_PORT}/health" "jarvis-core" 30
 
 wait_for_health "${HEALTH_SCHEME}://localhost:${OBSIDIAN_PORT}/health" "jarvis-obsidian" 30
 
