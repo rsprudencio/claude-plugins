@@ -967,7 +967,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 .admin-form { background: var(--bg); border: 1px solid var(--accent); border-radius: 8px; padding: 16px; margin: 10px 0; }
 .admin-form h4 { font-size: 12px; color: var(--accent); margin-bottom: 12px; }
 .form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-.form-row label { font-size: 11px; color: var(--muted); min-width: 90px; }
+.form-row label { font-size: 11px; color: var(--muted); min-width: 90px; cursor: help; }
 .form-row input, .form-row select { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 5px 8px; font: 12px inherit; min-width: 150px; }
 .form-row input:focus, .form-row select:focus { border-color: var(--accent); outline: none; }
 .form-row input[type="checkbox"] { min-width: auto; width: 16px; height: 16px; }
@@ -1537,7 +1537,6 @@ function renderAdmin(d) {
   h += '<div id="rule-tester-body" class="rule-tester-body">';
   h += '<div class="form-row"><label>Category</label><select id="rt-cat"><option value="observation">observation</option><option value="pattern">pattern</option><option value="learning">learning</option><option value="decision">decision</option><option value="summary">summary</option><option value="code">code</option><option value="relationship">relationship</option><option value="hint">hint</option><option value="plan">plan</option><option value="worklog">worklog</option><option value="memory">memory</option></select></div>';
   h += '<div class="form-row"><label>Project</label><input id="rt-project" placeholder="e.g. jarvis-plugin"></div>';
-  h += '<div class="form-row"><label>Scope</label><select id="rt-scope"><option value="global">global</option><option value="project">project</option></select></div>';
   h += '<div class="form-row"><label>Importance</label><input id="rt-importance" type="number" step="0.1" min="0" max="1" value="0.5"></div>';
   h += '<div class="form-row"><label>Tags</label><input id="rt-tags" placeholder="comma-separated"></div>';
   h += '<div class="form-actions"><button class="btn-save" onclick="testRouting()">Test Rules</button></div>';
@@ -1596,17 +1595,17 @@ function showRemoteForm(name) {
   }
   var h = '<div class="admin-form"><h4>' + (name ? 'Edit Remote: ' + esc(name) : 'Add Remote') + '</h4>';
   h += '<div id="remote-form-error"></div>';
-  if (!name) h += '<div class="form-row"><label>Name</label><input id="rf-name" placeholder="my_remote" value=""></div>';
-  h += '<div class="form-row"><label>Host</label><input id="rf-host" value="' + esc(remote ? remote.host || 'localhost' : 'localhost') + '"></div>';
-  h += '<div class="form-row"><label>Port</label><input id="rf-port" type="number" value="' + (remote ? remote.port || 5432 : 5432) + '"></div>';
-  h += '<div class="form-row"><label>Database</label><input id="rf-db" value="' + esc(remote ? remote.database || 'jarvis' : 'jarvis') + '"></div>';
-  h += '<div class="form-row"><label>User</label><input id="rf-user" value="' + esc(remote ? remote.user || 'jarvis' : 'jarvis') + '"></div>';
-  h += '<div class="form-row"><label>Password</label><input id="rf-pw" type="password" placeholder="' + (name ? '*** (unchanged)' : 'password or $ENV_VAR') + '" value=""></div>';
-  h += '<div class="form-row"><label>Auth Method</label><select id="rf-auth"><option' + (remote && remote.auth_method === 'password' ? ' selected' : '') + '>password</option><option' + (remote && remote.auth_method === 'iam' ? ' selected' : '') + '>iam</option></select></div>';
-  h += '<div class="form-row"><label>Schema</label><input id="rf-schema" placeholder="defaults to remote name" value="' + esc(remote ? remote.schema_name || '' : '') + '"></div>';
-  h += '<div class="form-row"><label>SSL Mode</label><select id="rf-ssl"><option' + (remote && remote.sslmode === 'require' ? ' selected' : '') + '>require</option><option' + (remote && remote.sslmode === 'verify-full' ? ' selected' : '') + '>verify-full</option><option' + (remote && remote.sslmode === 'disable' ? ' selected' : '') + '>disable</option></select></div>';
-  h += '<div class="form-row"><label>Enabled</label><input id="rf-enabled" type="checkbox"' + (remote ? (remote.enabled !== false ? ' checked' : '') : ' checked') + '></div>';
-  h += '<div class="form-row"><label>Description</label><input id="rf-desc" value="' + esc(remote ? remote.description || '' : '') + '"></div>';
+  if (!name) h += '<div class="form-row"><label title="Unique lowercase identifier (a-z, 0-9, underscores)">Name</label><input id="rf-name" placeholder="my_remote" value=""></div>';
+  h += '<div class="form-row"><label title="PostgreSQL server hostname or IP address">Host</label><input id="rf-host" value="' + esc(remote ? remote.host || 'localhost' : 'localhost') + '"></div>';
+  h += '<div class="form-row"><label title="PostgreSQL server port">Port</label><input id="rf-port" type="number" value="' + (remote ? remote.port || 5432 : 5432) + '"></div>';
+  h += '<div class="form-row"><label title="PostgreSQL database name">Database</label><input id="rf-db" value="' + esc(remote ? remote.database || 'jarvis' : 'jarvis') + '"></div>';
+  h += '<div class="form-row"><label title="PostgreSQL username for authentication">User</label><input id="rf-user" value="' + esc(remote ? remote.user || 'jarvis' : 'jarvis') + '"></div>';
+  h += '<div class="form-row"><label title="Literal password or $ENV_VAR reference (e.g. $AURORA_PASSWORD). Leave empty on edit to keep existing.">Password</label><input id="rf-pw" type="password" placeholder="' + (name ? '*** (unchanged)' : 'password or $ENV_VAR') + '" value=""></div>';
+  h += '<div class="form-row"><label title="password = standard PostgreSQL auth. iam = AWS IAM database authentication.">Auth Method</label><select id="rf-auth"><option' + (remote && remote.auth_method === 'password' ? ' selected' : '') + '>password</option><option' + (remote && remote.auth_method === 'iam' ? ' selected' : '') + '>iam</option></select></div>';
+  h += '<div class="form-row"><label title="PostgreSQL schema for this remote (isolates memories per remote). Defaults to the remote name.">Schema</label><input id="rf-schema" placeholder="defaults to remote name" value="' + esc(remote ? remote.schema_name || '' : '') + '"></div>';
+  h += '<div class="form-row"><label title="SSL connection mode: require (encrypted), verify-full (encrypted + cert verification), disable (plaintext)">SSL Mode</label><select id="rf-ssl"><option' + (remote && remote.sslmode === 'require' ? ' selected' : '') + '>require</option><option' + (remote && remote.sslmode === 'verify-full' ? ' selected' : '') + '>verify-full</option><option' + (remote && remote.sslmode === 'disable' ? ' selected' : '') + '>disable</option></select></div>';
+  h += '<div class="form-row"><label title="Disabled remotes are skipped during sync">Enabled</label><input id="rf-enabled" type="checkbox"' + (remote ? (remote.enabled !== false ? ' checked' : '') : ' checked') + '></div>';
+  h += '<div class="form-row"><label title="Human-readable description for this remote">Description</label><input id="rf-desc" value="' + esc(remote ? remote.description || '' : '') + '"></div>';
   h += '<div class="form-actions"><button class="btn-save" onclick="saveRemote(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
   h += '<button class="btn-cancel" onclick="document.getElementById(\\'remote-form-area\\').innerHTML=\\'\\'">Cancel</button></div>';
   h += '</div>';
@@ -1682,17 +1681,29 @@ function showRuleForm(name) {
   }
   var match = rule ? rule.match || {} : {};
   var cats = ['observation','pattern','learning','decision','summary','code','relationship','hint','plan','worklog','memory'];
+  var remoteNames = d && d.remotes ? d.remotes.map(function(r) { return r.name; }) : [];
+  var selDests = rule ? (rule.destinations || []) : [];
   var h = '<div class="admin-form"><h4>' + (name ? 'Edit Rule: ' + esc(name) : 'Add Rule') + '</h4>';
   h += '<div id="rule-form-error"></div>';
-  h += '<div class="form-row"><label>Name</label><input id="rlf-name" value="' + esc(rule ? rule.name : '') + '"' + (name ? ' readonly style="opacity:0.6"' : '') + '></div>';
-  h += '<div class="form-row"><label>Action</label><select id="rlf-action"><option value="route-to"' + (rule && rule.action === 'route-to' ? ' selected' : '') + '>route-to</option><option value="deny"' + (rule && rule.action === 'deny' ? ' selected' : '') + '>deny</option></select></div>';
-  h += '<div class="form-row"><label>Destinations</label><input id="rlf-dest" placeholder="comma-separated remote names" value="' + esc(rule ? (rule.destinations || []).join(', ') : '') + '"></div>';
-  h += '<div class="form-row"><label>Categories</label><input id="rlf-cat" placeholder="comma-separated (empty=any)" value="' + esc((match.category || []).join(', ')) + '"></div>';
-  h += '<div class="form-row"><label>Projects</label><input id="rlf-proj" placeholder="glob patterns or @groups" value="' + esc((match.project || []).join(', ')) + '"></div>';
-  h += '<div class="form-row"><label>Tags</label><input id="rlf-tags" placeholder="comma-separated" value="' + esc((match.tags || []).join(', ')) + '"></div>';
-  h += '<div class="form-row"><label>Scope</label><select id="rlf-scope"><option value="">Any</option><option value="global"' + (match.scope === 'global' ? ' selected' : '') + '>global</option><option value="project"' + (match.scope === 'project' ? ' selected' : '') + '>project</option></select></div>';
-  h += '<div class="form-row"><label>Min Importance</label><input id="rlf-imp" type="number" step="0.1" min="0" max="1" value="' + (match.importance_min != null ? match.importance_min : '') + '" placeholder="0.0-1.0"></div>';
-  h += '<div class="form-row"><label>Path Prefixes</label><input id="rlf-path" placeholder="comma-separated paths" value="' + esc((match.path_prefix || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label title="Unique identifier for this rule (used in URLs and logs)">Name</label><input id="rlf-name" value="' + esc(rule ? rule.name : '') + '"' + (name ? ' readonly style="opacity:0.6"' : '') + ' placeholder="e.g. sync-observations"></div>';
+  h += '<div class="form-row"><label title="route-to: send matching memories to destinations. deny: block matching memories from being synced.">Action</label><select id="rlf-action"><option value="route-to"' + (rule && rule.action === 'route-to' ? ' selected' : '') + '>route-to</option><option value="deny"' + (rule && rule.action === 'deny' ? ' selected' : '') + '>deny</option></select></div>';
+  h += '<div class="form-row"><label title="Which remote databases matching memories will be synced to (required for route-to rules)">Destinations</label>';
+  if (remoteNames.length) {
+    h += '<div id="rlf-dest-list" style="display:flex;flex-wrap:wrap;gap:6px">';
+    remoteNames.forEach(function(rn) {
+      var checked = selDests.indexOf(rn) >= 0 ? ' checked' : '';
+      h += '<label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer"><input type="checkbox" class="rlf-dest-cb" value="' + esc(rn) + '"' + checked + '>' + esc(rn) + '</label>';
+    });
+    h += '</div>';
+  } else {
+    h += '<input id="rlf-dest" placeholder="no remotes configured" disabled>';
+  }
+  h += '</div>';
+  h += '<div class="form-row"><label title="Only sync memories of these content types (empty = match any category)">Categories</label><input id="rlf-cat" placeholder="empty = any" value="' + esc((match.category || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label title="Glob patterns (e.g. work-*) or @group references (e.g. @work) to match memory project field">Projects</label><input id="rlf-proj" placeholder="e.g. work-*, @work" value="' + esc((match.project || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label title="Only match memories that have ALL of these tags">Tags</label><input id="rlf-tags" placeholder="comma-separated" value="' + esc((match.tags || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label title="Only sync memories with importance score >= this value (0.0 to 1.0)">Min Importance</label><input id="rlf-imp" type="number" step="0.1" min="0" max="1" value="' + (match.importance_min != null ? match.importance_min : '') + '" placeholder="0.0-1.0"></div>';
+  h += '<div class="form-row"><label title="Only match memories whose vault path starts with one of these prefixes">Path Prefixes</label><input id="rlf-path" placeholder="e.g. work/, notes/" value="' + esc((match.path_prefix || []).join(', ')) + '"></div>';
   h += '<div class="form-actions"><button class="btn-save" onclick="saveRule(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
   h += '<button class="btn-cancel" onclick="document.getElementById(\\'rule-form-area\\').innerHTML=\\'\\'">Cancel</button></div>';
   h += '</div>';
@@ -1708,19 +1719,19 @@ function saveRule(existingName) {
   var cats = _csvToList(document.getElementById('rlf-cat').value);
   var projs = _csvToList(document.getElementById('rlf-proj').value);
   var tags = _csvToList(document.getElementById('rlf-tags').value);
-  var scope = document.getElementById('rlf-scope').value;
   var imp = document.getElementById('rlf-imp').value;
   var paths = _csvToList(document.getElementById('rlf-path').value);
   if (cats.length) match.category = cats;
   if (projs.length) match.project = projs;
   if (tags.length) match.tags = tags;
-  if (scope) match.scope = scope;
   if (imp !== '') match.importance_min = parseFloat(imp);
   if (paths.length) match.path_prefix = paths;
   var body = {
     name: rname,
     action: document.getElementById('rlf-action').value,
-    destinations: _csvToList(document.getElementById('rlf-dest').value),
+    destinations: document.getElementById('rlf-dest-list')
+      ? Array.from(document.querySelectorAll('.rlf-dest-cb:checked')).map(function(cb) { return cb.value; })
+      : _csvToList((document.getElementById('rlf-dest') || {value:''}).value),
     match: match,
   };
   var url = existingName ? '/api/admin/rules/' + encodeURIComponent(existingName) : '/api/admin/rules';
@@ -1764,10 +1775,11 @@ function moveRule(name, dir) {
 
 /* ── Rule tester ──────────────────────────────── */
 function testRouting() {
+  var proj = document.getElementById('rt-project').value;
   var body = {
     category: document.getElementById('rt-cat').value,
-    project: document.getElementById('rt-project').value,
-    scope: document.getElementById('rt-scope').value,
+    project: proj,
+    scope: proj ? 'project' : 'global',
     importance_score: parseFloat(document.getElementById('rt-importance').value) || 0.5,
     tags: document.getElementById('rt-tags').value,
   };
