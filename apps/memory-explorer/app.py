@@ -1463,9 +1463,9 @@ function renderAdmin(d) {
       h += '</td><td>' + esc(r.schema_name || r.schema || r.name) + '</td>';
       h += '<td><span class="pill pill-blue">' + esc(r.auth_method) + '</span></td><td>' + st + '</td>';
       h += '<td style="white-space:nowrap">';
-      h += '<button class="btn-sm" onclick="showRemoteForm(\'' + esc(r.name) + '\')">Edit</button> ';
-      h += '<button class="btn-sm" onclick="testRemote(\'' + esc(r.name) + '\', this)">Test</button> ';
-      h += '<button class="btn-sm btn-danger" onclick="deleteRemote(\'' + esc(r.name) + '\')">Delete</button>';
+      h += '<button class="btn-sm" onclick="showRemoteForm(\\'' + esc(r.name) + '\\')">Edit</button> ';
+      h += '<button class="btn-sm" onclick="testRemote(\\'' + esc(r.name) + '\\', this)">Test</button> ';
+      h += '<button class="btn-sm btn-danger" onclick="deleteRemote(\\'' + esc(r.name) + '\\')">Delete</button>';
       h += '</td></tr>';
     });
     h += '</table>';
@@ -1530,10 +1530,10 @@ function renderAdmin(d) {
       h += '<td>' + (matchHtml || '<span class="ts">any</span>') + '</td>';
       h += '<td>' + r.destinations.map(function(dd) { return '<span class="match-chip">' + esc(dd) + '</span>'; }).join(' ') + '</td>';
       h += '<td style="white-space:nowrap">';
-      if (i > 0) h += '<button class="btn-sm" onclick="moveRule(\'' + esc(r.name) + '\',-1)">&#9650;</button> ';
-      if (i < d.rules.length - 1) h += '<button class="btn-sm" onclick="moveRule(\'' + esc(r.name) + '\',1)">&#9660;</button> ';
-      h += '<button class="btn-sm" onclick="showRuleForm(\'' + esc(r.name) + '\')">Edit</button> ';
-      h += '<button class="btn-sm btn-danger" onclick="deleteRule(\'' + esc(r.name) + '\')">Delete</button>';
+      if (i > 0) h += '<button class="btn-sm" onclick="moveRule(\\'' + esc(r.name) + '\\',-1)">&#9650;</button> ';
+      if (i < d.rules.length - 1) h += '<button class="btn-sm" onclick="moveRule(\\'' + esc(r.name) + '\\',1)">&#9660;</button> ';
+      h += '<button class="btn-sm" onclick="showRuleForm(\\'' + esc(r.name) + '\\')">Edit</button> ';
+      h += '<button class="btn-sm btn-danger" onclick="deleteRule(\\'' + esc(r.name) + '\\')">Delete</button>';
       h += '</td></tr>';
     });
     h += '</table>';
@@ -1541,7 +1541,7 @@ function renderAdmin(d) {
 
   /* Rule tester */
   h += '<div class="rule-tester">';
-  h += '<h4 onclick="document.getElementById(\'rule-tester-body\').classList.toggle(\'show\')">Rule Tester (click to expand)</h4>';
+  h += '<h4 onclick="document.getElementById(\\'rule-tester-body\\').classList.toggle(\\'show\\')">Rule Tester (click to expand)</h4>';
   h += '<div id="rule-tester-body" class="rule-tester-body">';
   h += '<div class="form-row"><label>Category</label><select id="rt-cat"><option value="observation">observation</option><option value="pattern">pattern</option><option value="learning">learning</option><option value="decision">decision</option><option value="summary">summary</option><option value="code">code</option><option value="relationship">relationship</option><option value="hint">hint</option><option value="plan">plan</option><option value="worklog">worklog</option><option value="memory">memory</option></select></div>';
   h += '<div class="form-row"><label>Project</label><input id="rt-project" placeholder="e.g. jarvis-plugin"></div>';
@@ -1620,7 +1620,7 @@ function showRemoteForm(name) {
   h += '<div class="form-row"><label>Enabled</label><input id="rf-enabled" type="checkbox"' + (remote ? (remote.enabled !== false ? ' checked' : '') : ' checked') + '></div>';
   h += '<div class="form-row"><label>Description</label><input id="rf-desc" value="' + esc(remote ? remote.description || '' : '') + '"></div>';
   h += '<div class="form-actions"><button class="btn-save" onclick="saveRemote(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
-  h += '<button class="btn-cancel" onclick="document.getElementById(\'remote-form-area\').innerHTML=\'\'">Cancel</button></div>';
+  h += '<button class="btn-cancel" onclick="document.getElementById(\\'remote-form-area\\').innerHTML=\\'\\'">Cancel</button></div>';
   h += '</div>';
   area.innerHTML = h;
 }
@@ -1706,7 +1706,7 @@ function showRuleForm(name) {
   h += '<div class="form-row"><label>Min Importance</label><input id="rlf-imp" type="number" step="0.1" min="0" max="1" value="' + (match.importance_min != null ? match.importance_min : '') + '" placeholder="0.0-1.0"></div>';
   h += '<div class="form-row"><label>Path Prefixes</label><input id="rlf-path" placeholder="comma-separated paths" value="' + esc((match.path_prefix || []).join(', ')) + '"></div>';
   h += '<div class="form-actions"><button class="btn-save" onclick="saveRule(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
-  h += '<button class="btn-cancel" onclick="document.getElementById(\'rule-form-area\').innerHTML=\'\'">Cancel</button></div>';
+  h += '<button class="btn-cancel" onclick="document.getElementById(\\'rule-form-area\\').innerHTML=\\'\\'">Cancel</button></div>';
   h += '</div>';
   area.innerHTML = h;
 }
