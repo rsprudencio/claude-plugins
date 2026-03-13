@@ -16,7 +16,7 @@ Tools - Memory Maintenance:
 - jarvis_index_vault, jarvis_index_file, jarvis_collection_stats
 
 Tools - Path Configuration:
-- jarvis_resolve_path, jarvis_list_paths
+- jarvis_resolve_path
 
 Tools - Format Support:
 - jarvis_get_format_reference
@@ -45,8 +45,6 @@ from tools.memory import index_vault, index_file
 from tools.paths import (
     get_path,
     get_relative_path,
-    list_all_paths,
-    validate_paths_config,
     PathNotConfiguredError,
 )
 from tools.query import collection_stats
@@ -437,11 +435,6 @@ TOOLS = [
         },
     ),
     Tool(
-        name="jarvis_list_paths",
-        description="List all configured paths with their resolved values. Diagnostic tool.",
-        inputSchema={"type": "object", "properties": {}},
-    ),
-    Tool(
         name="jarvis_get_format_reference",
         description="Get the active file format reference (syntax guide + journal entry template). Returns the format guide content and configured extension. Call this before creating new vault files to know the correct syntax.",
         inputSchema={"type": "object", "properties": {}},
@@ -513,20 +506,6 @@ def handle_resolve_path(args: dict) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def handle_list_paths() -> dict:
-    """Handle jarvis_list_paths."""
-    from tools.config import get_vault_path
-
-    result = list_all_paths()
-    warnings = validate_paths_config()
-    return {
-        "success": True,
-        "vault_path": get_vault_path(),
-        "warnings": warnings,
-        **result,
-    }
-
-
 def handle_get_format_reference() -> dict:
     """Handle jarvis_get_format_reference.
 
@@ -589,7 +568,6 @@ _HANDLERS = {
     ),
     # Path configuration
     "jarvis_resolve_path": lambda args: handle_resolve_path(args),
-    "jarvis_list_paths": lambda args: handle_list_paths(),
     "jarvis_get_format_reference": lambda args: handle_get_format_reference(),
 }
 

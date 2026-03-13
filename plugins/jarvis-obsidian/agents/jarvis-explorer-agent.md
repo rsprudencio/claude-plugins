@@ -1,7 +1,7 @@
 ---
 name: jarvis-explorer-agent
 description: Vault-aware exploration agent for Jarvis. Searches journal entries, notes, and vault content with understanding of structure, conventions, and access control. Supports text search, structural queries, connection discovery, and git history.
-tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis-obsidian_vault__obsidian_query_history, mcp__plugin_jarvis-obsidian_vault__obsidian_file_history, mcp__plugin_jarvis_core__jarvis_retrieve, mcp__plugin_jarvis_core__jarvis_resolve_path, mcp__plugin_jarvis_core__jarvis_list_paths
+tools: Read, Grep, Glob, mcp__plugin_jarvis_core__jarvis_read_vault_file, mcp__plugin_jarvis_core__jarvis_list_vault_dir, mcp__plugin_jarvis_core__jarvis_file_exists, mcp__plugin_jarvis-obsidian_vault__obsidian_query_history, mcp__plugin_jarvis-obsidian_vault__obsidian_file_history, mcp__plugin_jarvis_core__jarvis_retrieve, mcp__plugin_jarvis_core__jarvis_resolve_path
 model: haiku
 permissionMode: default
 ---

@@ -370,10 +370,6 @@
         "purpose": "Resolve a named path to absolute filesystem location",
         "params": ["name (required)", "substitutions", "ensure_exists"]
       },
-      "jarvis_list_paths": {
-        "purpose": "List all configured paths with resolved values (diagnostic)",
-        "params": []
-      }
     },
 
     "git_operations": {
