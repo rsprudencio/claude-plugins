@@ -102,7 +102,7 @@ class TestConfigCaching:
         assert config1 is config2
 
     def test_invalid_json_returns_empty_dict(self, tmp_path, monkeypatch):
-        """Invalid JSON should be handled gracefully."""
+        """Invalid JSON should be handled gracefully (returns empty dict or last good cache)."""
         from tools import config as config_module
         import jarvis_common.config as common_config_module
 
@@ -117,9 +117,9 @@ class TestConfigCaching:
         # Clear cache (canonical is jarvis_common, clear_config_cache handles it)
         config_module.clear_config_cache()
 
-        # Should raise JSONDecodeError
-        with pytest.raises(Exception):  # json.JSONDecodeError
-            config_module.get_config()
+        # Should gracefully return empty dict (no prior cache to fall back to)
+        result = config_module.get_config()
+        assert result == {}
 
 
 class TestGetVaultPath:

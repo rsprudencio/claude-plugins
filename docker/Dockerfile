@@ -120,7 +120,7 @@ COPY plugins/jarvis-obsidian/mcp-server/ .
 
 # ---- Copy memory-explorer ----
 WORKDIR /app/memory-explorer
-COPY apps/memory-explorer/app.py .
+COPY apps/memory-explorer/app.py apps/memory-explorer/app_admin.py ./
 
 # ---- PostgreSQL init script ----
 COPY docker/init.sql /app/init.sql

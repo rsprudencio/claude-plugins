@@ -42,8 +42,9 @@ if str(_MCP) not in sys.path:
 from tools.config import get_embedding_config, get_postgres_config, get_sync_config  # noqa: E402
 from tools.embedding import get_embedding_service  # noqa: E402
 from tools.remote_connection import get_remote_pool  # noqa: E402
-from tools.sync_config import redact_dsn  # noqa: E402
-from tools.routing import parse_routing_rule  # noqa: E402
+from jarvis_common.sync_validation import redact_dsn  # noqa: E402
+from jarvis_common.routing import parse_routing_rule  # noqa: E402
+from app_admin import admin_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("memory-explorer")
@@ -190,6 +191,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Jarvis Admin", lifespan=lifespan)
+app.include_router(admin_router)
 
 _CSP = (
     "default-src 'self'; "
@@ -960,6 +962,40 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 .stat-box .slbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .match-chip { display: inline-block; background: var(--surface2); border-radius: 4px; padding: 1px 6px; margin: 1px 2px; font-size: 11px; color: var(--muted); }
 .ts { font-size: 11px; color: var(--muted); }
+
+/* Admin CRUD forms */
+.admin-form { background: var(--bg); border: 1px solid var(--accent); border-radius: 8px; padding: 16px; margin: 10px 0; }
+.admin-form h4 { font-size: 12px; color: var(--accent); margin-bottom: 12px; }
+.form-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.form-row label { font-size: 11px; color: var(--muted); min-width: 90px; }
+.form-row input, .form-row select { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 5px 8px; font: 12px inherit; min-width: 150px; }
+.form-row input:focus, .form-row select:focus { border-color: var(--accent); outline: none; }
+.form-row input[type="checkbox"] { min-width: auto; width: 16px; height: 16px; }
+.form-actions { display: flex; gap: 8px; margin-top: 12px; }
+.btn-save { padding: 6px 16px; background: var(--green); border: none; border-radius: 4px; color: #fff; cursor: pointer; font: 600 12px inherit; }
+.btn-save:hover { opacity: 0.9; }
+.btn-save:disabled { opacity: 0.4; cursor: default; }
+.btn-cancel { padding: 6px 16px; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; color: var(--text); cursor: pointer; font: 12px inherit; }
+.btn-cancel:hover { border-color: var(--muted); }
+.btn-sm { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); cursor: pointer; }
+.btn-sm:hover { color: var(--text); border-color: var(--muted); }
+.btn-sm.btn-danger { color: var(--red); }
+.btn-sm.btn-danger:hover { background: #da363322; }
+.btn-sm:disabled { opacity: 0.3; cursor: default; }
+.admin-error { background: #da363322; border: 1px solid var(--red); border-radius: 4px; padding: 8px 12px; margin: 8px 0; color: var(--red); font-size: 12px; }
+.admin-success { background: #23863622; border: 1px solid var(--green); border-radius: 4px; padding: 8px 12px; margin: 8px 0; color: var(--green); font-size: 12px; }
+.test-result { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+.test-result.ok { background: #23863622; color: var(--green); }
+.test-result.fail { background: #da363322; color: var(--red); }
+.test-result.loading { background: var(--surface2); color: var(--muted); }
+.rule-tester { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 12px; }
+.rule-tester h4 { font-size: 12px; color: var(--accent); margin-bottom: 10px; cursor: pointer; }
+.rule-tester-body { display: none; }
+.rule-tester-body.show { display: block; }
+.test-results { margin-top: 10px; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+.auth-bar { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; display: flex; gap: 10px; align-items: center; }
+.auth-bar label { font-size: 11px; color: var(--muted); }
+.auth-bar input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 5px 8px; font: 12px inherit; }
 </style>
 </head>
 <body>
@@ -1343,10 +1379,17 @@ function renderAdmin(d) {
   var el = document.getElementById('tab-admin');
   var h = '';
 
+  /* ── Auth bar ──────────────────────────────────── */
+  var savedToken = getAdminToken();
+  h += '<div class="auth-bar">';
+  h += '<label>Auth Token</label>';
+  h += '<input id="admin-token" type="password" placeholder="Bearer token for write operations..." value="' + esc(savedToken) + '" onchange="setAdminToken(this.value)">';
+  h += '</div>';
+
   /* ── Toolbar ──────────────────────────────────────── */
   var autoClass = adminAutoRefresh ? 'active' : '';
   h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;justify-content:flex-end">';
-  h += '<button onclick="loadAdmin()" style="padding:4px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);cursor:pointer;font-size:13px">⟳ Refresh</button>';
+  h += '<button onclick="loadAdmin()" style="padding:4px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);cursor:pointer;font-size:13px">Refresh</button>';
   h += '<button id="admin-auto-refresh" onclick="toggleAutoRefresh()" class="' + autoClass + '" style="padding:4px 12px;background:' + (adminAutoRefresh ? 'var(--green)' : 'var(--bg2)') + ';border:1px solid var(--border);border-radius:4px;color:' + (adminAutoRefresh ? '#000' : 'var(--fg)') + ';cursor:pointer;font-size:13px">Auto 10s</button>';
   h += '</div>';
 
@@ -1382,7 +1425,6 @@ function renderAdmin(d) {
   h += '<div class="admin-card"><h3>Memory Stats</h3>';
   if (d.memory_stats && d.memory_stats.total != null) {
     h += '<div style="margin-bottom:10px"><span class="val">' + d.memory_stats.total.toLocaleString() + '</span> <span class="lbl">total memories</span></div>';
-    // Status breakdown
     if (d.memory_stats.by_status) {
       Object.entries(d.memory_stats.by_status).forEach(function(e) {
         var pill = e[0] === 'active' ? 'pill-green' : e[0] === 'deleted' ? 'pill-red' : 'pill-orange';
@@ -1405,18 +1447,26 @@ function renderAdmin(d) {
   h += '</div>'; // admin-grid
 
   /* ── Remotes ──────────────────────────────── */
-  h += '<div class="admin-section"><h2>Remotes</h2>';
+  h += '<div class="admin-section"><h2>Remotes <button class="btn-sm" onclick="showRemoteForm(null)">+ Add</button></h2>';
+  h += '<div id="remote-form-area"></div>';
   if (d.remotes.length === 0) {
     h += '<div class="empty" style="padding:10px">No remotes configured</div>';
   } else {
-    h += '<table class="admin-table"><tr><th>Name</th><th>Schema</th><th>Auth</th><th>Status</th></tr>';
+    h += '<table class="admin-table"><tr><th>Name</th><th>Schema</th><th>Auth</th><th>Status</th><th>Actions</th></tr>';
     d.remotes.forEach(function(r) {
       var st = r.connected
         ? '<span class="pill pill-green">Connected</span>'
         : '<span class="pill pill-red">Disconnected</span>';
       if (!r.enabled) st = '<span class="pill pill-muted">Disabled</span>';
-      h += '<tr><td><strong>' + esc(r.name) + '</strong></td><td>' + esc(r.schema) + '</td>';
-      h += '<td><span class="pill pill-blue">' + esc(r.auth_method) + '</span></td><td>' + st + '</td></tr>';
+      h += '<tr><td><strong>' + esc(r.name) + '</strong>';
+      if (r.description) h += '<br><span class="ts">' + esc(r.description) + '</span>';
+      h += '</td><td>' + esc(r.schema_name || r.schema || r.name) + '</td>';
+      h += '<td><span class="pill pill-blue">' + esc(r.auth_method) + '</span></td><td>' + st + '</td>';
+      h += '<td style="white-space:nowrap">';
+      h += '<button class="btn-sm" onclick="showRemoteForm(\'' + esc(r.name) + '\')">Edit</button> ';
+      h += '<button class="btn-sm" onclick="testRemote(\'' + esc(r.name) + '\', this)">Test</button> ';
+      h += '<button class="btn-sm btn-danger" onclick="deleteRemote(\'' + esc(r.name) + '\')">Delete</button>';
+      h += '</td></tr>';
     });
     h += '</table>';
   }
@@ -1460,11 +1510,12 @@ function renderAdmin(d) {
   }
 
   /* ── Routing rules ──────────────────────────────── */
-  h += '<div class="admin-section"><h2>Routing Rules</h2>';
+  h += '<div class="admin-section"><h2>Routing Rules <button class="btn-sm" onclick="showRuleForm(null)">+ Add</button></h2>';
+  h += '<div id="rule-form-area"></div>';
   if (d.rules.length === 0) {
     h += '<div class="empty" style="padding:10px">No routing rules configured</div>';
   } else {
-    h += '<table class="admin-table"><tr><th>#</th><th>Name</th><th>Action</th><th>Match</th><th>Destinations</th></tr>';
+    h += '<table class="admin-table"><tr><th>#</th><th>Name</th><th>Action</th><th>Match</th><th>Destinations</th><th>Actions</th></tr>';
     d.rules.forEach(function(r, i) {
       var actionPill = r.action === 'deny'
         ? '<span class="pill pill-red">' + esc(r.action) + '</span>'
@@ -1477,10 +1528,30 @@ function renderAdmin(d) {
       h += '<tr><td>' + (i + 1) + '</td><td><strong>' + esc(r.name) + '</strong></td>';
       h += '<td>' + actionPill + '</td>';
       h += '<td>' + (matchHtml || '<span class="ts">any</span>') + '</td>';
-      h += '<td>' + r.destinations.map(function(d) { return '<span class="match-chip">' + esc(d) + '</span>'; }).join(' ') + '</td></tr>';
+      h += '<td>' + r.destinations.map(function(dd) { return '<span class="match-chip">' + esc(dd) + '</span>'; }).join(' ') + '</td>';
+      h += '<td style="white-space:nowrap">';
+      if (i > 0) h += '<button class="btn-sm" onclick="moveRule(\'' + esc(r.name) + '\',-1)">&#9650;</button> ';
+      if (i < d.rules.length - 1) h += '<button class="btn-sm" onclick="moveRule(\'' + esc(r.name) + '\',1)">&#9660;</button> ';
+      h += '<button class="btn-sm" onclick="showRuleForm(\'' + esc(r.name) + '\')">Edit</button> ';
+      h += '<button class="btn-sm btn-danger" onclick="deleteRule(\'' + esc(r.name) + '\')">Delete</button>';
+      h += '</td></tr>';
     });
     h += '</table>';
   }
+
+  /* Rule tester */
+  h += '<div class="rule-tester">';
+  h += '<h4 onclick="document.getElementById(\'rule-tester-body\').classList.toggle(\'show\')">Rule Tester (click to expand)</h4>';
+  h += '<div id="rule-tester-body" class="rule-tester-body">';
+  h += '<div class="form-row"><label>Category</label><select id="rt-cat"><option value="observation">observation</option><option value="pattern">pattern</option><option value="learning">learning</option><option value="decision">decision</option><option value="summary">summary</option><option value="code">code</option><option value="relationship">relationship</option><option value="hint">hint</option><option value="plan">plan</option><option value="worklog">worklog</option><option value="memory">memory</option></select></div>';
+  h += '<div class="form-row"><label>Project</label><input id="rt-project" placeholder="e.g. jarvis-plugin"></div>';
+  h += '<div class="form-row"><label>Scope</label><select id="rt-scope"><option value="global">global</option><option value="project">project</option></select></div>';
+  h += '<div class="form-row"><label>Importance</label><input id="rt-importance" type="number" step="0.1" min="0" max="1" value="0.5"></div>';
+  h += '<div class="form-row"><label>Tags</label><input id="rt-tags" placeholder="comma-separated"></div>';
+  h += '<div class="form-actions"><button class="btn-save" onclick="testRouting()">Test Rules</button></div>';
+  h += '<div id="rt-result"></div>';
+  h += '</div></div>';
+
   h += '</div>';
 
   /* ── Recent activity ──────────────────────────────── */
@@ -1501,6 +1572,240 @@ function renderAdmin(d) {
   }
 
   el.innerHTML = h;
+
+  // Cache admin data for form population
+  window._adminData = d;
+}
+
+/* ── Auth helpers ─────────────────────────────────── */
+function getAdminToken() { return localStorage.getItem('jarvis-admin-token') || ''; }
+function setAdminToken(t) { localStorage.setItem('jarvis-admin-token', t); }
+function adminFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  var token = getAdminToken();
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (opts.body && typeof opts.body === 'object') {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  return fetch(url, opts).then(function(r) {
+    if (!r.ok) return r.json().catch(function() { return r.text(); }).then(function(d) {
+      var msg = typeof d === 'object' ? (d.detail ? (typeof d.detail === 'object' ? JSON.stringify(d.detail) : d.detail) : JSON.stringify(d)) : d;
+      return Promise.reject(msg);
+    });
+    return r.json();
+  });
+}
+
+/* ── Remote CRUD ──────────────────────────────── */
+function showRemoteForm(name) {
+  var area = document.getElementById('remote-form-area');
+  var d = window._adminData;
+  var remote = null;
+  if (name && d) {
+    d.remotes.forEach(function(r) { if (r.name === name) remote = r; });
+  }
+  var h = '<div class="admin-form"><h4>' + (name ? 'Edit Remote: ' + esc(name) : 'Add Remote') + '</h4>';
+  h += '<div id="remote-form-error"></div>';
+  if (!name) h += '<div class="form-row"><label>Name</label><input id="rf-name" placeholder="my_remote" value=""></div>';
+  h += '<div class="form-row"><label>Host</label><input id="rf-host" value="' + esc(remote ? remote.host || 'localhost' : 'localhost') + '"></div>';
+  h += '<div class="form-row"><label>Port</label><input id="rf-port" type="number" value="' + (remote ? remote.port || 5432 : 5432) + '"></div>';
+  h += '<div class="form-row"><label>Database</label><input id="rf-db" value="' + esc(remote ? remote.database || 'jarvis' : 'jarvis') + '"></div>';
+  h += '<div class="form-row"><label>User</label><input id="rf-user" value="' + esc(remote ? remote.user || 'jarvis' : 'jarvis') + '"></div>';
+  h += '<div class="form-row"><label>Password</label><input id="rf-pw" type="password" placeholder="' + (name ? '*** (unchanged)' : 'password or $ENV_VAR') + '" value=""></div>';
+  h += '<div class="form-row"><label>Auth Method</label><select id="rf-auth"><option' + (remote && remote.auth_method === 'password' ? ' selected' : '') + '>password</option><option' + (remote && remote.auth_method === 'iam' ? ' selected' : '') + '>iam</option></select></div>';
+  h += '<div class="form-row"><label>Schema</label><input id="rf-schema" placeholder="defaults to remote name" value="' + esc(remote ? remote.schema_name || '' : '') + '"></div>';
+  h += '<div class="form-row"><label>SSL Mode</label><select id="rf-ssl"><option' + (remote && remote.sslmode === 'require' ? ' selected' : '') + '>require</option><option' + (remote && remote.sslmode === 'verify-full' ? ' selected' : '') + '>verify-full</option><option' + (remote && remote.sslmode === 'disable' ? ' selected' : '') + '>disable</option></select></div>';
+  h += '<div class="form-row"><label>Enabled</label><input id="rf-enabled" type="checkbox"' + (remote ? (remote.enabled !== false ? ' checked' : '') : ' checked') + '></div>';
+  h += '<div class="form-row"><label>Description</label><input id="rf-desc" value="' + esc(remote ? remote.description || '' : '') + '"></div>';
+  h += '<div class="form-actions"><button class="btn-save" onclick="saveRemote(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
+  h += '<button class="btn-cancel" onclick="document.getElementById(\'remote-form-area\').innerHTML=\'\'">Cancel</button></div>';
+  h += '</div>';
+  area.innerHTML = h;
+}
+
+function saveRemote(existingName) {
+  var name = existingName || (document.getElementById('rf-name') ? document.getElementById('rf-name').value : '');
+  var pw = document.getElementById('rf-pw').value;
+  var body = {
+    name: existingName ? undefined : name,
+    host: document.getElementById('rf-host').value,
+    port: parseInt(document.getElementById('rf-port').value) || 5432,
+    database: document.getElementById('rf-db').value,
+    user: document.getElementById('rf-user').value,
+    password: pw || (existingName ? '***' : null),
+    auth_method: document.getElementById('rf-auth').value,
+    schema_name: document.getElementById('rf-schema').value || null,
+    sslmode: document.getElementById('rf-ssl').value,
+    enabled: document.getElementById('rf-enabled').checked,
+    description: document.getElementById('rf-desc').value,
+  };
+  var url = existingName ? '/api/admin/remotes/' + encodeURIComponent(existingName) : '/api/admin/remotes';
+  var method = existingName ? 'PUT' : 'POST';
+  adminFetch(url, { method: method, body: body }).then(function() {
+    document.getElementById('remote-form-area').innerHTML = '<div class="admin-success">Remote saved.</div>';
+    setTimeout(loadAdmin, 500);
+  }).catch(function(err) {
+    var el = document.getElementById('remote-form-error');
+    if (el) el.innerHTML = '<div class="admin-error">' + esc(String(err)) + '</div>';
+  });
+}
+
+function deleteRemote(name) {
+  if (!confirm('Delete remote "' + name + '"?')) return;
+  adminFetch('/api/admin/remotes/' + encodeURIComponent(name), { method: 'DELETE' }).then(function() {
+    loadAdmin();
+  }).catch(function(err) {
+    alert('Cannot delete: ' + err);
+  });
+}
+
+function testRemote(name, btn) {
+  var orig = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+  // Remove any existing result pill next to button
+  var existing = btn.parentNode.querySelector('.test-result');
+  if (existing) existing.remove();
+  adminFetch('/api/admin/remotes/' + encodeURIComponent(name) + '/test', { method: 'POST' }).then(function(d) {
+    var pill = document.createElement('span');
+    pill.className = 'test-result ' + (d.connected ? 'ok' : 'fail');
+    pill.textContent = d.connected ? 'OK' : (d.error || 'Failed');
+    btn.parentNode.appendChild(pill);
+  }).catch(function(err) {
+    var pill = document.createElement('span');
+    pill.className = 'test-result fail';
+    pill.textContent = String(err).substring(0, 40);
+    btn.parentNode.appendChild(pill);
+  }).finally(function() {
+    btn.textContent = orig;
+    btn.disabled = false;
+  });
+}
+
+/* ── Rule CRUD ──────────────────────────────── */
+function showRuleForm(name) {
+  var area = document.getElementById('rule-form-area');
+  var d = window._adminData;
+  var rule = null;
+  if (name && d) {
+    d.rules.forEach(function(r) { if (r.name === name) rule = r; });
+  }
+  var match = rule ? rule.match || {} : {};
+  var cats = ['observation','pattern','learning','decision','summary','code','relationship','hint','plan','worklog','memory'];
+  var h = '<div class="admin-form"><h4>' + (name ? 'Edit Rule: ' + esc(name) : 'Add Rule') + '</h4>';
+  h += '<div id="rule-form-error"></div>';
+  h += '<div class="form-row"><label>Name</label><input id="rlf-name" value="' + esc(rule ? rule.name : '') + '"' + (name ? ' readonly style="opacity:0.6"' : '') + '></div>';
+  h += '<div class="form-row"><label>Action</label><select id="rlf-action"><option value="route-to"' + (rule && rule.action === 'route-to' ? ' selected' : '') + '>route-to</option><option value="deny"' + (rule && rule.action === 'deny' ? ' selected' : '') + '>deny</option></select></div>';
+  h += '<div class="form-row"><label>Destinations</label><input id="rlf-dest" placeholder="comma-separated remote names" value="' + esc(rule ? (rule.destinations || []).join(', ') : '') + '"></div>';
+  h += '<div class="form-row"><label>Categories</label><input id="rlf-cat" placeholder="comma-separated (empty=any)" value="' + esc((match.category || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label>Projects</label><input id="rlf-proj" placeholder="glob patterns or @groups" value="' + esc((match.project || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label>Tags</label><input id="rlf-tags" placeholder="comma-separated" value="' + esc((match.tags || []).join(', ')) + '"></div>';
+  h += '<div class="form-row"><label>Scope</label><select id="rlf-scope"><option value="">Any</option><option value="global"' + (match.scope === 'global' ? ' selected' : '') + '>global</option><option value="project"' + (match.scope === 'project' ? ' selected' : '') + '>project</option></select></div>';
+  h += '<div class="form-row"><label>Min Importance</label><input id="rlf-imp" type="number" step="0.1" min="0" max="1" value="' + (match.importance_min != null ? match.importance_min : '') + '" placeholder="0.0-1.0"></div>';
+  h += '<div class="form-row"><label>Path Prefixes</label><input id="rlf-path" placeholder="comma-separated paths" value="' + esc((match.path_prefix || []).join(', ')) + '"></div>';
+  h += '<div class="form-actions"><button class="btn-save" onclick="saveRule(' + (name ? "'" + esc(name) + "'" : 'null') + ')">Save</button>';
+  h += '<button class="btn-cancel" onclick="document.getElementById(\'rule-form-area\').innerHTML=\'\'">Cancel</button></div>';
+  h += '</div>';
+  area.innerHTML = h;
+}
+
+function _csvToList(s) { return s ? s.split(',').map(function(x) { return x.trim(); }).filter(Boolean) : []; }
+
+function saveRule(existingName) {
+  var rname = document.getElementById('rlf-name').value.trim();
+  if (!rname) { document.getElementById('rule-form-error').innerHTML = '<div class="admin-error">Name is required</div>'; return; }
+  var match = {};
+  var cats = _csvToList(document.getElementById('rlf-cat').value);
+  var projs = _csvToList(document.getElementById('rlf-proj').value);
+  var tags = _csvToList(document.getElementById('rlf-tags').value);
+  var scope = document.getElementById('rlf-scope').value;
+  var imp = document.getElementById('rlf-imp').value;
+  var paths = _csvToList(document.getElementById('rlf-path').value);
+  if (cats.length) match.category = cats;
+  if (projs.length) match.project = projs;
+  if (tags.length) match.tags = tags;
+  if (scope) match.scope = scope;
+  if (imp !== '') match.importance_min = parseFloat(imp);
+  if (paths.length) match.path_prefix = paths;
+  var body = {
+    name: rname,
+    action: document.getElementById('rlf-action').value,
+    destinations: _csvToList(document.getElementById('rlf-dest').value),
+    match: match,
+  };
+  var url = existingName ? '/api/admin/rules/' + encodeURIComponent(existingName) : '/api/admin/rules';
+  var method = existingName ? 'PUT' : 'POST';
+  adminFetch(url, { method: method, body: body }).then(function() {
+    document.getElementById('rule-form-area').innerHTML = '<div class="admin-success">Rule saved.</div>';
+    setTimeout(loadAdmin, 500);
+  }).catch(function(err) {
+    var el = document.getElementById('rule-form-error');
+    if (el) el.innerHTML = '<div class="admin-error">' + esc(String(err)) + '</div>';
+  });
+}
+
+function deleteRule(name) {
+  if (!confirm('Delete rule "' + name + '"?')) return;
+  adminFetch('/api/admin/rules/' + encodeURIComponent(name), { method: 'DELETE' }).then(function() {
+    loadAdmin();
+  }).catch(function(err) {
+    alert('Cannot delete: ' + err);
+  });
+}
+
+function moveRule(name, dir) {
+  var d = window._adminData;
+  if (!d || !d.rules) return;
+  var names = d.rules.map(function(r) { return r.name; });
+  var idx = names.indexOf(name);
+  if (idx < 0) return;
+  var newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= names.length) return;
+  // Swap
+  var tmp = names[idx];
+  names[idx] = names[newIdx];
+  names[newIdx] = tmp;
+  adminFetch('/api/admin/rules/reorder', { method: 'POST', body: { order: names } }).then(function() {
+    loadAdmin();
+  }).catch(function(err) {
+    alert('Reorder failed: ' + err);
+  });
+}
+
+/* ── Rule tester ──────────────────────────────── */
+function testRouting() {
+  var body = {
+    category: document.getElementById('rt-cat').value,
+    project: document.getElementById('rt-project').value,
+    scope: document.getElementById('rt-scope').value,
+    importance_score: parseFloat(document.getElementById('rt-importance').value) || 0.5,
+    tags: document.getElementById('rt-tags').value,
+  };
+  var el = document.getElementById('rt-result');
+  el.innerHTML = '<div class="test-results" style="color:var(--muted)">Testing...</div>';
+  fetch('/api/admin/rules/test', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      var h = '<div class="test-results">';
+      if (d.destinations.length > 0) {
+        h += '<div style="margin-bottom:6px"><strong>Destinations:</strong> ' + d.destinations.map(function(x) { return '<span class="pill pill-green">' + esc(x) + '</span>'; }).join(' ') + '</div>';
+      } else {
+        h += '<div style="margin-bottom:6px"><strong>Destinations:</strong> <span class="pill pill-muted">none (local only)</span></div>';
+      }
+      if (d.matched_rules.length > 0) {
+        h += '<div style="margin-bottom:6px"><strong>Matched rules:</strong> ' + d.matched_rules.map(function(x) { return '<span class="match-chip">' + esc(x) + '</span>'; }).join(' ') + '</div>';
+      }
+      if (d.denied.length > 0) {
+        h += '<div><strong>Denied:</strong> ' + d.denied.map(function(x) { return '<span class="pill pill-red">' + esc(x) + '</span>'; }).join(' ') + '</div>';
+      }
+      h += '</div>';
+      el.innerHTML = h;
+    })
+    .catch(function(err) {
+      el.innerHTML = '<div class="admin-error">' + esc(String(err)) + '</div>';
+    });
 }
 
 function fmtTime(iso) {

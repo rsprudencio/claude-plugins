@@ -3,14 +3,24 @@
 Provides config reading, vault path resolution, and verification
 used by all Jarvis MCP servers. Core-specific getters (scoring,
 chunking, etc.) remain in the core plugin's tools/config.py.
+
+Thread-safe mtime-based cache invalidation: the sync worker and
+explorer run as separate processes; each re-reads config.json when
+the file's mtime changes.
 """
 
 import json
+import logging
 import os
+import threading
 from pathlib import Path
 from typing import Tuple
 
+logger = logging.getLogger(__name__)
+
 _config_cache = None
+_config_mtime: int = 0
+_config_lock = threading.Lock()
 
 
 # ── Merge helpers ──────────────────────────────────────────────────────
@@ -56,25 +66,46 @@ def _resolve_jarvis_home() -> Path:
 def get_config() -> dict:
     """Load config from $JARVIS_HOME/config.json with caching.
 
+    Thread-safe, mtime-based cache invalidation using os.fstat() on the
+    opened file descriptor (avoids TOCTOU with os.replace atomic writes).
+
     Config path resolution order:
     1. JARVIS_HOME env var (for Docker)
     2. ~/.jarvis/config.json (default)
     """
-    global _config_cache
-    if _config_cache is None:
-        config_path = _resolve_jarvis_home() / "config.json"
-        if config_path.exists():
-            with open(config_path) as f:
-                _config_cache = json.load(f)
-        else:
-            _config_cache = {}
-    return _config_cache
+    global _config_cache, _config_mtime
+    config_path = _resolve_jarvis_home() / "config.json"
+    try:
+        with open(config_path) as f:
+            current_mtime = os.fstat(f.fileno()).st_mtime_ns
+            if _config_cache is not None and current_mtime == _config_mtime:
+                return _config_cache
+            with _config_lock:
+                # Double-check after acquiring lock
+                if _config_cache is not None and current_mtime == _config_mtime:
+                    return _config_cache
+                data = json.load(f)
+                _config_cache = data
+                _config_mtime = current_mtime
+                return _config_cache
+    except FileNotFoundError:
+        _config_cache = {}
+        _config_mtime = 0
+        return _config_cache
+    except json.JSONDecodeError:
+        # Malformed JSON — return last good cache, log error
+        if _config_cache is not None:
+            logger.error("config.json malformed, returning last good cache")
+            return _config_cache
+        return {}
 
 
 def clear_config_cache():
     """Invalidate the cached config, forcing a re-read on next access."""
-    global _config_cache
-    _config_cache = None
+    global _config_cache, _config_mtime
+    with _config_lock:
+        _config_cache = None
+        _config_mtime = 0
 
 
 def get_vault_path() -> str:
