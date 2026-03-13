@@ -73,6 +73,7 @@ _NAMESPACE_TO_CATEGORY = {
     "learning": "learning",
     "decision": "decision",
     "worklog": "worklog",
+    "memory": "memory",
 }
 
 
@@ -85,10 +86,12 @@ def _category_from_doc_id(doc_id: str) -> Optional[str]:
 
 
 # Categories exempt from conflict detection on both sides (can't supersede,
-# can't be superseded).  Worklogs are timestamped events; observations are
-# auto-extracted session insights — neither represents a manually curated
-# knowledge claim that could be "contradicted" by newer content.
-CONFLICT_EXEMPT_CATEGORIES = frozenset({"worklog", "observation"})
+# can't be superseded).  Worklogs are unique timestamped activity records
+# that by definition cannot contradict each other.
+# Note: observations and memories are NOT exempt — both can genuinely
+# contradict each other over time.  Tight thresholds (similarity=0.85,
+# divergence=0.25) ensure only high-confidence contradictions are flagged.
+CONFLICT_EXEMPT_CATEGORIES = frozenset({"worklog"})
 
 
 # -- Candidate finding -----------------------------------------------------
@@ -223,7 +226,7 @@ def _call_haiku_raw(prompt: str, max_tokens: int = 200) -> Optional[str]:
             )
             return response.content[0].text
         except Exception as exc:
-            logger.debug(f"Conflict LLM API call failed: {exc}")
+            logger.warning(f"Conflict LLM API call failed: {exc}")
 
     # Fallback: Claude CLI
     try:
@@ -259,8 +262,9 @@ def verify_conflicts_with_llm(
 ) -> list[str]:
     """Ask Haiku which candidates are truly contradicted.
 
-    Returns list of confirmed conflicting IDs. Falls back to trusting
-    rule-based results if LLM call fails.
+    Returns list of confirmed conflicting IDs.  On failure (no response
+    or unparseable response), returns ``[]`` — conservative: no unverified
+    supersessions.
     """
     formatted = "\n".join(f"[{i}] {c['content']}" for i, c in enumerate(candidates))
     prompt = CONFLICT_VERIFICATION_PROMPT.format(
@@ -270,8 +274,12 @@ def verify_conflicts_with_llm(
 
     response = _call_haiku_raw(prompt)
     if not response:
-        # Fallback: trust rule-based
-        return [c["id"] for c in candidates]
+        # Conservative: no unverified supersessions when LLM is unreachable
+        logger.warning(
+            "Conflict LLM verification failed (no response) — "
+            "returning empty result (no unverified supersessions)"
+        )
+        return []
 
     try:
         data = json.loads(response)
@@ -281,8 +289,14 @@ def verify_conflicts_with_llm(
             for i in indices
             if isinstance(i, int) and 0 <= i < len(candidates)
         ]
-    except (json.JSONDecodeError, IndexError, TypeError):
-        return [c["id"] for c in candidates]
+    except (json.JSONDecodeError, IndexError, TypeError) as exc:
+        # Conservative: unparseable response — don't trust partial data
+        logger.warning(
+            "Conflict LLM response parse failed (%r) — "
+            "returning empty result (no unverified supersessions)",
+            exc,
+        )
+        return []
 
 
 # -- Mark superseded -------------------------------------------------------
@@ -312,7 +326,7 @@ def mark_superseded(old_doc_id: str, new_doc_id: str) -> bool:
                 conn.commit()
         return updated
     except Exception as exc:
-        logger.debug(f"mark_superseded failed for {old_doc_id}: {exc}")
+        logger.warning(f"mark_superseded failed for {old_doc_id}: {exc}")
         return False
 
 

@@ -345,4 +345,4 @@ See [LICENSE](LICENSE) for full legal text.
 
 ---
 
-**v2.0.3** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)
+**v3.1.1** | [Issues](https://github.com/rsprudencio/jarvis/issues) | [Changelog](CLAUDE.md#version-history)

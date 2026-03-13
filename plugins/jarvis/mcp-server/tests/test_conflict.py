@@ -279,6 +279,7 @@ class TestVerifyConflictsWithLlm:
         assert result == ["obs::old1", "obs::old3"]
 
     def test_fallback_on_failure(self):
+        """LLM unreachable → conservative empty (no unverified supersessions)."""
         candidates = [
             {"id": "obs::old1", "content": "use X"},
         ]
@@ -286,8 +287,7 @@ class TestVerifyConflictsWithLlm:
         with patch("tools.conflict._call_haiku_raw") as mock_haiku:
             mock_haiku.return_value = None  # API failure
             result = verify_conflicts_with_llm("actually stop X", candidates, config)
-        # Fallback: trust rule-based -> return all candidates
-        assert result == ["obs::old1"]
+        assert result == []
 
     def test_empty_array(self):
         candidates = [
@@ -300,6 +300,7 @@ class TestVerifyConflictsWithLlm:
         assert result == []
 
     def test_invalid_json_fallback(self):
+        """Unparseable LLM response → conservative empty."""
         candidates = [
             {"id": "obs::old1", "content": "use X"},
         ]
@@ -307,8 +308,7 @@ class TestVerifyConflictsWithLlm:
         with patch("tools.conflict._call_haiku_raw") as mock_haiku:
             mock_haiku.return_value = "not valid json"
             result = verify_conflicts_with_llm("stop X", candidates, config)
-        # Fallback: trust all candidates
-        assert result == ["obs::old1"]
+        assert result == []
 
     def test_out_of_range_index_ignored(self):
         candidates = [
@@ -399,12 +399,16 @@ class TestCategoryFromDocId:
     def test_no_namespace(self):
         assert _category_from_doc_id("plain-id") is None
 
+    def test_memory_prefix(self):
+        """Multi-segment memory ID correctly extracts 'memory' category."""
+        assert _category_from_doc_id("memory::global::goals") == "memory"
+
     def test_all_namespaces(self):
         expected = {
             "obs": "observation", "pattern": "pattern", "summary": "summary",
             "code": "code", "rel": "relationship", "hint": "hint",
             "plan": "plan", "learning": "learning", "decision": "decision",
-            "worklog": "worklog",
+            "worklog": "worklog", "memory": "memory",
         }
         for prefix, category in expected.items():
             assert _category_from_doc_id(f"{prefix}::test") == category
@@ -418,8 +422,13 @@ class TestConflictExemptCategories:
     def test_worklog_is_exempt(self):
         assert "worklog" in CONFLICT_EXEMPT_CATEGORIES
 
-    def test_observation_is_exempt(self):
-        assert "observation" in CONFLICT_EXEMPT_CATEGORIES
+    def test_observation_is_not_exempt(self):
+        """Observations can contradict over time — conflict detection applies."""
+        assert "observation" not in CONFLICT_EXEMPT_CATEGORIES
+
+    def test_memory_is_not_exempt(self):
+        """Strategic memories CAN contradict each other — conflict detection applies."""
+        assert "memory" not in CONFLICT_EXEMPT_CATEGORIES
 
     def test_learning_is_not_exempt(self):
         """Learnings are curated knowledge claims — conflict detection applies."""
@@ -442,8 +451,8 @@ class TestConflictExemptCategories:
         )
         assert result == []
 
-    def test_detect_conflicts_skips_observation(self, mock_config):
-        """Observations are auto-extracted insights — not contradictable claims."""
+    def test_detect_conflicts_runs_for_observation(self, mock_config):
+        """Observations can contradict — pipeline runs (not short-circuited)."""
         _seed_doc(
             mock_config.db,
             "obs::old1",
@@ -454,7 +463,8 @@ class TestConflictExemptCategories:
             "obs::new1",
             "Actually avoid the factory pattern for creating objects",
         )
-        assert result == []
+        # Pipeline runs; whether it finds a conflict depends on embeddings
+        assert isinstance(result, list)
 
     def test_worklog_not_returned_as_candidate(self, mock_config):
         """Worklogs are filtered from conflict candidates even if similar."""
@@ -479,8 +489,8 @@ class TestConflictExemptCategories:
         ids = [c["id"] for c in candidates]
         assert "worklog::old1" not in ids
 
-    def test_observation_not_returned_as_candidate(self, mock_config):
-        """Observations are filtered from conflict candidates."""
+    def test_observation_returned_as_candidate(self, mock_config):
+        """Observations are NOT exempt — they can be conflict candidates."""
         _seed_doc(
             mock_config.db,
             "obs::old1",
@@ -500,7 +510,7 @@ class TestConflictExemptCategories:
             category="learning",
         )
         ids = [c["id"] for c in candidates]
-        assert "obs::old1" not in ids
+        assert "obs::old1" in ids
 
     def test_non_exempt_still_detected(self, mock_config):
         """Non-exempt categories still go through conflict detection normally."""

@@ -227,8 +227,8 @@ def get_conflict_detection_config() -> dict:
     defaults = {
         "enabled": True,
         "use_llm": False,
-        "similarity_threshold": 0.7,
-        "divergence_threshold": 0.4,
+        "similarity_threshold": 0.85,
+        "divergence_threshold": 0.25,
         "max_candidates": 10,
         "same_category_only": True,
     }

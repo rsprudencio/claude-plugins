@@ -1,7 +1,7 @@
 {
   "$schema": "jarvis-capabilities/v2",
   "description": "AI-first reference for Jarvis plugin capabilities. Designed for Jarvis to self-reference when answering user questions about features, workflows, and best practices.",
-  "last_updated": "2026-03-03",
+  "last_updated": "2026-03-13",
 
   "identity": {
     "name": "Jarvis",
@@ -17,8 +17,8 @@
 
   "plugins": {
     "jarvis": {
-      "version": "2.3.0",
-      "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract, pattern detection",
+      "version": "3.1.2",
+      "description": "Core vault management, journal entries, git audit trail, semantic memory, auto-extract, conflict detection, multi-remote sync",
       "provides": ["agents/journal", "agents/audit", "agents/explorer", "mcp/jarvis-core", "mcp/memory-system", "hooks/auto-extract", "skills/core"],
       "required": true
     },
@@ -369,7 +369,7 @@
       "jarvis_resolve_path": {
         "purpose": "Resolve a named path to absolute filesystem location",
         "params": ["name (required)", "substitutions", "ensure_exists"]
-      },
+      }
     },
 
     "git_operations": {
@@ -485,7 +485,15 @@
       "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to PostgreSQL pgvector",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
       "recency_boost": "Recent content (within configurable days) gets boosted in search ranking",
-      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to context enrichment."
+      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to context enrichment.",
+      "conflict_detection": {
+        "description": "Automatic contradiction detection on content writes — supersedes stale entries when new content contradicts them",
+        "pipeline": ["negation pre-filter (cheap regex gate)", "embedding similarity + Jaccard word divergence", "optional LLM verification (Haiku)"],
+        "exempt_categories": ["worklog"],
+        "exempt_rationale": "Worklogs are unique timestamped activity records that cannot contradict each other",
+        "configuration": ["enabled", "use_llm", "similarity_threshold", "divergence_threshold", "max_candidates", "same_category_only"],
+        "telemetry": "~/.jarvis/telemetry/conflicts.jsonl"
+      }
     }
   },
 
