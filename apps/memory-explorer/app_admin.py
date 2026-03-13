@@ -467,22 +467,42 @@ async def test_remote(name: str):
 
     rcfg = remotes[name]
     url = rcfg.get("url", "")
-    if not url:
-        return {"connected": False, "error": "No URL configured"}
+    has_fields = bool(rcfg.get("host"))
+
+    if not url and not has_fields:
+        return {"connected": False, "error": "No URL or host configured"}
 
     async def _test_connect():
-        try:
-            from jarvis_common.sync_validation import resolve_env_vars
-            resolved_url = resolve_env_vars(url)
-        except ValueError as e:
-            return {"connected": False, "error": str(e)}
+        from jarvis_common.sync_validation import resolve_env_vars
+
+        # Build connection kwargs — prefer individual fields, fall back to URL
+        connect_kwargs: dict = {"connect_timeout": 5}
+        if has_fields:
+            connect_kwargs["host"] = rcfg["host"]
+            connect_kwargs["port"] = rcfg.get("port", 5432)
+            connect_kwargs["dbname"] = rcfg.get("database", "jarvis")
+            if rcfg.get("user"):
+                connect_kwargs["user"] = rcfg["user"]
+            pw = rcfg.get("password", "")
+            if pw:
+                try:
+                    connect_kwargs["password"] = resolve_env_vars(pw)
+                except ValueError as e:
+                    return {"connected": False, "error": str(e)}
+            sslmode = rcfg.get("sslmode", "prefer")
+            connect_kwargs["sslmode"] = sslmode
+        else:
+            try:
+                connect_kwargs["conninfo"] = resolve_env_vars(url)
+            except ValueError as e:
+                return {"connected": False, "error": str(e)}
 
         try:
             import psycopg
             conn = await asyncio.wait_for(
                 asyncio.get_event_loop().run_in_executor(
                     None,
-                    lambda: psycopg.connect(resolved_url, connect_timeout=5),
+                    lambda: psycopg.connect(**connect_kwargs),
                 ),
                 timeout=10,
             )

@@ -95,14 +95,16 @@ def validate_sync_config(config: dict) -> list[str]:
     remotes = config.get("remotes", {})
     for remote_name, remote_cfg in remotes.items():
         url = remote_cfg.get("url", "")
-        if not url:
-            errors.append(f"Remote '{remote_name}' has no URL configured")
+        has_host = bool(remote_cfg.get("host"))
+        if not url and not has_host:
+            errors.append(f"Remote '{remote_name}' has no URL or host configured")
             continue
-        # Try resolving env vars (fail-fast)
-        try:
-            resolve_env_vars(url)
-        except ValueError as e:
-            errors.append(str(e))
+        # Try resolving env vars in URL (fail-fast)
+        if url:
+            try:
+                resolve_env_vars(url)
+            except ValueError as e:
+                errors.append(str(e))
 
         # Validate schema (explicit field or remote name as fallback)
         schema = remote_cfg.get("schema", remote_name)
