@@ -17,6 +17,7 @@ from tools.conflict import (
     log_conflict,
     detect_conflicts,
     _resolve_log_dir,
+    CONFLICT_EXEMPT_CATEGORIES,
 )
 from tools.content import content_write
 
@@ -409,18 +410,127 @@ class TestCategoryFromDocId:
             assert _category_from_doc_id(f"{prefix}::test") == category
 
 
+# -- Conflict-exempt categories -----------------------------------------------
+
+
+class TestConflictExemptCategories:
+
+    def test_worklog_is_exempt(self):
+        assert "worklog" in CONFLICT_EXEMPT_CATEGORIES
+
+    def test_observation_is_exempt(self):
+        assert "observation" in CONFLICT_EXEMPT_CATEGORIES
+
+    def test_learning_is_not_exempt(self):
+        """Learnings are curated knowledge claims — conflict detection applies."""
+        assert "learning" not in CONFLICT_EXEMPT_CATEGORIES
+
+    def test_decision_is_not_exempt(self):
+        assert "decision" not in CONFLICT_EXEMPT_CATEGORIES
+
+    def test_detect_conflicts_skips_worklog(self, mock_config):
+        """Worklogs with negation signals are still exempt from conflict detection."""
+        _seed_doc(
+            mock_config.db,
+            "worklog::old1",
+            "Worked on fixing deprecated API endpoints",
+            category="worklog",
+        )
+        result = detect_conflicts(
+            "worklog::new1",
+            "Actually replaced the deprecated endpoints with new ones",
+        )
+        assert result == []
+
+    def test_detect_conflicts_skips_observation(self, mock_config):
+        """Observations are auto-extracted insights — not contradictable claims."""
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use the factory pattern for creating objects",
+            category="observation",
+        )
+        result = detect_conflicts(
+            "obs::new1",
+            "Actually avoid the factory pattern for creating objects",
+        )
+        assert result == []
+
+    def test_worklog_not_returned_as_candidate(self, mock_config):
+        """Worklogs are filtered from conflict candidates even if similar."""
+        _seed_doc(
+            mock_config.db,
+            "worklog::old1",
+            "Worked on singleton pattern for database connections",
+            category="worklog",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": False,
+        }
+        candidates = find_conflict_candidates(
+            "learning::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category="learning",
+        )
+        ids = [c["id"] for c in candidates]
+        assert "worklog::old1" not in ids
+
+    def test_observation_not_returned_as_candidate(self, mock_config):
+        """Observations are filtered from conflict candidates."""
+        _seed_doc(
+            mock_config.db,
+            "obs::old1",
+            "Use singleton for database connections",
+            category="observation",
+        )
+        config = {
+            "similarity_threshold": -2.0,
+            "divergence_threshold": 1.0,
+            "max_candidates": 10,
+            "same_category_only": False,
+        }
+        candidates = find_conflict_candidates(
+            "learning::new1",
+            "Actually singleton is an anti-pattern for database connections",
+            config,
+            category="learning",
+        )
+        ids = [c["id"] for c in candidates]
+        assert "obs::old1" not in ids
+
+    def test_non_exempt_still_detected(self, mock_config):
+        """Non-exempt categories still go through conflict detection normally."""
+        _seed_doc(
+            mock_config.db,
+            "learning::old1",
+            "Use the factory pattern for creating objects",
+            category="learning",
+        )
+        # This should proceed through the pipeline (not short-circuit)
+        result = detect_conflicts(
+            "learning::new1",
+            "Actually avoid the factory pattern for creating objects",
+        )
+        # Pipeline runs (whether it finds a conflict depends on embeddings)
+        assert isinstance(result, list)
+
+
 # -- Same-category filtering -------------------------------------------------
 
 
 class TestSameCategoryOnly:
 
     def test_same_category_finds_match(self, mock_config):
-        """Observation query finds other observations."""
+        """Learning query finds other learnings."""
         _seed_doc(
             mock_config.db,
-            "obs::old1",
+            "learning::old1",
             "Use singleton pattern for database connections",
-            category="observation",
+            category="learning",
         )
         config = {
             "similarity_threshold": -2.0,
@@ -429,13 +539,13 @@ class TestSameCategoryOnly:
             "same_category_only": True,
         }
         candidates = find_conflict_candidates(
-            "obs::new1",
+            "learning::new1",
             "Actually singleton is an anti-pattern for database connections",
             config,
-            category="observation",
+            category="learning",
         )
         ids = [c["id"] for c in candidates]
-        assert "obs::old1" in ids
+        assert "learning::old1" in ids
 
     def test_same_category_excludes_different(self, mock_config):
         """Observation query does NOT find worklogs when same_category_only=True."""
@@ -615,26 +725,26 @@ class TestDetectConflicts:
         clear_config_cache()
 
         mock_find.return_value = [
-            {"id": "obs::old1", "content": "use X", "similarity": 0.8, "jaccard": 0.2},
+            {"id": "learning::old1", "content": "use X", "similarity": 0.8, "jaccard": 0.2},
             {
-                "id": "obs::old2",
+                "id": "learning::old2",
                 "content": "use Y",
                 "similarity": 0.75,
                 "jaccard": 0.15,
             },
         ]
         # LLM says only old1 is contradicted
-        mock_verify.return_value = ["obs::old1"]
+        mock_verify.return_value = ["learning::old1"]
 
         result = detect_conflicts(
-            "obs::new1", "actually stop using X, it causes issues"
+            "learning::new1", "actually stop using X, it causes issues"
         )
 
-        assert "obs::old1" in result
-        assert "obs::old2" not in result
+        assert "learning::old1" in result
+        assert "learning::old2" not in result
         mock_verify.assert_called_once()
         # mark_superseded called only for the confirmed conflict
-        mock_mark.assert_called_once_with("obs::old1", "obs::new1")
+        mock_mark.assert_called_once_with("learning::old1", "learning::new1")
 
 
 # -- Filter integration tests -----------------------------------------------

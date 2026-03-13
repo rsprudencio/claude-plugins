@@ -84,6 +84,13 @@ def _category_from_doc_id(doc_id: str) -> Optional[str]:
     return _NAMESPACE_TO_CATEGORY.get(prefix)
 
 
+# Categories exempt from conflict detection on both sides (can't supersede,
+# can't be superseded).  Worklogs are timestamped events; observations are
+# auto-extracted session insights — neither represents a manually curated
+# knowledge claim that could be "contradicted" by newer content.
+CONFLICT_EXEMPT_CATEGORIES = frozenset({"worklog", "observation"})
+
+
 # -- Candidate finding -----------------------------------------------------
 
 
@@ -145,6 +152,11 @@ def find_conflict_candidates(
     for row in rows:
         cid = row["id"]
         if cid == doc_id:
+            continue
+
+        # Skip exempt categories — they can't be superseded
+        cid_category = _category_from_doc_id(cid)
+        if cid_category in CONFLICT_EXEMPT_CATEGORIES:
             continue
 
         distance = float(row["distance"])
@@ -360,12 +372,16 @@ def detect_conflicts(doc_id: str, content: str) -> list[str]:
     if not config.get("enabled", True):
         return []
 
+    # Step 0: Exempt categories (worklogs are events, not contradictable claims)
+    category = _category_from_doc_id(doc_id)
+    if category in CONFLICT_EXEMPT_CATEGORIES:
+        return []
+
     # Step 1: Negation pre-filter (cheap gate)
     if not has_negation_signals(content):
         return []
 
     # Step 2: Find candidates via embedding similarity + Jaccard divergence
-    category = _category_from_doc_id(doc_id)
     candidates = find_conflict_candidates(doc_id, content, config, category=category)
     if not candidates:
         return []

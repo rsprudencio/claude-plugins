@@ -312,7 +312,8 @@ def content_write(
                         if decision.destinations:
                             enqueue_sync(cur, doc_id, decision.destinations)
                 except Exception as e:
-                    logger.debug(f"Sync routing skipped: {e}")
+                    logger.warning("Sync routing failed for write '%s': %s",
+                                   doc_id, e)
 
                 conn.commit()
 
@@ -658,6 +659,36 @@ def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
                         metadata_to_jsonb(metadata),
                     ),
                 )
+                # Transactional outbox: evaluate routing + enqueue sync
+                try:
+                    from .config import get_sync_config
+                    from .routing import evaluate_routing
+                    from .sync_queue import enqueue_sync
+                    from .sync_config import load_routing_rules
+
+                    sync_cfg = get_sync_config()
+                    if sync_cfg.get("enabled"):
+                        routing_metadata = dict(metadata) if metadata else {}
+                        memory_dict = {
+                            "category": category,
+                            "scope": scope,
+                            "project": project,
+                            "importance_score": importance_score,
+                            "metadata": routing_metadata,
+                        }
+                        rules = load_routing_rules(sync_cfg)
+                        project_groups = sync_cfg.get("project_groups", {})
+                        decision = evaluate_routing(
+                            memory_dict, rules,
+                            sync_cfg.get("strategy", "first-match"),
+                            project_groups,
+                        )
+                        if decision.destinations:
+                            enqueue_sync(cur, doc_id, decision.destinations)
+                except Exception as e:
+                    logger.warning("Sync routing failed for upsert '%s': %s",
+                                   doc_id, e)
+
                 conn.commit()
 
         return {"success": True, "doc_id": doc_id, "updated": True}

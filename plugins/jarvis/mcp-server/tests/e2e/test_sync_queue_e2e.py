@@ -452,6 +452,55 @@ class TestTransactionalOutbox:
                 dests = [r[0] for r in rows]
                 assert dests == ["remote-a", "remote-b"]
 
+    def test_content_upsert_enqueues_sync(self, e2e_config, monkeypatch):
+        """content_upsert with sync enabled creates queue entries."""
+        from tools.content import content_write, content_upsert
+        from tools.schema import _get_pool
+
+        # Write initial memory (no sync)
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": False,
+        })
+        write_result = content_write(
+            content="Original content for upsert sync test",
+            content_type="observation",
+            skip_secret_scan=True,
+        )
+        assert write_result["success"] is True
+        doc_id = write_result["id"]
+
+        # Enable sync with a catch-all rule
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": True,
+            "strategy": "first-match",
+            "remotes": {"backup": {"url": "postgresql://h:5432/db"}},
+            "rules": [
+                {"name": "all", "match": {}, "action": "route-to",
+                 "destinations": ["backup"]},
+            ],
+            "project_groups": {},
+        })
+
+        # Upsert the same memory → should enqueue sync
+        result = content_upsert(
+            doc_id,
+            "Updated content for upsert sync test",
+            {"type": "observation", "importance_score": "0.7"},
+        )
+        assert result["success"] is True
+
+        # Verify queue entry was created
+        pool = _get_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT destination FROM local.sync_queue WHERE memory_id = %s",
+                    (doc_id,),
+                )
+                rows = cur.fetchall()
+                assert len(rows) == 1
+                assert rows[0][0] == "backup"
+
     def test_pending_index_scan(self, e2e_config):
         """The idx_sync_queue_pending index is used for pending claims."""
         from tools.schema import _get_pool

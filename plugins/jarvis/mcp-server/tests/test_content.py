@@ -571,6 +571,141 @@ class TestContentUpsert:
         assert read_result["scope"] == "global"
 
 
+class TestContentUpsertSyncRouting:
+    """Test sync routing in content_upsert."""
+
+    def test_upsert_enqueues_when_routing_matches(self, mock_config, monkeypatch):
+        """Sync enabled + catch-all rule → enqueue_sync called."""
+        from unittest.mock import MagicMock, patch
+        from tools.routing import RoutingDecision
+
+        # Write a doc first
+        write_result = content_write(
+            content="Original", content_type="observation"
+        )
+        doc_id = write_result["id"]
+
+        mock_enqueue = MagicMock(return_value=1)
+        mock_decision = RoutingDecision(
+            destinations=["backup"], matched_rules=["all"]
+        )
+
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": True,
+            "strategy": "first-match",
+            "rules": [{"name": "all", "match": {}, "action": "route-to",
+                        "destinations": ["backup"]}],
+            "project_groups": {},
+        })
+        monkeypatch.setattr(
+            "tools.routing.evaluate_routing",
+            lambda *a, **kw: mock_decision,
+        )
+        monkeypatch.setattr("tools.sync_queue.enqueue_sync", mock_enqueue)
+
+        result = content_upsert(
+            doc_id, "Updated content",
+            {"type": "observation", "importance_score": "0.5"},
+        )
+        assert result["success"]
+        mock_enqueue.assert_called_once()
+        call_args = mock_enqueue.call_args
+        assert call_args[0][1] == doc_id
+        assert call_args[0][2] == ["backup"]
+
+    def test_upsert_no_enqueue_when_no_match(self, mock_config, monkeypatch):
+        """Empty destinations → no enqueue call."""
+        from unittest.mock import MagicMock
+        from tools.routing import RoutingDecision
+
+        write_result = content_write(
+            content="Original", content_type="observation"
+        )
+        doc_id = write_result["id"]
+
+        mock_enqueue = MagicMock(return_value=0)
+        mock_decision = RoutingDecision(
+            destinations=[], matched_rules=[]
+        )
+
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": True,
+            "strategy": "first-match",
+            "rules": [],
+            "project_groups": {},
+        })
+        monkeypatch.setattr(
+            "tools.routing.evaluate_routing",
+            lambda *a, **kw: mock_decision,
+        )
+        monkeypatch.setattr("tools.sync_queue.enqueue_sync", mock_enqueue)
+
+        result = content_upsert(
+            doc_id, "Updated",
+            {"type": "observation", "importance_score": "0.5"},
+        )
+        assert result["success"]
+        mock_enqueue.assert_not_called()
+
+    def test_upsert_no_enqueue_when_sync_disabled(self, mock_config, monkeypatch):
+        """Sync disabled → no enqueue call."""
+        from unittest.mock import MagicMock
+
+        write_result = content_write(
+            content="Original", content_type="observation"
+        )
+        doc_id = write_result["id"]
+
+        mock_enqueue = MagicMock()
+
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": False,
+        })
+        monkeypatch.setattr("tools.sync_queue.enqueue_sync", mock_enqueue)
+
+        result = content_upsert(
+            doc_id, "Updated",
+            {"type": "observation", "importance_score": "0.5"},
+        )
+        assert result["success"]
+        mock_enqueue.assert_not_called()
+
+    def test_upsert_sync_failure_does_not_break_upsert(self, mock_config, monkeypatch):
+        """enqueue_sync raising → upsert still succeeds."""
+        from tools.routing import RoutingDecision
+
+        write_result = content_write(
+            content="Original", content_type="observation"
+        )
+        doc_id = write_result["id"]
+
+        monkeypatch.setattr("tools.config.get_sync_config", lambda: {
+            "enabled": True,
+            "strategy": "first-match",
+            "rules": [{"name": "all", "match": {}, "action": "route-to",
+                        "destinations": ["backup"]}],
+            "project_groups": {},
+        })
+        monkeypatch.setattr(
+            "tools.routing.evaluate_routing",
+            lambda *a, **kw: RoutingDecision(
+                destinations=["backup"], matched_rules=["all"]
+            ),
+        )
+
+        def exploding_enqueue(*args, **kwargs):
+            raise RuntimeError("Connection refused")
+
+        monkeypatch.setattr("tools.sync_queue.enqueue_sync", exploding_enqueue)
+
+        result = content_upsert(
+            doc_id, "Updated",
+            {"type": "observation", "importance_score": "0.5"},
+        )
+        assert result["success"]
+        assert result["updated"]
+
+
 class TestContentWorklog:
     """Test worklog content type."""
 
