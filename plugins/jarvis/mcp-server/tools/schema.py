@@ -461,6 +461,12 @@ CREATE TABLE IF NOT EXISTS {schema}.memories (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Indexes (match local.memories for consistent HNSW search performance)
+CREATE INDEX IF NOT EXISTS idx_{schema}_embedding ON {schema}.memories
+    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
+CREATE INDEX IF NOT EXISTS idx_{schema}_active ON {schema}.memories (status)
+    WHERE status = 'active';
+
 -- Active view for query convenience
 CREATE OR REPLACE VIEW {schema}.active_memories AS
     SELECT * FROM {schema}.memories WHERE status = 'active';

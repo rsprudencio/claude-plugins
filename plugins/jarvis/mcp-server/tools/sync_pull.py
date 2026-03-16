@@ -70,23 +70,45 @@ def _get_last_pull_ts(remote_name: str) -> Optional[datetime]:
 
 
 def _set_last_pull_ts(remote_name: str, ts: datetime) -> None:
-    """Record the last successful pull timestamp for a remote."""
+    """Record the last successful pull timestamp for a remote.
+
+    Persists to local.meta and mirrors into the registry via copy-on-write
+    (D3 fix — never mutates SchemaEntry.metadata in-place).
+    """
     set_meta(_meta_key(remote_name), {
         "timestamp": ts.isoformat(),
         "remote": remote_name,
     })
+    # D3: Update registry metadata via copy-on-write (best-effort)
+    try:
+        from .schema_registry import update_remote_metadata
+        update_remote_metadata(f"remote_{remote_name}", {"last_pull_ts": ts.isoformat()})
+    except Exception:
+        pass
 
 
-def _ensure_local_mirror_schema(schema: str) -> None:
-    """Ensure the local mirror schema + table exist.
+def _ensure_local_mirror_schema(schema: str, remote_name: str) -> None:
+    """Ensure the local mirror schema + table + indexes exist, then register.
 
     Runs LOCAL_MIRROR_SQL on the local pool. Cached per schema name
     so DDL only executes once per process lifetime. Idempotent.
+
+    D1 fix: validates schema name before use in DDL f-string.
+    D2 fix: stores embedding_model in registry metadata at registration.
+    D11 fix: register_remote is idempotent, safe to call multiple times.
     """
     if schema in _ensured_local_schemas:
         return
 
-    dims = get_embedding_config()["dimensions"]
+    # D1: Validate schema name before use in DDL f-string
+    from .schema_registry import is_valid_schema_name, register_remote
+    if not is_valid_schema_name(schema):
+        raise ValueError(f"Invalid mirror schema name: {schema!r}")
+
+    emb = get_embedding_config()
+    dims = emb["dimensions"]
+    model_name = emb.get("model", "unknown")
+
     ddl = LOCAL_MIRROR_SQL.format(schema=schema, dimensions=dims)
 
     pool = _get_pool()
@@ -96,6 +118,15 @@ def _ensure_local_mirror_schema(schema: str) -> None:
 
     _ensured_local_schemas.add(schema)
     logger.info("Ensured local mirror schema: %s", schema)
+
+    # D2: Register with embedding_model so _cross_schema_search can detect mismatches
+    register_remote(
+        name=schema,
+        remote_name=remote_name,
+        searchable=True,
+        writable=False,
+        metadata={"embedding_model": model_name},
+    )
 
 
 def _get_local_ids(pool, batch_ids: list[str]) -> set[str]:
@@ -266,7 +297,7 @@ def initial_pull(
     start = time.time()
 
     # Ensure mirror schema exists before first INSERT
-    _ensure_local_mirror_schema(target_schema)
+    _ensure_local_mirror_schema(target_schema, remote_name)
 
     remote_pool = get_remote_pool(remote_name)
     local_pool = _get_pool()
@@ -374,7 +405,7 @@ def incremental_pull(
     start = time.time()
 
     # Ensure mirror schema exists
-    _ensure_local_mirror_schema(target_schema)
+    _ensure_local_mirror_schema(target_schema, remote_name)
 
     remote_pool = get_remote_pool(remote_name)
     local_pool = _get_pool()
@@ -530,6 +561,16 @@ def get_pull_sync_tasks() -> list:
             )
             continue
         seen_schemas[target_schema] = remote_name
+
+        # D6: Eagerly ensure + register mirror schema at startup so queries
+        # can find remote data immediately (before the pull loop runs).
+        try:
+            _ensure_local_mirror_schema(target_schema, remote_name)
+        except Exception as e:
+            logger.error(
+                "Failed to ensure mirror schema %s at startup (will retry in loop): %s",
+                target_schema, e,
+            )
 
         tasks.append(
             pull_sync_loop(

@@ -369,6 +369,13 @@ async def _handle_lifespan(scope, receive, send):
             except Exception as e:
                 logger.warning("Schema initialization deferred: %s", e)
 
+            # D6: Rebuild schema registry, auto-discovering existing remote_* schemas
+            try:
+                from tools.schema_registry import rebuild_registry
+                rebuild_registry()
+            except Exception as e:
+                logger.warning("Schema registry rebuild deferred: %s", e)
+
             _run_ctx = session_manager.run()
             await _run_ctx.__aenter__()
             _bg_tasks = [asyncio.create_task(t) for t in get_background_tasks()]

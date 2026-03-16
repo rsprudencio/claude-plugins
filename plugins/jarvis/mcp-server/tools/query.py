@@ -339,35 +339,28 @@ def _increment_retrieval_counts(doc_ids: list, increment: float = 1.0) -> None:
         logger.warning(f"Failed to increment retrieval counts: {e}")
 
 
-def _cross_schema_search(query_embedding, fetch_count: int,
-                         filter_dict: Optional[dict] = None,
-                         user: Optional[str] = None) -> list:
-    """Execute per-schema search across local + obsidian.
-
-    DAR F5: Each query uses its own HNSW index via ORDER BY ... LIMIT.
-    Results are merged in Python by distance.
+def _parse_schemas(schemas_str: Optional[str]) -> Optional[list[str]]:
+    """Parse a schemas string into a list of schema names.
 
     Args:
-        query_embedding: The query embedding vector
-        fetch_count: Max results per schema
-        filter_dict: Optional metadata filter dict
-        user: Optional user filter for multi-user isolation
+        schemas_str: 'all', None, or comma-separated schema names
+                     (e.g. 'local,remote_personio').
 
-    Returns list of row dicts with _schema column ('local' or 'obsidian').
+    Returns:
+        None (= search all registered schemas) or a list of schema names.
     """
-    from .schema import _get_pool
+    if schemas_str is None or schemas_str.strip().lower() == "all":
+        return None
+    return [s.strip() for s in schemas_str.split(",") if s.strip()]
 
-    # Build schema-specific filters
+
+def _query_local_schema(pool, query_embedding, fetch_count: int,
+                        filter_dict: Optional[dict], user: Optional[str]) -> list:
+    """Query local.memories with HNSW ordering."""
     core_conditions, core_params = _build_core_filter(filter_dict, user)
-    vault_conditions, vault_params = _build_vault_filter(filter_dict, user)
-
-    pool = _get_pool()
-    rows = []
-
+    core_where = " AND ".join(core_conditions)
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            # Core query (includes created_at + retrieval_count for decay ranking)
-            core_where = " AND ".join(core_conditions)
             cur.execute(
                 f"""SELECT id, document, metadata,
                            category, scope, source, importance_score,
@@ -381,12 +374,17 @@ def _cross_schema_search(query_embedding, fetch_count: int,
                 tuple([query_embedding] + core_params + [query_embedding, fetch_count]),
             )
             columns = [desc.name for desc in cur.description]
-            for row_data in cur.fetchall():
-                rows.append(dict(zip(columns, row_data)))
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
 
-            # Vault query
-            vault_where = " AND ".join(vault_conditions) if vault_conditions else None
-            vault_where_clause = f"WHERE {vault_where}" if vault_where else ""
+
+def _query_obsidian_schema(pool, query_embedding, fetch_count: int,
+                           filter_dict: Optional[dict], user: Optional[str]) -> list:
+    """Query obsidian.documents with HNSW ordering."""
+    vault_conditions, vault_params = _build_vault_filter(filter_dict, user)
+    vault_where = " AND ".join(vault_conditions) if vault_conditions else None
+    vault_where_clause = f"WHERE {vault_where}" if vault_where else ""
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
             cur.execute(
                 f"""SELECT id, document, metadata,
                            parent_file, directory, vault_type, title,
@@ -401,8 +399,137 @@ def _cross_schema_search(query_embedding, fetch_count: int,
                 tuple([query_embedding] + vault_params + [query_embedding, fetch_count]),
             )
             columns = [desc.name for desc in cur.description]
-            for row_data in cur.fetchall():
-                rows.append(dict(zip(columns, row_data)))
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def _query_remote_schema(pool, query_embedding, fetch_count: int,
+                         filter_dict: Optional[dict], user: Optional[str],
+                         schema_name: str) -> list:
+    """Query a remote mirror schema (same column structure as local.memories).
+
+    Remote mirror retrieval_count stays frozen after this query — mirrors are
+    read-only. This is intentional: remote retrieval patterns should not
+    influence local ranking (D12).
+    """
+    core_conditions, core_params = _build_core_filter(filter_dict, user)
+    core_where = " AND ".join(core_conditions)
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT id, document, metadata,
+                           category, scope, source, importance_score,
+                           retrieval_count, created_at,
+                           embedding <=> %s::halfvec AS distance,
+                           %s AS _schema
+                    FROM {schema_name}.memories
+                    WHERE {core_where}
+                    ORDER BY embedding <=> %s::halfvec ASC
+                    LIMIT %s""",
+                tuple([query_embedding] + core_params + [schema_name, query_embedding, fetch_count]),
+            )
+            columns = [desc.name for desc in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def _cross_schema_search(query_embedding, fetch_count: int,
+                         filter_dict: Optional[dict] = None,
+                         user: Optional[str] = None,
+                         schemas: Optional[list[str]] = None) -> list:
+    """Execute per-schema search across all registered searchable schemas.
+
+    Registry-driven (N schemas): iterates get_searchable_schemas() instead of
+    hardcoding local + obsidian. Each schema query uses its own pool connection
+    for per-schema error isolation (D7).
+
+    Args:
+        query_embedding: The query embedding vector
+        fetch_count: Max results per schema
+        filter_dict: Optional metadata filter dict
+        user: Optional user filter for multi-user isolation
+        schemas: Optional list of schema names to restrict search.
+                 None = all registered searchable schemas.
+
+    Returns:
+        List of row dicts with _schema column, sorted by distance ascending.
+
+    Raises:
+        ValueError: If schemas filter contains unknown schema names (D8).
+    """
+    from .schema import _get_pool
+    from .schema_registry import (
+        get_searchable_schemas, SchemaKind, SchemaEntry,
+        is_valid_schema_name,
+    )
+    from .config import get_embedding_config
+
+    # Get all searchable schemas from registry
+    all_searchable = get_searchable_schemas()
+    if not all_searchable:
+        # Defensive fallback: registry not yet initialized
+        all_searchable = [
+            SchemaEntry(name=SCHEMA_LOCAL, kind=SchemaKind.LOCAL, table="memories"),
+            SchemaEntry(name=SCHEMA_OBSIDIAN, kind=SchemaKind.OBSIDIAN, table="documents"),
+        ]
+
+    # D8: Validate and filter by caller-specified schemas
+    if schemas is not None:
+        available_names = {e.name for e in all_searchable}
+        unknown = set(schemas) - available_names
+        if unknown:
+            raise ValueError(
+                f"Unknown schemas: {sorted(unknown)}. "
+                f"Available: {sorted(available_names)}"
+            )
+        searchable = [e for e in all_searchable if e.name in schemas]
+    else:
+        searchable = all_searchable
+
+    # D2: Skip schemas whose embedding_model doesn't match the active model
+    try:
+        active_model = get_embedding_config().get("model")
+    except Exception:
+        active_model = None
+
+    compatible = []
+    for entry in searchable:
+        model = entry.metadata.get("embedding_model")
+        if model and active_model and model != active_model:
+            import logging as _logging
+            _logging.getLogger("jarvis-core").warning(
+                "Skipping schema %s: embedding model mismatch (%s != %s)",
+                entry.name, model, active_model,
+            )
+            continue
+        compatible.append(entry)
+
+    pool = _get_pool()
+    rows: list = []
+
+    # D7: Per-schema try/except — one schema failing does not abort others
+    for entry in compatible:
+        try:
+            if entry.kind == SchemaKind.LOCAL:
+                schema_rows = _query_local_schema(pool, query_embedding, fetch_count, filter_dict, user)
+            elif entry.kind == SchemaKind.OBSIDIAN:
+                schema_rows = _query_obsidian_schema(pool, query_embedding, fetch_count, filter_dict, user)
+            elif entry.kind == SchemaKind.REMOTE:
+                # D1 (defence-in-depth): re-validate schema name before f-string use
+                if not is_valid_schema_name(entry.name):
+                    import logging as _logging
+                    _logging.getLogger("jarvis-core").error(
+                        "Invalid schema name in registry (skipping): %r", entry.name
+                    )
+                    continue
+                schema_rows = _query_remote_schema(pool, query_embedding, fetch_count, filter_dict, user, entry.name)
+            else:
+                continue
+            rows.extend(schema_rows)
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger("jarvis-core").error(
+                "Schema %s query failed (skipping): %s", entry.name, e
+            )
+            continue
 
     # Sort merged results by distance
     rows.sort(key=lambda r: float(r.get("distance", 999)))
@@ -414,6 +541,7 @@ def query_vault(
     n_results: int = 5,
     filter: Optional[dict] = None,
     user: Optional[str] = None,
+    schemas: Optional[list[str]] = None,
 ) -> dict:
     """Semantic search across vault memory.
 
@@ -433,7 +561,7 @@ def query_vault(
     from .schema import _get_pool
 
     try:
-        # Check total across both schemas
+        # Check total across local + obsidian (required schemas)
         core_count = execute_query(
             "SELECT count(*) AS cnt FROM local.memories WHERE status = 'active'",
             fetch="one",
@@ -446,6 +574,20 @@ def query_vault(
         )
     except Exception as e:
         return {"success": False, "error": f"Database unavailable: {e}"}
+
+    # D4: Add remote schema counts (best-effort — failures don't abort the query)
+    from .schema_registry import get_searchable_schemas, SchemaKind, is_valid_schema_name
+    for _re in get_searchable_schemas(kind=SchemaKind.REMOTE):
+        if not is_valid_schema_name(_re.name):
+            continue
+        try:
+            _rc = execute_query(
+                f"SELECT count(*) AS cnt FROM {_re.name}.memories WHERE status = 'active'",
+                fetch="one",
+            )
+            total += _rc["cnt"] if _rc else 0
+        except Exception:
+            pass
 
     if total == 0:
         return {
@@ -479,8 +621,12 @@ def query_vault(
 
     try:
         rows = _cross_schema_search(
-            query_embedding, fetch_count, filter_dict=filter, user=user
+            query_embedding, fetch_count, filter_dict=filter, user=user,
+            schemas=schemas,
         )
+    except ValueError as e:
+        # D8: Unknown schema names in the filter
+        return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": f"Query failed: {e}"}
 
@@ -489,11 +635,17 @@ def query_vault(
     ranking_cfg = get_ranking_config()
     use_decay = decay_config.get("enabled", True)
 
+    # D12: Core-like schemas (LOCAL + REMOTE) support blended decay scoring —
+    # they share the local.memories column structure.
+    from .schema_registry import _core_like_schemas as _get_core_like
+    core_like = _get_core_like()
+
     raw_entries = []
     for row in rows:
         schema = row.get("_schema", "obsidian")
 
-        if schema == "local":
+        # Remote mirrors share the local.memories structure; obsidian has its own
+        if schema in core_like:
             meta = _format_core_result(row)
         else:
             meta = _format_vault_result(row)
@@ -510,8 +662,10 @@ def query_vault(
             except (ValueError, TypeError):
                 pass
 
-        # Two-phase ranking: blended score with decay (core only)
-        if use_decay and schema == "local":
+        # D12: Two-phase ranking with decay for LOCAL + REMOTE (core-like) schemas.
+        # Note: remote retrieval_count stays frozen (mirrors are read-only) — this
+        # is intentional; remote retrieval patterns should not influence local ranking.
+        if use_decay and schema in core_like:
             from .ranking import compute_blended_score
             blended, eff_imp = compute_blended_score(
                 similarity=similarity,
@@ -552,15 +706,31 @@ def query_vault(
     if staleness_config.get("enabled", True):
         _annotate_staleness(raw_entries, staleness_config)
 
-    # Chunk deduplication: keep best-relevance chunk per parent_file
-    best_per_file = {}
+    # D9: Compound dedup key (parent_file, schema) — avoids collapsing entries
+    # from different schemas that happen to share a parent_file name.
+    best_per_file: dict = {}
     for entry in raw_entries:
-        pf = entry["parent_file"]
-        if (
-            pf not in best_per_file
-            or entry["relevance"] > best_per_file[pf]["relevance"]
-        ):
-            best_per_file[pf] = entry
+        key = (entry["parent_file"], entry["_schema"])
+        if key not in best_per_file or entry["relevance"] > best_per_file[key]["relevance"]:
+            best_per_file[key] = entry
+
+    # D9: Cross-schema dedup — if same doc_id appears in both local and a remote
+    # mirror (echo dedup miss), prefer the local copy.
+    id_to_key: dict = {}
+    keys_to_remove: set = set()
+    for key, entry in list(best_per_file.items()):
+        doc_id = entry["doc_id"]
+        if doc_id in id_to_key:
+            existing_key = id_to_key[doc_id]
+            if entry["_schema"] == SCHEMA_LOCAL:
+                keys_to_remove.add(existing_key)
+                id_to_key[doc_id] = key
+            else:
+                keys_to_remove.add(key)
+        else:
+            id_to_key[doc_id] = key
+    for k in keys_to_remove:
+        best_per_file.pop(k, None)
 
     # Cross-encoder reranking (applied only when enabled and >1 candidate)
     reranking_applied = False
@@ -620,6 +790,9 @@ def query_vault(
             "schema": schema,
             "source": source,
         }
+        # Provenance: tag results from remote mirror schemas
+        if schema.startswith("remote_"):
+            result_entry["source_remote"] = schema
         if chunk_heading:
             result_entry["chunk_heading"] = chunk_heading
         if entry.get("is_stale"):
@@ -664,6 +837,7 @@ def semantic_context(
     threshold: float = 0.5,
     budget: int = 8000,
     skip_retrieval_increment: bool = False,
+    schemas: Optional[list[str]] = None,
 ) -> dict:
     """Search vault memories for per-prompt context injection.
 
@@ -713,6 +887,20 @@ def semantic_context(
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
+    # D4: Add remote schema counts (best-effort)
+    from .schema_registry import get_searchable_schemas as _gss, SchemaKind as _SK, is_valid_schema_name as _vsn
+    for _re in _gss(kind=_SK.REMOTE):
+        if not _vsn(_re.name):
+            continue
+        try:
+            _rc = execute_query(
+                f"SELECT count(*) AS cnt FROM {_re.name}.memories WHERE status = 'active'",
+                fetch="one",
+            )
+            total += _rc["cnt"] if _rc else 0
+        except Exception:
+            pass
+
     if total == 0:
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
@@ -732,7 +920,7 @@ def semantic_context(
     fetch_count = min(100, total)
 
     try:
-        rows = _cross_schema_search(query_embedding, fetch_count)
+        rows = _cross_schema_search(query_embedding, fetch_count, schemas=schemas)
     except Exception:
         return {"matches": [], "query_ms": 0, "total_searched": total}
 
@@ -741,13 +929,18 @@ def semantic_context(
     ranking_cfg = get_ranking_config()
     use_decay = decay_config.get("enabled", True)
 
+    # D12: Pre-compute core-like set for scoring gate (LOCAL + REMOTE schemas)
+    from .schema_registry import _core_like_schemas as _get_core_like_sc
+    core_like_sc = _get_core_like_sc()
+
     raw_entries = []
     skipped_sensitive = 0
 
     for row in rows:
         schema = row.get("_schema", "obsidian")
 
-        if schema == "local":
+        # Remote mirrors share the local.memories structure; obsidian has its own
+        if schema in core_like_sc:
             meta = _format_core_result(row)
         else:
             meta = _format_vault_result(row)
@@ -775,8 +968,9 @@ def semantic_context(
             except (ValueError, TypeError):
                 pass
 
-        # Two-phase ranking with decay (core only)
-        if use_decay and schema == "local":
+        # D12: Two-phase ranking with decay for core-like schemas (LOCAL + REMOTE).
+        # Remote retrieval_count stays frozen — mirrors are read-only.
+        if use_decay and schema in core_like_sc:
             from .ranking import compute_blended_score
             blended, eff_imp = compute_blended_score(
                 similarity=similarity,
@@ -820,15 +1014,29 @@ def semantic_context(
     if staleness_config.get("enabled", True):
         _annotate_staleness(raw_entries, staleness_config)
 
-    # Chunk deduplication: keep best-relevance chunk per parent_file
-    best_per_file = {}
+    # D9: Compound dedup key (parent_file, schema)
+    best_per_file: dict = {}
     for entry in raw_entries:
-        pf = entry["parent_file"]
-        if (
-            pf not in best_per_file
-            or entry["relevance"] > best_per_file[pf]["relevance"]
-        ):
-            best_per_file[pf] = entry
+        key = (entry["parent_file"], entry["_schema"])
+        if key not in best_per_file or entry["relevance"] > best_per_file[key]["relevance"]:
+            best_per_file[key] = entry
+
+    # D9: Cross-schema dedup — local wins over remote for same doc_id
+    id_to_key_sc: dict = {}
+    keys_to_remove_sc: set = set()
+    for key, entry in list(best_per_file.items()):
+        doc_id = entry["doc_id"]
+        if doc_id in id_to_key_sc:
+            existing_key = id_to_key_sc[doc_id]
+            if entry["_schema"] == SCHEMA_LOCAL:
+                keys_to_remove_sc.add(existing_key)
+                id_to_key_sc[doc_id] = key
+            else:
+                keys_to_remove_sc.add(key)
+        else:
+            id_to_key_sc[doc_id] = key
+    for k in keys_to_remove_sc:
+        best_per_file.pop(k, None)
 
     # Sort by relevance descending
     deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
@@ -843,6 +1051,8 @@ def semantic_context(
 
     for entry in deduped:
         schema = entry.get("_schema", "obsidian")
+        # D5: Only obsidian documents get vault-reference treatment.
+        # Remote schemas (remote_*) are core-like: full content, counted against core budget.
         is_vault = schema == "obsidian"
 
         if is_vault:
@@ -1098,6 +1308,37 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
         "vault_documents": vault_total,
         "samples": samples,
     }
+
+    # Remote schema stats (Step 8: provenance + freshness)
+    from .schema_registry import get_searchable_schemas as _gss_cs, SchemaKind as _SK_cs, is_valid_schema_name as _vsn_cs
+    from .schema import get_meta as _get_meta_cs
+    remote_entries = _gss_cs(kind=_SK_cs.REMOTE)
+    if remote_entries:
+        remote_stats = []
+        for entry in remote_entries:
+            if not _vsn_cs(entry.name):
+                continue
+            try:
+                count_result = execute_query(
+                    f"SELECT count(*) AS cnt FROM {entry.name}.memories WHERE status = 'active'",
+                    fetch="one",
+                )
+                count = count_result["cnt"] if count_result else 0
+                pull_meta = _get_meta_cs(f"pull_sync_ts:{entry.remote_name}")
+                last_pull = pull_meta.get("timestamp") if pull_meta else None
+                remote_stats.append({
+                    "schema": entry.name,
+                    "remote_name": entry.remote_name,
+                    "count": count,
+                    "last_pull_ts": last_pull,
+                })
+            except Exception as e:
+                remote_stats.append({
+                    "schema": entry.name,
+                    "remote_name": entry.remote_name,
+                    "error": str(e),
+                })
+        result["remote_schemas"] = remote_stats
 
     # Detailed breakdown
     if detailed:

@@ -32,6 +32,7 @@ def retrieve(
     sort_by: str = "importance_desc",
     session_id: Optional[str] = None,
     user: Optional[str] = None,
+    schemas: Optional[str] = None,
 ) -> dict:
     """Unified read/search entry point.
 
@@ -53,9 +54,12 @@ def retrieve(
 
     # Route 1: Semantic search
     if query:
-        from .query import query_vault
+        from .query import query_vault, _parse_schemas
 
-        return query_vault(query=query, n_results=n_results, filter=filter, user=user)
+        return query_vault(
+            query=query, n_results=n_results, filter=filter, user=user,
+            schemas=_parse_schemas(schemas),
+        )
 
     # Route 2: ID-based read
     if id:

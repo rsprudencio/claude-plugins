@@ -279,6 +279,15 @@ TOOLS = [
                     "type": "string",
                     "description": "Filter results by user (for multi-user deployments)",
                 },
+                "schemas": {
+                    "type": "string",
+                    "description": (
+                        "Which schemas to search: 'all' (default, searches every registered schema), "
+                        "'local' (only local memories), 'obsidian' (only vault), "
+                        "or comma-separated names (e.g. 'local,remote_personio'). "
+                        "Use 'remote_<name>' to target a specific remote mirror."
+                    ),
+                },
             },
         },
     ),
@@ -625,6 +634,13 @@ async def main():
         check_model_consistency()
     except Exception as e:
         logger.warning("Schema initialization deferred (database may not be ready): %s", e)
+
+    # D6: Rebuild schema registry, auto-discovering existing remote_* schemas
+    try:
+        from tools.schema_registry import rebuild_registry
+        rebuild_registry()
+    except Exception as e:
+        logger.warning("Schema registry rebuild deferred: %s", e)
 
     async with stdio_server() as (read_stream, write_stream):
         server_task = server.run(
