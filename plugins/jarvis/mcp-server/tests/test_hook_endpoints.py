@@ -202,7 +202,7 @@ def test_ingest_event_id_passthrough(monkeypatch):
     assert wl_call["extra_metadata"]["ingest_event_id"] == "worklog:event:456"
 
 
-def _make_obs_payload(scope, project_path=None, raw_project=None):
+def _make_obs_payload(scope, project_path=None, raw_project=None, relevant_files=None):
     """Helper: build a minimal ingest_auto_extract payload for one observation."""
     obs = {
         "content": "Some project-specific insight",
@@ -214,6 +214,8 @@ def _make_obs_payload(scope, project_path=None, raw_project=None):
     context = {}
     if project_path is not None:
         context["project_path"] = project_path
+    if relevant_files is not None:
+        context["relevant_files"] = relevant_files
     return {
         "observations": [obs],
         "worklog": None,
@@ -289,3 +291,63 @@ def test_observation_project_scope_no_path_no_project(monkeypatch):
     meta = calls[0]["extra_metadata"]
     assert meta.get("scope") == "project"
     assert "project_dir" not in meta
+
+
+def test_observation_project_scope_downgraded_when_files_outside_project(monkeypatch):
+    """scope='project' downgrades to 'global' when relevant_files are outside project_path."""
+    monkeypatch.setattr(
+        hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
+    )
+    calls = []
+    monkeypatch.setattr(
+        hook_endpoints,
+        "content_write",
+        lambda **kwargs: calls.append(kwargs) or {"success": True, "id": "obs::1"},
+    )
+
+    # Working dir is personio-framework, but files are in jarvis-plugin
+    payload = _make_obs_payload(
+        scope="project",
+        project_path="/home/user/dev/personio-framework",
+        relevant_files=[
+            "/home/user/0x88/jarvis-plugin/tools/query.py",
+            "/home/user/0x88/jarvis-plugin/tools/schema.py",
+        ],
+    )
+    result = hook_endpoints.ingest_auto_extract(payload)
+
+    assert result["success"] is True
+    assert len(calls) == 1
+    meta = calls[0]["extra_metadata"]
+    # Should be downgraded to global — files are not in the project
+    assert meta.get("scope") == "global"
+    assert "project_dir" not in meta
+
+
+def test_observation_project_scope_kept_when_files_inside_project(monkeypatch):
+    """scope='project' stays when relevant_files are inside project_path."""
+    monkeypatch.setattr(
+        hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
+    )
+    calls = []
+    monkeypatch.setattr(
+        hook_endpoints,
+        "content_write",
+        lambda **kwargs: calls.append(kwargs) or {"success": True, "id": "obs::1"},
+    )
+
+    payload = _make_obs_payload(
+        scope="project",
+        project_path="/home/user/dev/personio-framework",
+        relevant_files=[
+            "/home/user/dev/personio-framework/src/main.py",
+            "/home/user/dev/personio-framework/tests/test.py",
+        ],
+    )
+    result = hook_endpoints.ingest_auto_extract(payload)
+
+    assert result["success"] is True
+    assert len(calls) == 1
+    meta = calls[0]["extra_metadata"]
+    assert meta.get("scope") == "project"
+    assert meta.get("project_dir") == "personio-framework"

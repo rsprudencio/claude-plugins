@@ -295,9 +295,20 @@ def ingest_auto_extract(payload: dict) -> dict:
             # chk_scope_project DB constraint is satisfied.
             if scope == "project":
                 project_name = _safe_str(raw.get("project"))
+                obs_project_path = metadata.get("project_path", "")
                 if not project_name:
-                    project_path = metadata.get("project_path", "")
-                    project_name = os.path.basename(project_path) if project_path else ""
+                    project_name = os.path.basename(obs_project_path) if obs_project_path else ""
+                # Validate: if relevant_files exist but none are inside the
+                # project directory, downgrade to global — the observation is
+                # about a different project than the working directory.
+                if project_name and obs_project_path:
+                    relevant = metadata.get("relevant_files", "")
+                    if relevant:
+                        files = [f.strip() for f in relevant.split(",") if f.strip()]
+                        if files and not any(f.startswith(obs_project_path) for f in files):
+                            scope = "global"
+                            metadata["scope"] = "global"
+                            project_name = ""
                 if project_name:
                     metadata["project_dir"] = project_name
 
@@ -338,6 +349,16 @@ def ingest_auto_extract(payload: dict) -> dict:
                 worklog_result = {"status": "duplicate", "id": "", "error": ""}
             else:
                 metadata = _build_common_metadata(context, include_project_dir=True)
+
+                # Validate: if relevant_files exist but none are inside the
+                # project directory, clear project_dir — the worklog is about
+                # a different project than the working directory.
+                project_path = metadata.get("project_path", "")
+                relevant = metadata.get("relevant_files", "")
+                if project_path and relevant and metadata.get("project_dir"):
+                    files = [f.strip() for f in relevant.split(",") if f.strip()]
+                    if files and not any(f.startswith(project_path) for f in files):
+                        del metadata["project_dir"]
 
                 workstream = _safe_str(worklog_payload.get("workstream")) or "misc"
                 activity_type = (

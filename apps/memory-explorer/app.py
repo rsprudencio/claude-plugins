@@ -43,7 +43,7 @@ from tools.config import get_embedding_config, get_postgres_config, get_sync_con
 from tools.embedding import get_embedding_service  # noqa: E402
 from tools.remote_connection import get_remote_pool  # noqa: E402
 from jarvis_common.sync_validation import redact_dsn  # noqa: E402
-from jarvis_common.routing import parse_routing_rule  # noqa: E402
+from jarvis_common.routing import evaluate_routing, parse_routing_rule  # noqa: E402
 from app_admin import admin_router  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -765,10 +765,14 @@ def _admin_sync() -> dict:
                     "error": str(fail_row[2])[:200] if fail_row[2] else None,
                 }
 
-            # Recent sync activity (last 20 completed)
+            # Recent sync activity (last 20) — enriched with memory preview
             recent_rows = conn.execute(
-                "SELECT id, memory_id, destination, status, last_attempt "
-                "FROM local.sync_queue ORDER BY last_attempt DESC NULLS LAST LIMIT 20"
+                "SELECT q.id, q.memory_id, q.destination, q.status, q.last_attempt, "
+                "  m.category, m.scope, m.project, m.importance_score, "
+                "  LEFT(m.document, 120) AS preview "
+                "FROM local.sync_queue q "
+                "LEFT JOIN local.memories m ON m.id = q.memory_id "
+                "ORDER BY q.last_attempt DESC NULLS LAST LIMIT 20"
             ).fetchall()
             for row in recent_rows:
                 recent_syncs.append({
@@ -777,6 +781,11 @@ def _admin_sync() -> dict:
                     "destination": row[2],
                     "status": row[3],
                     "at": row[4].isoformat() if row[4] else None,
+                    "category": row[5],
+                    "scope": row[6],
+                    "project": row[7],
+                    "importance": row[8],
+                    "preview": row[9],
                 })
     except Exception as e:
         logger.warning("Failed to read sync_queue: %s", e)
@@ -790,6 +799,33 @@ def _admin_sync() -> dict:
             "destinations": raw.get("destinations", []),
             "match": raw.get("match", {}),
         })
+
+    # Enrich recent activity with matched routing rules
+    parsed_rules = []
+    for raw_rule in sync_cfg.get("rules", []):
+        try:
+            parsed_rules.append(parse_routing_rule(raw_rule))
+        except Exception:
+            pass
+    if recent_syncs and parsed_rules:
+        strategy = sync_cfg.get("strategy", "first-match")
+        project_groups = sync_cfg.get("project_groups", {})
+        for entry in recent_syncs:
+            if entry.get("category"):
+                memory_meta = {
+                    "category": entry["category"],
+                    "scope": entry.get("scope", "global"),
+                    "project": entry.get("project"),
+                    "importance_score": entry.get("importance", 0.5),
+                    "tags": "",
+                }
+                try:
+                    result = evaluate_routing(
+                        memory_meta, parsed_rules, strategy, project_groups
+                    )
+                    entry["matched_rules"] = result.matched_rules
+                except Exception:
+                    entry["matched_rules"] = []
 
     # Memory stats
     mem_stats = {}
@@ -1547,16 +1583,23 @@ function renderAdmin(d) {
 
   /* ── Recent activity ──────────────────────────────── */
   if (d.recent_activity.length > 0) {
-    h += '<div class="admin-section"><h2>Recent Activity</h2>';
-    h += '<table class="admin-table"><tr><th>Time</th><th>Memory</th><th>Dest</th><th>Status</th></tr>';
+    h += '<div class="admin-section"><h2>Recent Sync Activity</h2>';
+    h += '<table class="admin-table"><tr><th>Time</th><th>Memory</th><th>Dest</th><th>Rule</th><th>Status</th></tr>';
     d.recent_activity.forEach(function(a) {
       var stPill = a.status === 'done' ? '<span class="pill pill-green">done</span>'
         : a.status === 'dlq' ? '<span class="pill pill-red">dlq</span>'
         : a.status === 'pending' ? '<span class="pill pill-orange">pending</span>'
+        : a.status === 'sending' ? '<span class="pill pill-blue">sending</span>'
         : '<span class="pill pill-blue">' + esc(a.status) + '</span>';
-      h += '<tr><td class="ts">' + fmtTime(a.at) + '</td>';
-      h += '<td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.memory_id || '') + '</td>';
+      var catPill = a.category ? '<span class="pill pill-blue" style="font-size:10px">' + esc(a.category) + '</span> ' : '';
+      var preview = a.preview ? esc(a.preview) : '<span class="ts">' + esc(a.memory_id || '?') + '</span>';
+      var projTag = a.project ? ' <span class="ts">(' + esc(a.project) + ')</span>' : '';
+      var rules = (a.matched_rules || []).map(function(r) { return '<span class="match-chip">' + esc(r) + '</span>'; }).join(' ');
+      if (!rules) rules = '<span class="ts">-</span>';
+      h += '<tr><td class="ts" style="white-space:nowrap">' + fmtTime(a.at) + '</td>';
+      h += '<td style="max-width:350px">' + catPill + preview + projTag + '</td>';
       h += '<td>' + esc(a.destination) + '</td>';
+      h += '<td>' + rules + '</td>';
       h += '<td>' + stPill + '</td></tr>';
     });
     h += '</table></div>';
