@@ -60,6 +60,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
         threshold=0.6,
         budget=1200,
         skip_retrieval_increment=False,
+        schemas=["local", "obsidian"],  # default conservative scope
     )
     assert result["success"] is True
     assert len(result["matches"]) == 1

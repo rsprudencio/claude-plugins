@@ -172,11 +172,13 @@ class TestRegisterRemote:
         entry = register_remote("remote_shared", "shared", writable=True)
         assert entry.writable is True
 
-    def test_duplicate_raises(self):
+    def test_duplicate_returns_existing(self):
+        """register_remote is idempotent — duplicate name returns existing entry (D11)."""
         rebuild_registry()
-        register_remote("remote_a", "a")
-        with pytest.raises(ValueError, match="already registered"):
-            register_remote("remote_a", "b")
+        e1 = register_remote("remote_a", "a")
+        e2 = register_remote("remote_a", "b")  # different remote_name, same schema name
+        assert e1.name == e2.name
+        assert e2.remote_name == "a"  # original entry preserved, not overwritten
 
     def test_invalid_name_raises(self):
         with pytest.raises(ValueError, match="Invalid schema name"):
