@@ -191,9 +191,8 @@ def get_prompt_context(prompt: str) -> dict:
     if not enabled or not _safe_str(prompt):
         return result
 
-    # Default to local+obsidian for session injection (conservative — users opt in
-    # to remote injection via enrichment config "schemas": "all").
-    schemas_str = config.get("schemas", "local,obsidian")
+    # Default to all schemas for session injection (local + obsidian + discovered remotes).
+    schemas_str = config.get("schemas", "all")
     search = semantic_context(
         query=prompt,
         threshold=threshold,

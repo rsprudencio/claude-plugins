@@ -124,10 +124,10 @@ def test_hook_prompt_context_success(client, monkeypatch):
             "success": True,
             "enabled": True,
             "debug": False,
-            "matches": [{"source": "notes/a.md", "relevance": 0.8}],
+            "matches": [{"id": "notes/a.md", "relevance": 0.8}],
             "query_ms": 5,
             "total_searched": 10,
-            "budget_used": {"core": 10, "vault": 20, "total": 8000},
+            "budget_used": {"local": 10, "vault": 20, "remote": 0, "total": 8000},
             "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
         },
     )
@@ -135,7 +135,7 @@ def test_hook_prompt_context_success(client, monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
-    assert data["matches"][0]["source"] == "notes/a.md"
+    assert data["matches"][0]["id"] == "notes/a.md"
 
 
 def test_hook_prompt_context_malformed_body(client):

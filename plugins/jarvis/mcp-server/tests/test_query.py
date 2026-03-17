@@ -646,7 +646,7 @@ class TestSemanticContextFractionalBump:
         result = semantic_context("budget test", threshold=0.0, budget=8000)
 
         assert "budget_used" in result
-        assert "core" in result["budget_used"]
+        assert "local" in result["budget_used"]
         assert "vault" in result["budget_used"]
         assert "total" in result["budget_used"]
         assert result["budget_used"]["total"] == 8000

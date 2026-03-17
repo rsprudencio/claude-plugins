@@ -84,8 +84,9 @@ def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
             "n_core": len(matches) - n_vault,
             "n_vault": n_vault,
             "scores": [round(s, 3) for s in scores],
-            "budget_core_used": budget.get("core", 0),
+            "budget_local_used": budget.get("local", 0),
             "budget_vault_used": budget.get("vault", 0),
+            "budget_remote_used": budget.get("remote", 0),
         }
         with open(TELEMETRY_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
@@ -192,13 +193,17 @@ def _format_memories(matches: list, query_ms: float) -> str:
 
     for match in matches:
         display_mode = match.get("display_mode", "full")
+        # Backward compat: accept both "id" (new) and "source" (legacy)
+        mem_id = match.get("id") or match.get("source", "")
         attrs = [
-            f'source="{saxutils.escape(match["source"])}"',
+            f'id="{saxutils.escape(mem_id)}"',
             f'relevance="{match["relevance"]}"',
             f'type="{saxutils.escape(match.get("type", "unknown"))}"',
         ]
         if match.get("heading"):
             attrs.append(f'heading="{saxutils.escape(match["heading"])}"')
+        if match.get("schema"):
+            attrs.append(f'schema="{saxutils.escape(match["schema"])}"')
         if display_mode == "reference":
             attrs.append('ref="vault"')
         if match.get("stale"):
@@ -308,7 +313,7 @@ def main():
 
         # Record injected content for dedup on subsequent prompts
         content_hashes = [compute_content_hash(m.get("content", "")) for m in matches]
-        sources = [m.get("source", "") for m in matches]
+        sources = [m.get("id") or m.get("source", "") for m in matches]
         write_injection_state(session_id, content_hashes, sources)
 
         # JSONL telemetry (always on, lightweight)
@@ -318,7 +323,7 @@ def main():
             n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
             n_core = len(matches) - n_vault
             budget = result.get("budget_used", {})
-            sources = " ".join(f'{m["source"]}({m["relevance"]})' for m in matches)
+            sources = " ".join(f'{m.get("id") or m.get("source", "")}({m["relevance"]})' for m in matches)
             _debug_log(
                 "FOUND",
                 f"{query_ms}ms | {len(matches)} ({n_core}c+{n_vault}v) | "

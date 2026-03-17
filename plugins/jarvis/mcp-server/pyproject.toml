@@ -1,6 +1,6 @@
 [project]
 name = "jarvis-core"
-version = "3.1.6"
+version = "3.2.0"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.11"
 dependencies = [

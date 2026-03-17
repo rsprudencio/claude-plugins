@@ -45,10 +45,10 @@ def test_get_prompt_context_with_matches(monkeypatch):
 
     semantic = MagicMock(
         return_value={
-            "matches": [{"source": "notes/a.md", "relevance": 0.82}],
+            "matches": [{"id": "notes/a.md", "relevance": 0.82}],
             "query_ms": 7.2,
             "total_searched": 4,
-            "budget_used": {"core": 200, "vault": 300, "total": 1200},
+            "budget_used": {"local": 200, "vault": 300, "remote": 0, "total": 1200},
         }
     )
     monkeypatch.setattr(hook_endpoints, "semantic_context", semantic)
@@ -60,7 +60,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
         threshold=0.6,
         budget=1200,
         skip_retrieval_increment=False,
-        schemas=["local", "obsidian"],  # default conservative scope
+        schemas=None,  # default "all" → _parse_schemas returns None
     )
     assert result["success"] is True
     assert len(result["matches"]) == 1

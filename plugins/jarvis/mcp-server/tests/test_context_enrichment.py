@@ -226,26 +226,28 @@ class TestOutputFormatting:
         """Formats a single memory correctly."""
         matches = [
             {
-                "source": "notes/goals.md",
+                "id": "notes/goals.md",
                 "relevance": 0.85,
                 "type": "note",
                 "content": "My career goals for 2026",
+                "schema": "obsidian",
             }
         ]
         output = _format_memories(matches, 42.5)
         assert '<relevant-vault-memories count="1" query_ms="42.5">' in output
-        assert 'source="notes/goals.md"' in output
+        assert 'id="notes/goals.md"' in output
         assert 'relevance="0.85"' in output
         assert 'type="note"' in output
+        assert 'schema="obsidian"' in output
         assert "My career goals for 2026" in output
         assert "</relevant-vault-memories>" in output
 
     def test_multiple_matches(self):
         """Formats multiple memories."""
         matches = [
-            {"source": "notes/a.md", "relevance": 0.9, "type": "note", "content": "A"},
+            {"id": "notes/a.md", "relevance": 0.9, "type": "note", "content": "A"},
             {
-                "source": "notes/b.md",
+                "id": "notes/b.md",
                 "relevance": 0.7,
                 "type": "journal",
                 "content": "B",
@@ -260,7 +262,7 @@ class TestOutputFormatting:
         """Includes heading attribute when present."""
         matches = [
             {
-                "source": "notes/goals.md",
+                "id": "notes/goals.md",
                 "relevance": 0.8,
                 "type": "note",
                 "content": "Content",
@@ -274,7 +276,7 @@ class TestOutputFormatting:
         """Omits heading attribute when not present."""
         matches = [
             {
-                "source": "notes/goals.md",
+                "id": "notes/goals.md",
                 "relevance": 0.8,
                 "type": "note",
                 "content": "Content",
@@ -287,7 +289,7 @@ class TestOutputFormatting:
         """Properly escapes XML special characters."""
         matches = [
             {
-                "source": "notes/test.md",
+                "id": "notes/test.md",
                 "relevance": 0.8,
                 "type": "note",
                 "content": "Use <b>bold</b> & 'quotes' in \"content\"",
@@ -444,10 +446,10 @@ class TestSemanticContext:
         )
 
         result = semantic_context("career goals", threshold=0.0)
-        sources = [m["source"] for m in result["matches"]]
-        assert "notes/safe.md" in sources
-        assert "documents/sensitive.md" not in sources
-        assert "people/contact.md" not in sources
+        ids = [m["id"] for m in result["matches"]]
+        assert "notes/safe.md" in ids
+        assert "documents/sensitive.md" not in ids
+        assert "people/contact.md" not in ids
         assert result["skipped_sensitive"] >= 2
 
     def test_vault_shown_as_reference(self, mock_config):
@@ -535,8 +537,8 @@ class TestSemanticContext:
 
         result = semantic_context("career goals", threshold=0.0)
         # Should only return 1 result (best chunk for goals.md)
-        sources = [m["source"] for m in result["matches"]]
-        assert sources.count("notes/goals.md") <= 1
+        ids = [m["id"] for m in result["matches"]]
+        assert ids.count("notes/goals.md") <= 1
 
     def test_budget_split_mixed_schemas(self, mock_config):
         """Budget splits 50/50 between core (full) and vault (reference) content."""
@@ -592,9 +594,9 @@ class TestSemanticContext:
 
         # Budget tracking should report usage for both halves
         budget_used = result.get("budget_used", {})
-        assert budget_used.get("core", 0) > 0, "Expected core budget usage"
+        assert budget_used.get("local", 0) > 0, "Expected local budget usage"
         assert budget_used.get("vault", 0) > 0, "Expected vault budget usage"
-        assert budget_used["core"] + budget_used["vault"] <= 2000
+        assert budget_used["local"] + budget_used["vault"] + budget_used.get("remote", 0) <= 2000
 
     def test_budget_overflow_from_empty_half(self, mock_config):
         """Unused budget from one half overflows to the other."""
@@ -727,7 +729,7 @@ class TestDedupIntegration:
                 "debug": False,
                 "matches": matches,
                 "query_ms": 10,
-                "budget_used": {"core": 100, "vault": 200},
+                "budget_used": {"local": 100, "vault": 200, "remote": 0},
                 "todoist_prompt_alerts": {"enabled": False, "max_per_category": 3},
             },
         }
@@ -735,7 +737,7 @@ class TestDedupIntegration:
     def test_matches_filtered_when_injection_state_exists(self, monkeypatch, capsys):
         """filter_already_injected is called with matches and session_id."""
         matches = [
-            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
+            {"content": "memory one", "id": "a.md", "relevance": 0.9, "type": "note"},
         ]
         monkeypatch.setattr(
             context_enrichment_module, "post_json",
@@ -758,8 +760,8 @@ class TestDedupIntegration:
         from precompact_dedup import compute_content_hash
 
         matches = [
-            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
-            {"content": "memory two", "source": "b.md", "relevance": 0.8, "type": "note"},
+            {"content": "memory one", "id": "a.md", "relevance": 0.9, "type": "note"},
+            {"content": "memory two", "id": "b.md", "relevance": 0.8, "type": "note"},
         ]
         monkeypatch.setattr(
             context_enrichment_module, "post_json",
@@ -785,7 +787,7 @@ class TestDedupIntegration:
     def test_no_filter_when_no_session_id(self, monkeypatch, capsys):
         """Direct mode (no --hook) passes empty session_id to filter."""
         matches = [
-            {"content": "memory one", "source": "a.md", "relevance": 0.9, "type": "note"},
+            {"content": "memory one", "id": "a.md", "relevance": 0.9, "type": "note"},
         ]
         monkeypatch.setattr(
             context_enrichment_module, "post_json",

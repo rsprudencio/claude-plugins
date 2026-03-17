@@ -1041,39 +1041,56 @@ def semantic_context(
     # Sort by relevance descending
     deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
 
-    # Budget-based selection: process in relevance order
-    # Each item tries its own half first, overflows to the other
+    # Budget-based selection: 3-way split (local / obsidian / remote).
+    # Each bucket gets a guaranteed share; unused budget overflows to others.
     VAULT_REF_COST = 120  # estimated chars for "See: path + heading"
-    half = budget // 2
-    core_remaining = half
-    vault_remaining = half
+
+    # Check if any remote schemas are in play
+    has_remote = any(e.get("_schema", "").startswith("remote_") for e in deduped)
+    if has_remote:
+        third = budget // 3
+        local_remaining = third
+        vault_remaining = third
+        remote_remaining = budget - 2 * third  # absorb rounding remainder
+    else:
+        half = budget // 2
+        local_remaining = half
+        vault_remaining = half
+        remote_remaining = 0
+
     selected = []
+
+    def _try_spend(cost: int, primary: str) -> bool:
+        """Try to spend from primary bucket, then overflow to others."""
+        nonlocal local_remaining, vault_remaining, remote_remaining
+        buckets = {"local": local_remaining, "vault": vault_remaining, "remote": remote_remaining}
+        order = [primary] + [b for b in ("local", "vault", "remote") if b != primary]
+        for bucket in order:
+            if buckets[bucket] >= cost:
+                if bucket == "local":
+                    local_remaining -= cost
+                elif bucket == "vault":
+                    vault_remaining -= cost
+                else:
+                    remote_remaining -= cost
+                return True
+        return False
 
     for entry in deduped:
         schema = entry.get("_schema", "obsidian")
-        # D5: Only obsidian documents get vault-reference treatment.
-        # Remote schemas (remote_*) are core-like: full content, counted against core budget.
         is_vault = schema == "obsidian"
+        is_remote = schema.startswith("remote_")
 
         if is_vault:
             cost = VAULT_REF_COST
-            if vault_remaining >= cost:
-                vault_remaining -= cost
-                entry["display_mode"] = "reference"
-                selected.append(entry)
-            elif core_remaining >= cost:
-                core_remaining -= cost
+            if _try_spend(cost, "vault"):
                 entry["display_mode"] = "reference"
                 selected.append(entry)
         else:
             content_len = len(entry["document"] or "")
             cost = max(content_len, 50)  # minimum 50 chars cost
-            if core_remaining >= cost:
-                core_remaining -= cost
-                entry["display_mode"] = "full"
-                selected.append(entry)
-            elif vault_remaining >= cost:
-                vault_remaining -= cost
+            bucket = "remote" if is_remote else "local"
+            if _try_spend(cost, bucket):
                 entry["display_mode"] = "full"
                 selected.append(entry)
 
@@ -1107,12 +1124,12 @@ def semantic_context(
             )
 
         match = {
-            "source": entry["parent_file"],
-            "title": meta.get("title", entry["parent_file"]),
+            "id": entry["parent_file"],
             "relevance": round(entry["relevance"], 3),
             "type": doc_type,
             "content": content,
             "display_mode": entry["display_mode"],
+            "schema": entry.get("_schema", "local"),
         }
         if chunk_heading:
             match["heading"] = chunk_heading
@@ -1128,8 +1145,9 @@ def semantic_context(
         "total_searched": total,
         "skipped_sensitive": skipped_sensitive,
         "budget_used": {
-            "core": half - core_remaining,
-            "vault": half - vault_remaining,
+            "local": (third if has_remote else half) - local_remaining,
+            "vault": (third if has_remote else half) - vault_remaining,
+            "remote": (budget - 2 * third if has_remote else 0) - remote_remaining if has_remote else 0,
             "total": budget,
         },
     }

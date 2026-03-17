@@ -814,9 +814,9 @@ class TestFilterSuperseded:
         mock_config.db.core_rows["obs::stale"]["status"] = "superseded"
 
         result = semantic_context("Python error handling", threshold=0.0, budget=8000)
-        sources = [m["source"] for m in result.get("matches", [])]
+        ids = [m["id"] for m in result.get("matches", [])]
         # The superseded entry should not appear in results
-        assert "obs::stale" not in sources
+        assert "obs::stale" not in ids
 
     def test_backwards_compatible_no_status(self, mock_config):
         """Entries without explicit status still work (default is 'active')."""
