@@ -7,9 +7,12 @@ Routes reads based on parameters:
 - list_type -> list content (content_list or memory_list)
 """
 
+import logging
 from typing import Optional
 
 from .routing_utils import validate_exactly_one
+
+logger = logging.getLogger("jarvis-core")
 
 
 def retrieve(
@@ -92,15 +95,34 @@ def retrieve(
 
 
 def _read_by_id(doc_id: str, include_metadata: bool):
-    """Route ID-based reads by schema prefix and normalize the response format."""
+    """Route ID-based reads by schema prefix and normalize the response format.
+
+    For core-like IDs (obs::, memory::, pattern::, etc.):
+    1. Try local.memories first (fast path, increments retrieval_count)
+    2. If not found, fall back to registered remote schemas
+
+    Remote reads do NOT increment retrieval_count (mirrors are read-only, D12).
+    """
     from .namespaces import schema_for_id, SCHEMA_LOCAL
 
     schema = schema_for_id(doc_id)
     if schema == SCHEMA_LOCAL:
-        # Core memory: use content_read (increments retrieval_count)
+        # Core memory: try local first (increments retrieval_count)
         from .content import content_read
 
-        return content_read(doc_id)
+        result = content_read(doc_id)
+
+        # If found locally, return immediately
+        if result.get("found"):
+            return result
+
+        # Fall back to remote schemas
+        remote_result = _read_from_remote_schemas(doc_id)
+        if remote_result is not None:
+            return remote_result
+
+        # Not found anywhere
+        return result
     else:
         # Vault document: use doc_read for indexed content
         from .query import doc_read
@@ -125,6 +147,77 @@ def _read_by_id(doc_id: str, include_metadata: bool):
                 "id": doc_id,
                 "error": result.get("error") if not result.get("documents") else None,
             }
+
+
+def _read_from_remote_schemas(doc_id: str) -> Optional[dict]:
+    """Try to read a core-like document from registered remote schemas.
+
+    Iterates all registered REMOTE schemas and queries by ID. Returns the
+    first match or None if the document is not found in any remote.
+
+    Remote reads are read-only — no retrieval_count increment (D12).
+    Uses psycopg.sql.Identifier for safe schema/table composition.
+    """
+    from .schema import _get_pool, jsonb_to_metadata
+    from .schema_registry import get_searchable_schemas, SchemaKind, is_valid_pg_identifier
+
+    remote_schemas = get_searchable_schemas(kind=SchemaKind.REMOTE)
+    if not remote_schemas:
+        return None
+
+    from psycopg import sql as psql
+
+    pool = _get_pool()
+
+    for entry in remote_schemas:
+        # D1 defence-in-depth: validate both identifiers before SQL composition
+        if not is_valid_pg_identifier(entry.name):
+            logger.error("Invalid schema name in registry (skipping): %r", entry.name)
+            continue
+        if not is_valid_pg_identifier(entry.table):
+            logger.error("Invalid table name in registry (skipping): %r", entry.table)
+            continue
+
+        try:
+            query = psql.SQL(
+                "SELECT id, document, category, scope, project, "
+                "source, importance_score, retrieval_count, "
+                "status, metadata "
+                "FROM {schema}.{table} "
+                "WHERE id = %s AND status = 'active'"
+            ).format(
+                schema=psql.Identifier(entry.name),
+                table=psql.Identifier(entry.table),
+            )
+
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, (doc_id,))
+                    row = cur.fetchone()
+
+            if row:
+                metadata = jsonb_to_metadata(row[9])
+                return {
+                    "success": True,
+                    "found": True,
+                    "id": row[0],
+                    "content": row[1],
+                    "category": row[2],
+                    "scope": row[3],
+                    "project": row[4],
+                    "source": row[5],
+                    "importance_score": row[6],
+                    "retrieval_count": row[7],
+                    "status": row[8],
+                    "metadata": metadata,
+                    "schema": entry.name,
+                    "source_remote": entry.name,
+                }
+        except Exception as e:
+            logger.error("Remote ID lookup in %s failed (skipping): %s", entry.name, e)
+            continue
+
+    return None
 
 
 def _list_content(

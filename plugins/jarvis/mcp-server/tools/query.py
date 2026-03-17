@@ -404,31 +404,85 @@ def _query_obsidian_schema(pool, query_embedding, fetch_count: int,
 
 def _query_remote_schema(pool, query_embedding, fetch_count: int,
                          filter_dict: Optional[dict], user: Optional[str],
-                         schema_name: str) -> list:
+                         entry) -> list:
     """Query a remote mirror schema (same column structure as local.memories).
 
     Remote mirror retrieval_count stays frozen after this query — mirrors are
     read-only. This is intentional: remote retrieval patterns should not
     influence local ranking (D12).
+
+    Args:
+        entry: SchemaEntry from the schema registry (provides name + table).
     """
+    from psycopg import sql as psql
+    from .schema_registry import is_valid_pg_identifier
+
+    # Defence-in-depth: validate both identifiers before SQL composition
+    if not is_valid_pg_identifier(entry.name):
+        import logging as _logging
+        _logging.getLogger("jarvis-core").error(
+            "Invalid schema name in remote query (skipping): %r", entry.name)
+        return []
+    if not is_valid_pg_identifier(entry.table):
+        import logging as _logging
+        _logging.getLogger("jarvis-core").error(
+            "Invalid table name in remote query (skipping): %r", entry.table)
+        return []
+
     core_conditions, core_params = _build_core_filter(filter_dict, user)
     core_where = " AND ".join(core_conditions)
+
+    query = psql.SQL(
+        "SELECT id, document, metadata, "
+        "category, scope, source, importance_score, "
+        "retrieval_count, created_at, "
+        "embedding <=> %s::halfvec AS distance, "
+        "%s AS _schema "
+        "FROM {schema}.{table} "
+        "WHERE {where} "
+        "ORDER BY embedding <=> %s::halfvec ASC "
+        "LIMIT %s"
+    ).format(
+        schema=psql.Identifier(entry.name),
+        table=psql.Identifier(entry.table),
+        where=psql.SQL(core_where),
+    )
+
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"""SELECT id, document, metadata,
-                           category, scope, source, importance_score,
-                           retrieval_count, created_at,
-                           embedding <=> %s::halfvec AS distance,
-                           %s AS _schema
-                    FROM {schema_name}.memories
-                    WHERE {core_where}
-                    ORDER BY embedding <=> %s::halfvec ASC
-                    LIMIT %s""",
-                tuple([query_embedding] + core_params + [schema_name, query_embedding, fetch_count]),
+                query,
+                tuple([query_embedding] + core_params + [entry.name, query_embedding, fetch_count]),
             )
             columns = [desc.name for desc in cur.description]
             return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+
+def _remote_count(entry) -> int:
+    """Count active rows in a remote schema using safe identifier composition.
+
+    Args:
+        entry: SchemaEntry with validated name and table fields.
+
+    Returns:
+        Row count, or 0 on error.
+    """
+    from psycopg import sql as psql
+    from .schema import _get_pool
+
+    query = psql.SQL(
+        "SELECT count(*) AS cnt FROM {schema}.{table} WHERE status = 'active'"
+    ).format(
+        schema=psql.Identifier(entry.name),
+        table=psql.Identifier(entry.table),
+    )
+
+    pool = _get_pool()
+    with pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            row = cur.fetchone()
+            return row[0] if row else 0
 
 
 def _cross_schema_search(query_embedding, fetch_count: int,
@@ -513,14 +567,7 @@ def _cross_schema_search(query_embedding, fetch_count: int,
             elif entry.kind == SchemaKind.OBSIDIAN:
                 schema_rows = _query_obsidian_schema(pool, query_embedding, fetch_count, filter_dict, user)
             elif entry.kind == SchemaKind.REMOTE:
-                # D1 (defence-in-depth): re-validate schema name before f-string use
-                if not is_valid_schema_name(entry.name):
-                    import logging as _logging
-                    _logging.getLogger("jarvis-core").error(
-                        "Invalid schema name in registry (skipping): %r", entry.name
-                    )
-                    continue
-                schema_rows = _query_remote_schema(pool, query_embedding, fetch_count, filter_dict, user, entry.name)
+                schema_rows = _query_remote_schema(pool, query_embedding, fetch_count, filter_dict, user, entry)
             else:
                 continue
             rows.extend(schema_rows)
@@ -576,16 +623,13 @@ def query_vault(
         return {"success": False, "error": f"Database unavailable: {e}"}
 
     # D4: Add remote schema counts (best-effort — failures don't abort the query)
-    from .schema_registry import get_searchable_schemas, SchemaKind, is_valid_schema_name
+    from .schema_registry import get_searchable_schemas, SchemaKind, is_valid_pg_identifier
     for _re in get_searchable_schemas(kind=SchemaKind.REMOTE):
-        if not is_valid_schema_name(_re.name):
+        if not is_valid_pg_identifier(_re.name) or not is_valid_pg_identifier(_re.table):
             continue
         try:
-            _rc = execute_query(
-                f"SELECT count(*) AS cnt FROM {_re.name}.memories WHERE status = 'active'",
-                fetch="one",
-            )
-            total += _rc["cnt"] if _rc else 0
+            _rc = _remote_count(_re)
+            total += _rc
         except Exception:
             pass
 
@@ -888,16 +932,12 @@ def semantic_context(
         return {"matches": [], "query_ms": 0, "total_searched": 0}
 
     # D4: Add remote schema counts (best-effort)
-    from .schema_registry import get_searchable_schemas as _gss, SchemaKind as _SK, is_valid_schema_name as _vsn
+    from .schema_registry import get_searchable_schemas as _gss, SchemaKind as _SK, is_valid_pg_identifier as _vpi
     for _re in _gss(kind=_SK.REMOTE):
-        if not _vsn(_re.name):
+        if not _vpi(_re.name) or not _vpi(_re.table):
             continue
         try:
-            _rc = execute_query(
-                f"SELECT count(*) AS cnt FROM {_re.name}.memories WHERE status = 'active'",
-                fetch="one",
-            )
-            total += _rc["cnt"] if _rc else 0
+            total += _remote_count(_re)
         except Exception:
             pass
 
@@ -1328,20 +1368,16 @@ def collection_stats(sample_size: int = 5, detailed: bool = False) -> dict:
     }
 
     # Remote schema stats (Step 8: provenance + freshness)
-    from .schema_registry import get_searchable_schemas as _gss_cs, SchemaKind as _SK_cs, is_valid_schema_name as _vsn_cs
+    from .schema_registry import get_searchable_schemas as _gss_cs, SchemaKind as _SK_cs, is_valid_pg_identifier as _vpi_cs
     from .schema import get_meta as _get_meta_cs
     remote_entries = _gss_cs(kind=_SK_cs.REMOTE)
     if remote_entries:
         remote_stats = []
         for entry in remote_entries:
-            if not _vsn_cs(entry.name):
+            if not _vpi_cs(entry.name) or not _vpi_cs(entry.table):
                 continue
             try:
-                count_result = execute_query(
-                    f"SELECT count(*) AS cnt FROM {entry.name}.memories WHERE status = 'active'",
-                    fetch="one",
-                )
-                count = count_result["cnt"] if count_result else 0
+                count = _remote_count(entry)
                 pull_meta = _get_meta_cs(f"pull_sync_ts:{entry.remote_name}")
                 last_pull = pull_meta.get("timestamp") if pull_meta else None
                 remote_stats.append({

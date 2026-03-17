@@ -51,25 +51,35 @@ class SchemaEntry:
 _registry: list[SchemaEntry] = []
 
 
-# Valid schema name pattern (alphanumeric + underscore, no dots or special chars)
-_VALID_SCHEMA_RE = None
+# Valid PG identifier pattern (alphanumeric + underscore, no dots or special chars)
+_VALID_PG_IDENT_RE = None
 
 
-def is_valid_schema_name(name: str) -> bool:
-    """Check if a schema name is valid for PostgreSQL.
+def is_valid_pg_identifier(name: str) -> bool:
+    """Check if a name is a valid PostgreSQL identifier.
 
     Must be alphanumeric + underscore, 1-63 chars, not start with pg_.
+    Used for both schema names and table names.
     """
-    global _VALID_SCHEMA_RE
-    if _VALID_SCHEMA_RE is None:
+    global _VALID_PG_IDENT_RE
+    if _VALID_PG_IDENT_RE is None:
         import re
-        _VALID_SCHEMA_RE = re.compile(r'^[a-z][a-z0-9_]{0,62}$')
+        _VALID_PG_IDENT_RE = re.compile(r'^[a-z][a-z0-9_]{0,62}$')
 
-    if not _VALID_SCHEMA_RE.match(name):
+    if not _VALID_PG_IDENT_RE.match(name):
         return False
     if name.startswith("pg_"):
         return False
     return True
+
+
+# Backward-compatible alias
+def is_valid_schema_name(name: str) -> bool:
+    """Check if a schema name is valid for PostgreSQL.
+
+    Alias for is_valid_pg_identifier — kept for backward compatibility.
+    """
+    return is_valid_pg_identifier(name)
 
 
 def get_searchable_schemas(kind: Optional[SchemaKind] = None) -> list[SchemaEntry]:

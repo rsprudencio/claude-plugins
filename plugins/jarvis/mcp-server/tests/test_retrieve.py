@@ -1,6 +1,7 @@
 """Tests for unified retrieve module — routing reads/searches."""
 
 import pytest
+from unittest.mock import patch
 from tools.retrieve import retrieve
 from tools.content import content_write
 
@@ -101,6 +102,57 @@ class TestRetrieveById:
     def test_nonexistent_content_id(self, mock_config):
         """Reading nonexistent content doc returns found=False."""
         result = retrieve(id="obs::nonexistent")
+        assert result["success"]
+        assert not result["found"]
+
+    def test_core_id_falls_back_to_remote_schemas(self, mock_config):
+        """obs:: ID not found locally falls back to remote schemas."""
+        remote_doc = {
+            "success": True,
+            "found": True,
+            "id": "obs::9999999999999",
+            "content": "Remote observation from another Jarvis instance",
+            "category": "observation",
+            "scope": "global",
+            "project": None,
+            "source": "auto-extract",
+            "importance_score": 0.7,
+            "retrieval_count": 3.0,
+            "status": "active",
+            "metadata": {"tags": ["security"]},
+            "schema": "remote_personio",
+            "source_remote": "remote_personio",
+        }
+
+        with patch("tools.retrieve._read_from_remote_schemas", return_value=remote_doc):
+            result = retrieve(id="obs::9999999999999")
+
+        assert result["success"]
+        assert result["found"]
+        assert result["content"] == "Remote observation from another Jarvis instance"
+        assert result["source_remote"] == "remote_personio"
+
+    def test_local_id_takes_precedence_over_remote(self, mock_config):
+        """When doc exists locally, remote fallback is NOT called."""
+        write_result = content_write(
+            content="Local observation",
+            content_type="observation",
+        )
+        doc_id = write_result["id"]
+
+        with patch("tools.retrieve._read_from_remote_schemas") as mock_remote:
+            result = retrieve(id=doc_id)
+
+        assert result["success"]
+        assert result["found"]
+        assert result["content"] == "Local observation"
+        mock_remote.assert_not_called()
+
+    def test_remote_fallback_returns_not_found_when_nowhere(self, mock_config):
+        """When not found locally or remotely, returns found=False."""
+        with patch("tools.retrieve._read_from_remote_schemas", return_value=None):
+            result = retrieve(id="obs::nonexistent_anywhere")
+
         assert result["success"]
         assert not result["found"]
 
