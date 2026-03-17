@@ -294,8 +294,12 @@ def test_observation_project_scope_no_path_no_project(monkeypatch):
     assert "project_dir" not in meta
 
 
-def test_observation_project_scope_downgraded_when_files_outside_project(monkeypatch):
-    """scope='project' downgrades to 'global' when relevant_files are outside project_path."""
+def test_observation_project_scope_kept_when_files_outside_project(monkeypatch):
+    """scope='project' is preserved even when relevant_files are outside project_path.
+
+    Since v3.1.4, scope is trusted from the extraction pipeline — no
+    file-path-based downgrade at ingest time.
+    """
     monkeypatch.setattr(
         hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
     )
@@ -320,9 +324,9 @@ def test_observation_project_scope_downgraded_when_files_outside_project(monkeyp
     assert result["success"] is True
     assert len(calls) == 1
     meta = calls[0]["extra_metadata"]
-    # Should be downgraded to global — files are not in the project
-    assert meta.get("scope") == "global"
-    assert "project_dir" not in meta
+    # Scope stays project — trusted from extraction pipeline
+    assert meta.get("scope") == "project"
+    assert meta.get("project_dir") == "personio-framework"
 
 
 def test_observation_project_scope_kept_when_files_inside_project(monkeypatch):

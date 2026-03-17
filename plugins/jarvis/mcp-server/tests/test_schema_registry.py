@@ -18,10 +18,14 @@ from tools.namespaces import SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 
 
 @pytest.fixture(autouse=True)
-def clean_registry():
-    """Reset registry before each test."""
+def clean_registry(monkeypatch):
+    """Reset registry and stub remote discovery before each test."""
     import tools.schema_registry as mod
     mod._registry = []
+    # Stub auto-discovery so unit tests don't hit live PG
+    monkeypatch.setattr(mod, "_discover_remote_schemas", lambda: [])
+    monkeypatch.setattr(mod, "_get_enabled_remote_names", lambda: set())
+    monkeypatch.setattr(mod, "_get_local_embedding_model", lambda: None)
     yield
     mod._registry = []
 
@@ -110,8 +114,37 @@ class TestRebuildRegistry:
         rebuild_registry()
         register_remote("remote_1", "r1")
         assert len(get_registry()) == 3
-        rebuild_registry()  # Should reset
+        rebuild_registry()  # Should reset (discovery stubbed to empty)
         assert len(get_registry()) == 2
+
+    def test_rebuild_auto_discovers_remotes(self, monkeypatch):
+        """rebuild_registry() includes auto-discovered remote schemas."""
+        import tools.schema_registry as mod
+        monkeypatch.setattr(mod, "_discover_remote_schemas", lambda: ["remote_personio"])
+        monkeypatch.setattr(mod, "_get_enabled_remote_names", lambda: set())  # empty = register all
+        monkeypatch.setattr(mod, "_get_local_embedding_model", lambda: "test-model")
+
+        result = rebuild_registry()
+        assert len(result) == 3  # local + obsidian + remote_personio
+        remote = [e for e in result if e.kind == SchemaKind.REMOTE]
+        assert len(remote) == 1
+        assert remote[0].name == "remote_personio"
+        assert remote[0].remote_name == "personio"
+        assert remote[0].metadata == {"embedding_model": "test-model"}
+        assert remote[0].searchable is True
+        assert remote[0].writable is False
+
+    def test_rebuild_skips_disabled_remotes(self, monkeypatch):
+        """rebuild_registry() prunes remotes not in enabled config."""
+        import tools.schema_registry as mod
+        monkeypatch.setattr(mod, "_discover_remote_schemas", lambda: ["remote_a", "remote_b"])
+        monkeypatch.setattr(mod, "_get_enabled_remote_names", lambda: {"a"})  # only 'a' enabled
+        monkeypatch.setattr(mod, "_get_local_embedding_model", lambda: None)
+
+        result = rebuild_registry()
+        assert len(result) == 3  # local + obsidian + remote_a (remote_b pruned)
+        remote_names = [e.name for e in result if e.kind == SchemaKind.REMOTE]
+        assert remote_names == ["remote_a"]
 
 
 class TestGetSearchableSchemas:

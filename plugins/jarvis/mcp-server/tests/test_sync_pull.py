@@ -97,8 +97,9 @@ class TestEnsureLocalMirrorSchema:
 
         with patch("tools.sync_pull._get_pool", return_value=mock_pool), \
              patch("tools.sync_pull.get_embedding_config",
-                   return_value={"dimensions": 384}):
-            _ensure_local_mirror_schema("remote_work")
+                   return_value={"dimensions": 384, "model": "test-model"}), \
+             patch("tools.schema_registry.register_remote", return_value=MagicMock()):
+            _ensure_local_mirror_schema("remote_work", "work")
 
         # DDL was executed
         mock_conn.execute.assert_called_once()
@@ -115,9 +116,10 @@ class TestEnsureLocalMirrorSchema:
 
         with patch("tools.sync_pull._get_pool", return_value=mock_pool), \
              patch("tools.sync_pull.get_embedding_config",
-                   return_value={"dimensions": 384}):
-            _ensure_local_mirror_schema("cached_schema")
-            _ensure_local_mirror_schema("cached_schema")
+                   return_value={"dimensions": 384, "model": "test-model"}), \
+             patch("tools.schema_registry.register_remote", return_value=MagicMock()):
+            _ensure_local_mirror_schema("cached_schema", "cached")
+            _ensure_local_mirror_schema("cached_schema", "cached")
 
         # Only one DDL call despite two invocations
         assert mock_conn.execute.call_count == 1
@@ -342,7 +344,7 @@ class TestInitialPull:
              patch("tools.sync_pull._get_local_ids", return_value=set()):
             initial_pull("test-remote", "remote_test")
 
-        mock_ensure.assert_called_once_with("remote_test")
+        mock_ensure.assert_called_once_with("remote_test", "test-remote")
 
     def test_uses_composed_sql(self):
         """Verify that composed SQL objects (not f-strings) are used."""
