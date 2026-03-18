@@ -250,6 +250,8 @@ def _list_content(
             session_id=session_id,
             include_content=include_content,
             filter=filter,
+            scope=scope,
+            project=project,
         )
     elif list_type == "memory":
         from .memory_crud import memory_list

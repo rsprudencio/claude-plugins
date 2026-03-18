@@ -250,7 +250,9 @@ TOOLS = [
                     "description": "Metadata filter for query and list modes. "
                         "Known keys: type, importance, tags, directory. "
                         "Any other key filters by metadata JSONB field "
-                        "(e.g. project_dir, git_branch, session_id, workstream).",
+                        "(e.g. git_branch, workstream). "
+                        "Note: project and scope have dedicated columns — use "
+                        "the top-level project/scope params instead of filter.",
                 },
                 "include_metadata": {
                     "type": "boolean",

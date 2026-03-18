@@ -980,36 +980,38 @@ class TestContentColumnSchema:
 class TestContentListGenericFilter:
     """Test content_list with generic metadata filter parameter."""
 
-    def test_filter_by_project_dir(self, mock_config):
-        """Filter by project_dir returns only matching docs."""
+    def test_filter_by_workstream(self, mock_config):
+        """Filter by workstream (generic JSONB key) returns only matching docs."""
         content_write(
-            content="Framework obs",
-            content_type="observation",
-            extra_metadata={"project_dir": "personio-framework"},
+            content="Vuln mgmt work",
+            content_type="learning",
+            extra_metadata={"workstream": "vuln-mgmt"},
         )
         content_write(
-            content="Portal obs",
-            content_type="observation",
-            extra_metadata={"project_dir": "developer-portal"},
+            content="Infra work",
+            content_type="pattern",
+            name="infra-pat",
+            extra_metadata={"workstream": "infrastructure"},
         )
 
-        result = content_list(filter={"project_dir": "personio-framework"})
+        result = content_list(filter={"workstream": "vuln-mgmt"})
         assert result["success"]
         assert result["total"] >= 1
         for doc in result["documents"]:
             meta = doc.get("metadata", {})
-            assert meta.get("project_dir") == "personio-framework"
+            assert meta.get("workstream") == "vuln-mgmt"
 
     def test_filter_by_git_branch(self, mock_config):
         """Filter by git_branch works via generic JSONB."""
         content_write(
             content="Main branch work",
-            content_type="observation",
+            content_type="learning",
             extra_metadata={"git_branch": "main"},
         )
         content_write(
             content="Feature branch work",
-            content_type="observation",
+            content_type="pattern",
+            name="feature-pat",
             extra_metadata={"git_branch": "feature-x"},
         )
 
@@ -1025,32 +1027,32 @@ class TestContentListGenericFilter:
         content_write(
             content="Observation in proj-a",
             content_type="observation",
-            extra_metadata={"project_dir": "proj-a"},
+            extra_metadata={"workstream": "vuln-mgmt"},
         )
         content_write(
             content="Worklog in proj-a",
             content_type="worklog",
-            extra_metadata={"project_dir": "proj-a"},
+            extra_metadata={"workstream": "vuln-mgmt"},
         )
 
         result = content_list(
             content_type="observation",
-            filter={"project_dir": "proj-a"},
+            filter={"workstream": "vuln-mgmt"},
         )
         assert result["success"]
         for doc in result["documents"]:
             assert doc["category"] == "observation"
-            assert doc["metadata"].get("project_dir") == "proj-a"
+            assert doc["metadata"].get("workstream") == "vuln-mgmt"
 
     def test_filter_no_match(self, mock_config):
         """Filter with non-existent value returns empty."""
         content_write(
             content="Some content",
             content_type="observation",
-            extra_metadata={"project_dir": "real-project"},
+            extra_metadata={"workstream": "real-stream"},
         )
 
-        result = content_list(filter={"project_dir": "nonexistent"})
+        result = content_list(filter={"workstream": "nonexistent"})
         assert result["success"]
         assert result["total"] == 0
 
@@ -1069,3 +1071,113 @@ class TestContentListGenericFilter:
         result = content_list(filter=None)
         assert result["success"]
         assert result["total"] >= 1
+
+
+class TestContentListScopeProject:
+    """Tests for scope and project column filtering in content_list."""
+
+    def test_filter_by_scope(self, mock_config):
+        """Filter by scope returns only matching docs."""
+        content_write(
+            content="Global obs",
+            content_type="observation",
+        )
+        content_write(
+            content="Project obs",
+            content_type="observation",
+            extra_metadata={"scope": "project", "project": "my-app"},
+        )
+
+        result = content_list(scope="project")
+        assert result["success"]
+        for doc in result["documents"]:
+            assert doc["scope"] == "project"
+
+    def test_filter_by_project(self, mock_config):
+        """Filter by project returns only matching docs."""
+        content_write(
+            content="App A obs",
+            content_type="learning",
+            extra_metadata={"scope": "project", "project": "app-a"},
+        )
+        content_write(
+            content="App B obs",
+            content_type="pattern",
+            name="proj-b-pat",
+            extra_metadata={"scope": "project", "project": "app-b"},
+        )
+
+        result = content_list(project="app-a")
+        assert result["success"]
+        assert result["total"] >= 1
+        # No app-b in results
+        ids = {d["id"] for d in result["documents"]}
+        result_b = content_list(project="app-b")
+        ids_b = {d["id"] for d in result_b["documents"]}
+        assert not ids.intersection(ids_b)
+
+    def test_filter_scope_and_project_combined(self, mock_config):
+        """Scope + project narrows correctly."""
+        content_write(
+            content="Scoped to proj",
+            content_type="learning",
+            extra_metadata={"scope": "project", "project": "target"},
+        )
+        content_write(
+            content="Global",
+            content_type="pattern",
+            name="global-pat",
+        )
+
+        result = content_list(scope="project", project="target")
+        assert result["success"]
+        assert result["total"] >= 1
+        for doc in result["documents"]:
+            assert doc["scope"] == "project"
+
+    def test_filter_project_no_match(self, mock_config):
+        """Non-existent project returns empty."""
+        content_write(content="Some obs", content_type="observation")
+
+        result = content_list(project="nonexistent-xyz")
+        assert result["success"]
+        assert result["total"] == 0
+
+    def test_filter_scope_none_no_effect(self, mock_config):
+        """None scope doesn't filter."""
+        content_write(content="Test", content_type="observation")
+
+        result = content_list(scope=None)
+        assert result["success"]
+        assert result["total"] >= 1
+
+    def test_filter_project_with_generic_filter(self, mock_config):
+        """Project column filter + generic JSONB filter work together."""
+        content_write(
+            content="Target",
+            content_type="learning",
+            extra_metadata={
+                "scope": "project",
+                "project": "my-proj",
+                "git_branch": "main",
+            },
+        )
+        content_write(
+            content="Wrong branch",
+            content_type="pattern",
+            name="wrong-branch-pat",
+            extra_metadata={
+                "scope": "project",
+                "project": "my-proj",
+                "git_branch": "develop",
+            },
+        )
+
+        result = content_list(
+            project="my-proj",
+            filter={"git_branch": "main"},
+        )
+        assert result["success"]
+        assert result["total"] >= 1
+        for doc in result["documents"]:
+            assert doc["metadata"].get("git_branch") == "main"

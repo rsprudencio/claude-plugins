@@ -659,15 +659,15 @@ class TestBuildCoreFilterGeneric:
 
     def test_unknown_key_produces_jsonb_condition(self):
         """Unknown key falls back to metadata->>key = value."""
-        conds, params = _build_core_filter({"project_dir": "my-project"})
+        conds, params = _build_core_filter({"workstream": "vuln-mgmt"})
         assert any("metadata->>%s = %s" in c for c in conds)
-        assert "project_dir" in params
-        assert "my-project" in params
+        assert "workstream" in params
+        assert "vuln-mgmt" in params
 
     def test_multiple_unknown_keys(self):
         """Multiple unknown keys produce multiple JSONB conditions."""
         conds, params = _build_core_filter({
-            "project_dir": "proj-a",
+            "workstream": "vuln-mgmt",
             "git_branch": "main",
         })
         jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
@@ -677,7 +677,7 @@ class TestBuildCoreFilterGeneric:
         """Known keys (type, importance, tags) use column conditions."""
         conds, params = _build_core_filter({
             "type": "observation",
-            "project_dir": "proj-a",
+            "workstream": "vuln-mgmt",
         })
         assert "category = %s" in conds
         jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
@@ -686,7 +686,7 @@ class TestBuildCoreFilterGeneric:
     def test_empty_values_skipped(self):
         """Empty/None values in filter dict are ignored."""
         conds, params = _build_core_filter({
-            "project_dir": "",
+            "workstream": "",
             "git_branch": None,
         })
         jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
@@ -698,8 +698,8 @@ class TestBuildCoreFilterGeneric:
             "type": "observation",
             "importance": 0.7,
             "tags": "security",
-            "project_dir": "proj-a",
             "workstream": "vuln-mgmt",
+            "git_branch": "main",
         })
         assert "category = %s" in conds
         assert "importance_score >= %s" in conds
@@ -743,29 +743,30 @@ class TestBuildVaultFilterGeneric:
 class TestQueryVaultGenericFilter:
     """Integration tests for query_vault with generic metadata filters."""
 
-    def test_filter_by_project_dir(self, mock_config):
-        """Filter by project_dir narrows results."""
+    def test_filter_by_project(self, mock_config):
+        """Filter by project narrows results."""
         from tools.content import content_write
 
         content_write(
             content="Security finding in framework",
-            content_type="observation",
-            extra_metadata={"project_dir": "personio-framework"},
+            content_type="learning",
+            extra_metadata={"scope": "project", "project": "personio-framework"},
         )
         content_write(
             content="Security finding in portal",
-            content_type="observation",
-            extra_metadata={"project_dir": "developer-portal"},
+            content_type="pattern",
+            name="portal-finding",
+            extra_metadata={"scope": "project", "project": "developer-portal"},
         )
 
         result = query_vault(
             "security finding",
-            filter={"project_dir": "personio-framework"},
+            filter={"project": "personio-framework"},
         )
         assert result["success"]
         for r in result["results"]:
             if r["schema"] == "local":
-                assert r.get("id", "").startswith("obs::")
+                assert r.get("id", "").startswith("learning::")
 
     def test_filter_by_session_id(self, mock_config):
         """Filter by session_id via generic JSONB filter."""

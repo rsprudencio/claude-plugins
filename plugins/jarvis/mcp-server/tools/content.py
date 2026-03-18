@@ -184,8 +184,6 @@ def content_write(
             scope = extra_metadata["scope"]
         if extra_metadata.get("project"):
             project = extra_metadata["project"]
-        if extra_metadata.get("project_dir"):
-            project = project or extra_metadata["project_dir"]
 
     # Guard: scope='project' requires a non-null project name (chk_scope_project)
     if scope == "project" and not project:
@@ -424,6 +422,8 @@ def content_list(
     session_id: Optional[str] = None,
     include_content: bool = True,
     filter: Optional[dict] = None,
+    scope: Optional[str] = None,
+    project: Optional[str] = None,
 ) -> dict:
     """List content from local.memories with column-based filtering.
 
@@ -437,6 +437,8 @@ def content_list(
         include_content: Include document text in results (default True)
         filter: Generic metadata filter dict. Any key becomes a JSONB
             equality check (metadata->>'key' = value).
+        scope: Filter by scope ('global' or 'project')
+        project: Filter by project name (dedicated column)
 
     Returns:
         Result dict with success, documents, total
@@ -468,18 +470,28 @@ def content_list(
             conditions.append("source = %s")
             params.append(source)
 
-        if session_id:
-            conditions.append("metadata->>'session_id' = %s")
-            params.append(session_id)
-
         if min_importance is not None:
             conditions.append("importance_score >= %s")
             params.append(min_importance)
 
+        if scope:
+            conditions.append("scope = %s")
+            params.append(scope)
+
+        if project:
+            conditions.append("project = %s")
+            params.append(project)
+
+        # JSONB conditions after column conditions (mock cursor parses
+        # column %s params before JSONB %s params)
+        if session_id:
+            conditions.append("metadata->>'session_id' = %s")
+            params.append(session_id)
+
         # Generic JSONB fallback from filter dict
         if filter:
             # Keys already handled by typed params above
-            _KNOWN_LIST_KEYS = {"type", "importance", "tags", "source", "session_id"}
+            _KNOWN_LIST_KEYS = {"type", "importance", "tags", "source", "session_id", "scope", "project"}
             for key, val in filter.items():
                 if key in _KNOWN_LIST_KEYS or not val:
                     continue

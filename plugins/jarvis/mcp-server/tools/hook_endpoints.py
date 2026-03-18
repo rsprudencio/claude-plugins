@@ -124,15 +124,15 @@ def _extract_workstreams(limit: int) -> list[str]:
     return sorted(workstreams)
 
 
-def _build_common_metadata(context: dict, include_project_dir: bool = False) -> dict:
+def _build_common_metadata(context: dict, include_project: bool = False) -> dict:
     """Build shared metadata fields for observation/worklog writes."""
     meta: dict[str, str] = {}
 
     project_path = _safe_str(context.get("project_path"))
     if project_path:
         meta["project_path"] = project_path
-        if include_project_dir:
-            meta["project_dir"] = os.path.basename(project_path)
+        if include_project:
+            meta["project"] = os.path.basename(project_path)
 
     git_branch = _safe_str(context.get("git_branch"))
     if git_branch:
@@ -290,7 +290,7 @@ def ingest_auto_extract(payload: dict) -> dict:
             observation_results.append({"status": "duplicate", "id": "", "error": ""})
             continue
 
-        metadata = _build_common_metadata(context, include_project_dir=False)
+        metadata = _build_common_metadata(context, include_project=False)
         scope = _safe_str(raw.get("scope"))
         if scope in ("project", "global"):
             metadata["scope"] = scope
@@ -302,7 +302,7 @@ def ingest_auto_extract(payload: dict) -> dict:
                     project_path = metadata.get("project_path", "")
                     project_name = os.path.basename(project_path) if project_path else ""
                 if project_name:
-                    metadata["project_dir"] = project_name
+                    metadata["project"] = project_name
 
         ingest_event_id = _safe_str(raw.get("ingest_event_id"))
         if ingest_event_id:
@@ -340,7 +340,7 @@ def ingest_auto_extract(payload: dict) -> dict:
             if _is_duplicate_worklog(task_summary, session_id, worklog_threshold):
                 worklog_result = {"status": "duplicate", "id": "", "error": ""}
             else:
-                metadata = _build_common_metadata(context, include_project_dir=True)
+                metadata = _build_common_metadata(context, include_project=True)
 
                 workstream = _safe_str(worklog_payload.get("workstream")) or "misc"
                 activity_type = (

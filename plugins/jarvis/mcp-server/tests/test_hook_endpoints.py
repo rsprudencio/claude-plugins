@@ -226,7 +226,7 @@ def _make_obs_payload(scope, project_path=None, raw_project=None, relevant_files
 
 
 def test_observation_project_scope_uses_project_path(monkeypatch):
-    """scope='project' with no raw.project → project_dir set from context project_path basename."""
+    """scope='project' with no raw.project → project set from context project_path basename."""
     monkeypatch.setattr(
         hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
     )
@@ -244,7 +244,7 @@ def test_observation_project_scope_uses_project_path(monkeypatch):
     assert len(calls) == 1
     meta = calls[0]["extra_metadata"]
     assert meta.get("scope") == "project"
-    assert meta.get("project_dir") == "myrepo"
+    assert meta.get("project") == "myrepo"
 
 
 def test_observation_project_scope_prefers_raw_project(monkeypatch):
@@ -269,11 +269,11 @@ def test_observation_project_scope_prefers_raw_project(monkeypatch):
     assert result["success"] is True
     assert len(calls) == 1
     meta = calls[0]["extra_metadata"]
-    assert meta.get("project_dir") == "explicit-project-name"
+    assert meta.get("project") == "explicit-project-name"
 
 
 def test_observation_project_scope_no_path_no_project(monkeypatch):
-    """scope='project' with no project_path and no raw.project → project_dir not set."""
+    """scope='project' with no project_path and no raw.project → project not set."""
     monkeypatch.setattr(
         hook_endpoints, "query_vault", lambda **kwargs: {"success": True, "results": []}
     )
@@ -291,7 +291,7 @@ def test_observation_project_scope_no_path_no_project(monkeypatch):
     assert len(calls) == 1
     meta = calls[0]["extra_metadata"]
     assert meta.get("scope") == "project"
-    assert "project_dir" not in meta
+    assert "project" not in meta
 
 
 def test_observation_project_scope_kept_when_files_outside_project(monkeypatch):
@@ -326,7 +326,7 @@ def test_observation_project_scope_kept_when_files_outside_project(monkeypatch):
     meta = calls[0]["extra_metadata"]
     # Scope stays project — trusted from extraction pipeline
     assert meta.get("scope") == "project"
-    assert meta.get("project_dir") == "personio-framework"
+    assert meta.get("project") == "personio-framework"
 
 
 def test_observation_project_scope_kept_when_files_inside_project(monkeypatch):
@@ -355,4 +355,4 @@ def test_observation_project_scope_kept_when_files_inside_project(monkeypatch):
     assert len(calls) == 1
     meta = calls[0]["extra_metadata"]
     assert meta.get("scope") == "project"
-    assert meta.get("project_dir") == "personio-framework"
+    assert meta.get("project") == "personio-framework"

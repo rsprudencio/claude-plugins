@@ -232,14 +232,12 @@ class TestRetrieveList:
 
     def test_session_id_filter(self, mock_config):
         """list_type='content' with session_id filters results."""
-        import time
-
         content_write(
-            content="Session A", content_type="observation", session_id="sess-aaa"
+            content="Session A", content_type="learning", session_id="sess-aaa"
         )
-        time.sleep(0.01)
         content_write(
-            content="Session B", content_type="observation", session_id="sess-bbb"
+            content="Session B", content_type="pattern", name="sess-b-pat",
+            session_id="sess-bbb",
         )
 
         result = retrieve(
@@ -253,8 +251,8 @@ class TestRetrieveList:
 
     def test_sort_by_passthrough(self, mock_config):
         """sort_by parameter passes through to content_list."""
-        content_write(content="Low", content_type="observation", importance_score=0.3)
-        content_write(content="High", content_type="observation", importance_score=0.9)
+        content_write(content="Low", content_type="learning", importance_score=0.3)
+        content_write(content="High", content_type="pattern", name="high-pat", importance_score=0.9)
 
         result = retrieve(list_type="content", sort_by="importance_asc")
         assert result["success"]

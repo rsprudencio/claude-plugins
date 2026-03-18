@@ -159,7 +159,7 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
 
 
 # Keys that map to dedicated columns — skip in generic JSONB loop
-_KNOWN_CORE_KEYS = {"type", "importance", "tags"}
+_KNOWN_CORE_KEYS = {"type", "importance", "tags", "scope", "project"}
 _KNOWN_VAULT_KEYS = {"type", "importance", "tags", "directory"}
 
 
@@ -205,6 +205,14 @@ def _build_core_filter(
         tag = filter_dict["tags"].split(",")[0].strip()
         conditions.append("metadata->>'tags' LIKE %s")
         params.append(f"%{tag}%")
+
+    if "scope" in filter_dict and filter_dict["scope"]:
+        conditions.append("scope = %s")
+        params.append(filter_dict["scope"])
+
+    if "project" in filter_dict and filter_dict["project"]:
+        conditions.append("project = %s")
+        params.append(filter_dict["project"])
 
     # Generic JSONB fallback: any unknown key → metadata->>'key' = value
     for key, val in filter_dict.items():
