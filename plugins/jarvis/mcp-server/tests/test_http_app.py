@@ -142,7 +142,7 @@ def test_hook_prompt_context_malformed_body(client):
     """Malformed JSON body returns 400."""
     response = client.post(
         "/hook/prompt-context",
-        data="{not-json",
+        content="{not-json",
         headers={"content-type": "application/json"},
     )
     assert response.status_code == 400
