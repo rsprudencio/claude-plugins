@@ -1,4 +1,4 @@
-"""Jarvis Admin — read-only web UI for Jarvis memory stores and sync status.
+"""Jarvis Admin — web UI for Jarvis memory stores and sync status.
 
 Standalone FastAPI app. Run with:
     cd apps/memory-explorer
@@ -7,6 +7,8 @@ Standalone FastAPI app. Run with:
 Safety:
     - Localhost-only bind (enforced by uvicorn --host 127.0.0.1)
     - Read-only sessions (SET TRANSACTION READ ONLY per query)
+    - Write path: DELETE /api/memories/{id} performs soft-delete on local.memories
+      (gated by jarvis_common.auth, same as admin CRUD endpoints)
     - sql.Identifier() for all dynamic schema/table names
     - Source whitelist (only sources from config are accepted)
     - DSN redaction in logs via redact_dsn()
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 import psycopg_pool
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pgvector.psycopg import register_vector
 from psycopg import sql
@@ -44,7 +46,8 @@ from tools.embedding import get_embedding_service  # noqa: E402
 from tools.remote_connection import get_remote_pool  # noqa: E402
 from jarvis_common.sync_validation import redact_dsn  # noqa: E402
 from jarvis_common.routing import evaluate_routing, parse_routing_rule  # noqa: E402
-from app_admin import admin_router  # noqa: E402
+from app_admin import admin_router, require_auth  # noqa: E402
+from tools.sync_queue import enqueue_sync  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("memory-explorer")
@@ -214,6 +217,7 @@ async def list_sources():
     for s in _sources.values():
         item = {k: v for k, v in s.items() if k != "remote_name"}
         item["sort_options"] = _sort_options_for(s)
+        item["deletable"] = (s["type"] == "local" and s["schema"] == "local")
         out.append(item)
     return out
 
@@ -369,6 +373,11 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
         sch = sql.Identifier(schema)
         tbl = sql.Identifier(table)
         has_rc = src.get("has_retrieval_count", False)
+
+        # Exclude soft-deleted items unless user explicitly filters by status
+        _has_status_filter = "status" in req.filters
+        _base_where = sql.SQL("TRUE") if _has_status_filter else sql.SQL("status != 'deleted'")
+
         with _local_pool.connection() as conn:
             conn.execute("SET TRANSACTION READ ONLY")
             conn.execute("SET statement_timeout = '10000'")
@@ -378,10 +387,10 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
             if req.mode == "text":
                 q = req.query.strip()
                 if not q:
-                    where = sql.SQL("TRUE")
+                    where = _base_where
                     wparams: list = []
                 else:
-                    where = sql.SQL("document ILIKE %s")
+                    where = sql.SQL("{} AND document ILIKE %s").format(_base_where)
                     wparams = [f"%{q}%"]
                 total = _count_where(conn, schema, table, where, wparams)
                 rows = conn.execute(
@@ -394,7 +403,7 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
 
             elif req.mode == "semantic":
                 vec = _vec_str(req.query)
-                total = _count_where(conn, schema, table, sql.SQL("TRUE"), [])
+                total = _count_where(conn, schema, table, _base_where, [])
                 use_sim = req.sort_by in ("similarity", "date_desc")
                 sem_order = sql.SQL("embedding <=> %s::vector") if use_sim else order
                 sem_params = [vec] if use_sim else []
@@ -402,13 +411,15 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
                     sql.SQL(
                         "SELECT " + _local_sem_cols(has_rc)
                         + " FROM {}.{}"
-                        " ORDER BY {} LIMIT %s OFFSET %s"
-                    ).format(sch, tbl, sem_order),
+                        " WHERE {} ORDER BY {} LIMIT %s OFFSET %s"
+                    ).format(sch, tbl, _base_where, sem_order),
                     [vec] + sem_params + [req.page_size, offset],
                 ).fetchall()
 
             else:  # metadata
                 conds, params = _build_conds(req.filters, allowed_filters)
+                if not _has_status_filter:
+                    conds.append(sql.SQL("status != 'deleted'"))
                 where_sql = sql.SQL(" AND ").join(conds)
                 total = _count_where(conn, schema, table, where_sql, list(params))
                 rows = conn.execute(
@@ -551,6 +562,59 @@ def _fetch_content_sync(src: dict, item_id: str) -> Optional[dict]:
                 return None
             cols = [desc.name for desc in cur.description]
             return _row_to_detail(cols, row)
+
+
+def _delete_sync(item_id: str) -> dict:
+    """Soft-delete a memory from local.memories and enqueue remote sync."""
+    with _local_pool.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE local.memories
+                   SET status = 'deleted', deleted_at = now(), updated_at = now()
+                   WHERE id = %s AND status != 'deleted'
+                   RETURNING id, synced_to""",
+                [item_id],
+            )
+            row = cur.fetchone()
+            if row is None:
+                conn.commit()
+                return {"deleted": False, "id": item_id}
+
+            # Propagate deletion to synced remotes
+            synced_remotes = row[1]
+            if synced_remotes:
+                try:
+                    enqueue_sync(cur, item_id, synced_remotes)
+                except Exception as e:
+                    logger.debug("Delete sync propagation skipped: %s", e)
+
+            conn.commit()
+            return {"deleted": True, "id": item_id}
+
+
+@app.delete("/api/memories/{item_id}")
+async def delete_memory(
+    item_id: str,
+    source: str = Query(...),
+    _user: str = Depends(require_auth),
+):
+    """Soft-delete a memory from local.memories."""
+    if source not in _sources:
+        raise HTTPException(404, "Source not found")
+    src = _sources[source]
+    if not (src["type"] == "local" and src["schema"] == "local"):
+        raise HTTPException(403, "Deletion only supported for local memories")
+
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(None, _delete_sync, item_id)
+    except Exception as e:
+        logger.exception("Delete error")
+        raise HTTPException(500, _safe_err(e))
+
+    if not result["deleted"]:
+        raise HTTPException(404, "Memory not found or already deleted")
+    return {"ok": True, "id": item_id}
 
 
 def _row_to_detail(cols: list[str], row) -> dict:
@@ -1018,6 +1082,9 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 .btn-sm.btn-danger { color: var(--red); }
 .btn-sm.btn-danger:hover { background: #da363322; }
 .btn-sm:disabled { opacity: 0.3; cursor: default; }
+.btn-delete { padding: 6px 16px; background: transparent; border: 1px solid var(--red); border-radius: 4px; color: var(--red); cursor: pointer; font: 600 12px inherit; transition: all .15s; }
+.btn-delete:hover { background: var(--red); color: #fff; }
+.btn-delete:disabled { opacity: 0.3; cursor: default; }
 .admin-error { background: #da363322; border: 1px solid var(--red); border-radius: 4px; padding: 8px 12px; margin: 8px 0; color: var(--red); font-size: 12px; }
 .admin-success { background: #23863622; border: 1px solid var(--green); border-radius: 4px; padding: 8px 12px; margin: 8px 0; color: var(--green); font-size: 12px; }
 .test-result { display: inline-block; padding: 3px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 8px; }
@@ -1087,7 +1154,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 
 <script>
 let cur = null, mode = 'text', page = 0, allCaps = [], selectedCard = null, curFilters = [];
-let cachedResults = [], cachedTotal = 0, sortDir = 'desc';
+let cachedResults = [], cachedTotal = 0, sortDir = 'desc', curDeletable = false;
 
 fetch('/api/sources').then(r => r.json()).then(srcs => {
   const el = document.getElementById('source-list');
@@ -1102,10 +1169,10 @@ fetch('/api/sources').then(r => r.json()).then(srcs => {
     const lbl = document.createElement('span');
     lbl.textContent = s.label;
     d.appendChild(dot); d.appendChild(lbl);
-    d.onclick = () => pick(s.id, caps, s.metadata_filters || [], s.sort_options || []);
+    d.onclick = () => pick(s.id, caps, s.metadata_filters || [], s.sort_options || [], s.deletable);
     el.appendChild(d);
   });
-  if (srcs.length) pick(srcs[0].id, srcs[0].capabilities || [], srcs[0].metadata_filters || [], srcs[0].sort_options || []);
+  if (srcs.length) pick(srcs[0].id, srcs[0].capabilities || [], srcs[0].metadata_filters || [], srcs[0].sort_options || [], srcs[0].deletable);
 }).catch(err => {
   document.getElementById('source-list').innerHTML = '<div class="empty" style="color:#ef4444">Failed: ' + esc(String(err)) + '</div>';
 });
@@ -1125,10 +1192,11 @@ fetch('/api/sources').then(r => r.json()).then(srcs2 => {
   el.innerHTML = html || '<span>No data</span>';
 }).catch(() => {});
 
-function pick(id, caps, mfilt, sorts) {
+function pick(id, caps, mfilt, sorts, deletable) {
   cur = id;
   allCaps = caps;
   curFilters = mfilt || [];
+  curDeletable = !!deletable;
   document.querySelectorAll('.src').forEach(el => el.classList.toggle('active', el.dataset.id === id));
   ['text','semantic','metadata'].forEach(m => {
     document.querySelector('.mbtn[data-mode="' + m + '"]').disabled = !caps.includes(m);
@@ -1247,7 +1315,19 @@ function showDetail(id) {
       if (d.updated_at) html += '<tr><td class="meta-key">updated_at</td><td class="meta-val">' + esc(d.updated_at) + '</td></tr>';
       html += '</table></div>';
 
+      // Delete button — only for deletable sources, non-deleted items
+      var itemStatus = (d.metadata && d.metadata.status) || 'active';
+      if (curDeletable && itemStatus !== 'deleted') {
+        html += '<div class="detail-section" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
+        html += '<button class="btn-delete" data-delete-id="">Delete Memory</button>';
+        html += '</div>';
+      }
+
       body.innerHTML = html;
+
+      // Wire delete button via DOM (no inline onclick — XSS safe)
+      var delBtn = body.querySelector('.btn-delete');
+      if (delBtn) delBtn.dataset.deleteId = d.id || id;
     })
     .catch(err => {
       body.innerHTML = '<div class="empty" style="color:#ef4444">Failed to load: ' + esc(String(err)) + '</div>';
@@ -1353,6 +1433,48 @@ function run(append) {
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 document.getElementById('q').addEventListener('keydown', function(e) { if (e.key === 'Enter') run(); });
+
+/* ── Delete memory ────────────────────────────────────────────── */
+
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('.btn-delete');
+  if (btn && btn.dataset.deleteId) deleteMemory(btn.dataset.deleteId);
+});
+
+function deleteMemory(id) {
+  if (!confirm('Delete this memory? (soft-delete — sets status to deleted)')) return;
+  fetch('/api/memories/' + encodeURIComponent(id) + '?source=' + encodeURIComponent(cur), { method: 'DELETE' })
+    .then(function(r) {
+      if (!r.ok) return r.json().catch(function() { return r.text(); }).then(function(d) {
+        return Promise.reject(typeof d === 'object' ? (d.detail || JSON.stringify(d)) : d);
+      });
+      return r.json();
+    })
+    .then(function() {
+      cachedResults = cachedResults.filter(function(r) { return r.id !== id; });
+      cachedTotal = Math.max(0, cachedTotal - 1);
+      renderResults();
+      closeDetail();
+      refreshStats();
+    })
+    .catch(function(err) { alert('Delete failed: ' + err); });
+}
+
+function refreshStats() {
+  fetch('/api/sources').then(function(r) { return r.json(); }).then(function(srcs) {
+    srcs.forEach(function(s) { sourceLabels[s.id] = s.label; });
+    return fetch('/api/stats');
+  }).then(function(r) { return r.json(); }).then(function(stats) {
+    var el = document.getElementById('stats-section');
+    var html = '';
+    Object.entries(stats).forEach(function(e) {
+      var label = sourceLabels[e[0]] || e[0].replace('remote:', '');
+      var n = e[1].count !== null ? e[1].count.toLocaleString() : '?';
+      html += '<div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>' + esc(label) + '</span><strong>' + n + '</strong></div>';
+    });
+    el.innerHTML = html || '<span>No data</span>';
+  }).catch(function() {});
+}
 
 /* ── Tab switching + Admin panel ──────────────────────────────── */
 
