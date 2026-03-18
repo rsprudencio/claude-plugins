@@ -975,3 +975,97 @@ class TestContentColumnSchema:
         assert "source" in doc
         assert "importance_score" in doc
         assert doc["category"] == "observation"
+
+
+class TestContentListGenericFilter:
+    """Test content_list with generic metadata filter parameter."""
+
+    def test_filter_by_project_dir(self, mock_config):
+        """Filter by project_dir returns only matching docs."""
+        content_write(
+            content="Framework obs",
+            content_type="observation",
+            extra_metadata={"project_dir": "personio-framework"},
+        )
+        content_write(
+            content="Portal obs",
+            content_type="observation",
+            extra_metadata={"project_dir": "developer-portal"},
+        )
+
+        result = content_list(filter={"project_dir": "personio-framework"})
+        assert result["success"]
+        assert result["total"] >= 1
+        for doc in result["documents"]:
+            meta = doc.get("metadata", {})
+            assert meta.get("project_dir") == "personio-framework"
+
+    def test_filter_by_git_branch(self, mock_config):
+        """Filter by git_branch works via generic JSONB."""
+        content_write(
+            content="Main branch work",
+            content_type="observation",
+            extra_metadata={"git_branch": "main"},
+        )
+        content_write(
+            content="Feature branch work",
+            content_type="observation",
+            extra_metadata={"git_branch": "feature-x"},
+        )
+
+        result = content_list(filter={"git_branch": "feature-x"})
+        assert result["success"]
+        assert result["total"] >= 1
+        for doc in result["documents"]:
+            meta = doc.get("metadata", {})
+            assert meta.get("git_branch") == "feature-x"
+
+    def test_filter_combined_with_typed_params(self, mock_config):
+        """Generic filter works alongside typed params (content_type)."""
+        content_write(
+            content="Observation in proj-a",
+            content_type="observation",
+            extra_metadata={"project_dir": "proj-a"},
+        )
+        content_write(
+            content="Worklog in proj-a",
+            content_type="worklog",
+            extra_metadata={"project_dir": "proj-a"},
+        )
+
+        result = content_list(
+            content_type="observation",
+            filter={"project_dir": "proj-a"},
+        )
+        assert result["success"]
+        for doc in result["documents"]:
+            assert doc["category"] == "observation"
+            assert doc["metadata"].get("project_dir") == "proj-a"
+
+    def test_filter_no_match(self, mock_config):
+        """Filter with non-existent value returns empty."""
+        content_write(
+            content="Some content",
+            content_type="observation",
+            extra_metadata={"project_dir": "real-project"},
+        )
+
+        result = content_list(filter={"project_dir": "nonexistent"})
+        assert result["success"]
+        assert result["total"] == 0
+
+    def test_filter_empty_dict(self, mock_config):
+        """Empty filter dict has no effect."""
+        content_write(content="Test", content_type="observation")
+
+        result = content_list(filter={})
+        assert result["success"]
+        assert result["total"] >= 1
+
+    def test_filter_none(self, mock_config):
+        """None filter has no effect."""
+        content_write(content="Test", content_type="observation")
+
+        result = content_list(filter=None)
+        assert result["success"]
+        assert result["total"] >= 1

@@ -33,7 +33,8 @@
       "threshold": 0.5,
       "budget": 8000,
       "debug": false,
-      "passive_retrieval_increment": 0.01
+      "passive_retrieval_increment": 0.01,
+      "schemas": "all"
     },
     "chunking": {
       "enabled": true,

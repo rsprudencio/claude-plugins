@@ -89,6 +89,7 @@ def retrieve(
             sort_by=sort_by,
             session_id=session_id,
             include_content=include_content,
+            filter=filter,
         )
 
     return {"success": False, "error": "No valid routing parameter provided"}
@@ -233,6 +234,7 @@ def _list_content(
     sort_by="importance_desc",
     session_id=None,
     include_content=False,
+    filter=None,
 ):
     """Route list operations."""
     # "tier2" kept as deprecated alias for "content" (removed in v3.1)
@@ -247,6 +249,7 @@ def _list_content(
             sort_by=sort_by,
             session_id=session_id,
             include_content=include_content,
+            filter=filter,
         )
     elif list_type == "memory":
         from .memory_crud import memory_list

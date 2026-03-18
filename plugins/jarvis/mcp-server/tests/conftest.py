@@ -1057,8 +1057,9 @@ class MockCursor:
         param_idx = 0
 
         # Match column conditions: column = %s, column >= %s
+        # (?<!%) prevents matching 's' from '%s' as a column name
         for m in re.finditer(
-            r"(?:AND\s+)?(\w+)\s*(=|>=|LIKE)\s*(%s|'([^']*)')",
+            r"(?:AND\s+)?(?<!%)(\w+)\s*(=|>=|LIKE)\s*(%s|'([^']*)')",
             sql,
         ):
             col = m.group(1).lower()
@@ -1093,6 +1094,18 @@ class MockCursor:
                 value = m.group(4)
             # Route to metadata sub-dict
             conditions.append(("_meta_" + key, op, value))
+
+        # Generic JSONB: metadata->>%s = %s (parameterized key and value)
+        for m in re.finditer(
+            r"metadata->>%s\s*(=|>=|LIKE)\s*%s",
+            sql,
+        ):
+            op = m.group(1)
+            if param_idx + 1 < len(params):
+                key = params[param_idx]
+                value = params[param_idx + 1]
+                param_idx += 2
+                conditions.append(("_meta_" + key, op, value))
 
         return conditions
 

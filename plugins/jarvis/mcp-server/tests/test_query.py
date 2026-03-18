@@ -13,6 +13,8 @@ from tools.query import (
     _extract_preview,
     _display_path,
     _increment_retrieval_counts,
+    _build_core_filter,
+    _build_vault_filter,
     semantic_context,
 )
 
@@ -650,3 +652,138 @@ class TestSemanticContextFractionalBump:
         assert "vault" in result["budget_used"]
         assert "total" in result["budget_used"]
         assert result["budget_used"]["total"] == 8000
+
+
+class TestBuildCoreFilterGeneric:
+    """Test generic JSONB fallback in _build_core_filter."""
+
+    def test_unknown_key_produces_jsonb_condition(self):
+        """Unknown key falls back to metadata->>key = value."""
+        conds, params = _build_core_filter({"project_dir": "my-project"})
+        assert any("metadata->>%s = %s" in c for c in conds)
+        assert "project_dir" in params
+        assert "my-project" in params
+
+    def test_multiple_unknown_keys(self):
+        """Multiple unknown keys produce multiple JSONB conditions."""
+        conds, params = _build_core_filter({
+            "project_dir": "proj-a",
+            "git_branch": "main",
+        })
+        jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
+        assert len(jsonb_conds) == 2
+
+    def test_known_keys_still_use_columns(self):
+        """Known keys (type, importance, tags) use column conditions."""
+        conds, params = _build_core_filter({
+            "type": "observation",
+            "project_dir": "proj-a",
+        })
+        assert "category = %s" in conds
+        jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
+        assert len(jsonb_conds) == 1
+
+    def test_empty_values_skipped(self):
+        """Empty/None values in filter dict are ignored."""
+        conds, params = _build_core_filter({
+            "project_dir": "",
+            "git_branch": None,
+        })
+        jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
+        assert len(jsonb_conds) == 0
+
+    def test_mixed_known_and_unknown(self):
+        """Mixed known + unknown keys produce correct conditions."""
+        conds, params = _build_core_filter({
+            "type": "observation",
+            "importance": 0.7,
+            "tags": "security",
+            "project_dir": "proj-a",
+            "workstream": "vuln-mgmt",
+        })
+        assert "category = %s" in conds
+        assert "importance_score >= %s" in conds
+        jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
+        assert len(jsonb_conds) == 2
+
+    def test_no_filter_dict(self):
+        """None filter dict produces only status condition."""
+        conds, params = _build_core_filter(None)
+        assert conds == ["status = 'active'"]
+        assert params == []
+
+
+class TestBuildVaultFilterGeneric:
+    """Test generic JSONB fallback in _build_vault_filter."""
+
+    def test_unknown_key_produces_jsonb_condition(self):
+        """Unknown key falls back to metadata->>key = value."""
+        conds, params = _build_vault_filter({"author": "jarvis"})
+        assert any("metadata->>%s = %s" in c for c in conds)
+        assert "author" in params
+        assert "jarvis" in params
+
+    def test_known_vault_keys_use_columns(self):
+        """Known vault keys (directory, type, etc.) use column conditions."""
+        conds, params = _build_vault_filter({
+            "directory": "notes",
+            "author": "jarvis",
+        })
+        assert "directory = %s" in conds
+        jsonb_conds = [c for c in conds if "metadata->>%s = %s" in c]
+        assert len(jsonb_conds) == 1
+
+    def test_empty_filter_dict(self):
+        """Empty filter dict produces no conditions."""
+        conds, params = _build_vault_filter({})
+        assert conds == []
+        assert params == []
+
+
+class TestQueryVaultGenericFilter:
+    """Integration tests for query_vault with generic metadata filters."""
+
+    def test_filter_by_project_dir(self, mock_config):
+        """Filter by project_dir narrows results."""
+        from tools.content import content_write
+
+        content_write(
+            content="Security finding in framework",
+            content_type="observation",
+            extra_metadata={"project_dir": "personio-framework"},
+        )
+        content_write(
+            content="Security finding in portal",
+            content_type="observation",
+            extra_metadata={"project_dir": "developer-portal"},
+        )
+
+        result = query_vault(
+            "security finding",
+            filter={"project_dir": "personio-framework"},
+        )
+        assert result["success"]
+        for r in result["results"]:
+            if r["schema"] == "local":
+                assert r.get("id", "").startswith("obs::")
+
+    def test_filter_by_session_id(self, mock_config):
+        """Filter by session_id via generic JSONB filter."""
+        from tools.content import content_write
+
+        content_write(
+            content="Session A observation",
+            content_type="observation",
+            session_id="session-aaa",
+        )
+        content_write(
+            content="Session B observation",
+            content_type="observation",
+            session_id="session-bbb",
+        )
+
+        result = query_vault(
+            "session observation",
+            filter={"session_id": "session-aaa"},
+        )
+        assert result["success"]

@@ -593,9 +593,10 @@
     "memory_context_enrichment": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
       "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.4=aggressive, 0.5=balanced, 0.6=conservative)" },
-      "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (split 50/50 between core memories and vault references)" },
+      "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (3-way split: local/vault/remote when remote schemas present, otherwise 50/50 local/vault; unused budget overflows to other buckets)" },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for context enrichment" },
-      "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" }
+      "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" },
+      "schemas": { "type": "string", "default": "all", "description": "Which schemas to search: 'all' (default), 'local', 'obsidian', or comma-separated (e.g. 'local,remote_personio')" }
     },
 
     "memory_chunking": {

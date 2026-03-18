@@ -247,7 +247,10 @@ TOOLS = [
                 },
                 "filter": {
                     "type": "object",
-                    "description": "Metadata filter for query mode (directory, type, importance, tags)",
+                    "description": "Metadata filter for query and list modes. "
+                        "Known keys: type, importance, tags, directory. "
+                        "Any other key filters by metadata JSONB field "
+                        "(e.g. project_dir, git_branch, session_id, workstream).",
                 },
                 "include_metadata": {
                     "type": "boolean",

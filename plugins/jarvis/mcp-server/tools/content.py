@@ -423,6 +423,7 @@ def content_list(
     sort_by: str = "importance_desc",
     session_id: Optional[str] = None,
     include_content: bool = True,
+    filter: Optional[dict] = None,
 ) -> dict:
     """List content from local.memories with column-based filtering.
 
@@ -434,6 +435,8 @@ def content_list(
         sort_by: Sort order
         session_id: Filter by session_id
         include_content: Include document text in results (default True)
+        filter: Generic metadata filter dict. Any key becomes a JSONB
+            equality check (metadata->>'key' = value).
 
     Returns:
         Result dict with success, documents, total
@@ -472,6 +475,16 @@ def content_list(
         if min_importance is not None:
             conditions.append("importance_score >= %s")
             params.append(min_importance)
+
+        # Generic JSONB fallback from filter dict
+        if filter:
+            # Keys already handled by typed params above
+            _KNOWN_LIST_KEYS = {"type", "importance", "tags", "source", "session_id"}
+            for key, val in filter.items():
+                if key in _KNOWN_LIST_KEYS or not val:
+                    continue
+                conditions.append("metadata->>%s = %s")
+                params.extend([key, str(val)])
 
         where_clause = " AND ".join(conditions)
         order_clause = _SORT_SQL.get(sort_by, "")

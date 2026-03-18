@@ -158,10 +158,18 @@ def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") ->
     return truncated + "..."
 
 
+# Keys that map to dedicated columns — skip in generic JSONB loop
+_KNOWN_CORE_KEYS = {"type", "importance", "tags"}
+_KNOWN_VAULT_KEYS = {"type", "importance", "tags", "directory"}
+
+
 def _build_core_filter(
     filter_dict: Optional[dict] = None, user: Optional[str] = None
 ) -> tuple:
     """Build WHERE conditions for local.memories using columns.
+
+    Known keys (type, importance, tags) map to dedicated columns.
+    Any other key falls back to a JSONB equality check on the metadata column.
 
     Returns:
         Tuple of (conditions_list, params_list) for SQL WHERE clause.
@@ -198,6 +206,13 @@ def _build_core_filter(
         conditions.append("metadata->>'tags' LIKE %s")
         params.append(f"%{tag}%")
 
+    # Generic JSONB fallback: any unknown key → metadata->>'key' = value
+    for key, val in filter_dict.items():
+        if key in _KNOWN_CORE_KEYS or not val:
+            continue
+        conditions.append("metadata->>%s = %s")
+        params.extend([key, str(val)])
+
     return conditions, params
 
 
@@ -205,6 +220,9 @@ def _build_vault_filter(
     filter_dict: Optional[dict] = None, user: Optional[str] = None
 ) -> tuple:
     """Build WHERE conditions for obsidian.documents using columns.
+
+    Known keys (type, importance, tags, directory) map to dedicated columns.
+    Any other key falls back to a JSONB equality check on the metadata column.
 
     Returns:
         Tuple of (conditions_list, params_list) for SQL WHERE clause.
@@ -249,6 +267,13 @@ def _build_vault_filter(
         tag = filter_dict["tags"].split(",")[0].strip()
         conditions.append("metadata->>'tags' LIKE %s")
         params.append(f"%{tag}%")
+
+    # Generic JSONB fallback: any unknown key → metadata->>'key' = value
+    for key, val in filter_dict.items():
+        if key in _KNOWN_VAULT_KEYS or not val:
+            continue
+        conditions.append("metadata->>%s = %s")
+        params.extend([key, str(val)])
 
     return conditions, params
 
