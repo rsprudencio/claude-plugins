@@ -653,6 +653,119 @@ class TestSemanticContextFractionalBump:
         assert "total" in result["budget_used"]
         assert result["budget_used"]["total"] == 8000
 
+    def test_large_entry_cross_bucket_spending(self, mock_config):
+        """An entry larger than any single budget bucket is still selected
+        when total remaining budget across all buckets is sufficient.
+
+        Regression test for: entries just over budget/3 (e.g. 2687 chars with
+        budget=8000 → bucket=2666) were silently dropped because _try_spend
+        only checked individual buckets, not the combined total.
+        """
+        from tools.content import content_write
+
+        # Budget=300 → 3-way split → 100 per bucket.
+        # Write one local entry (small, to confirm budget flow works)
+        content_write(
+            content="Small local memory",
+            content_type="observation",
+            importance_score=0.8,
+        )
+
+        # Build a large document (150 chars > 100 per-bucket cap)
+        large_content = "Security finding: " + "x" * 132  # exactly 150 chars
+
+        # Mock _cross_schema_search to return a mix with a large remote entry
+        from tools.schema_registry import SchemaEntry, SchemaKind
+        large_remote_row = {
+            "id": "obs::remote-large-001",
+            "document": large_content,
+            "metadata": {},
+            "category": "observation",
+            "scope": "global",
+            "source": "auto-extract",
+            "importance_score": 0.9,
+            "retrieval_count": 0,
+            "created_at": "2026-03-08T00:00:00+00:00",
+            "distance": 0.1,  # very close = high similarity
+            "_schema": "remote_test",
+        }
+        small_remote_row = {
+            "id": "obs::remote-small-002",
+            "document": "Short remote memory",
+            "metadata": {},
+            "category": "observation",
+            "scope": "global",
+            "source": "auto-extract",
+            "importance_score": 0.7,
+            "retrieval_count": 0,
+            "created_at": "2026-03-08T00:00:00+00:00",
+            "distance": 0.3,
+            "_schema": "remote_test",
+        }
+
+        with patch("tools.query._cross_schema_search") as mock_search, \
+             patch("tools.query._remote_count", return_value=2), \
+             patch("tools.schema_registry.get_searchable_schemas") as mock_gss:
+            # Registry returns remote schema so _remote_count works
+            mock_gss.return_value = [
+                SchemaEntry("remote_test", SchemaKind.REMOTE, "memories",
+                            remote_name="test"),
+            ]
+            mock_search.return_value = [large_remote_row, small_remote_row]
+
+            result = semantic_context(
+                "security findings", threshold=0.0, budget=300
+            )
+
+        # The large entry (150 chars) exceeds any single bucket (100 chars)
+        # but fits in total budget (300). It must be selected.
+        ids = [m["id"] for m in result["matches"]]
+        assert "remote-large-001" in ids, (
+            f"Large remote entry not selected despite total budget being sufficient. "
+            f"Selected: {ids}"
+        )
+
+    def test_entry_exceeding_total_budget_is_dropped(self, mock_config):
+        """An entry larger than the total budget is correctly dropped."""
+        from tools.content import content_write
+
+        content_write(
+            content="Anchor observation",
+            content_type="observation",
+            importance_score=0.5,
+        )
+
+        huge_content = "x" * 500  # 500 chars > total budget of 300
+
+        with patch("tools.query._cross_schema_search") as mock_search, \
+             patch("tools.query._remote_count", return_value=1), \
+             patch("tools.schema_registry.get_searchable_schemas") as mock_gss:
+            from tools.schema_registry import SchemaEntry, SchemaKind
+            mock_gss.return_value = [
+                SchemaEntry("remote_test", SchemaKind.REMOTE, "memories",
+                            remote_name="test"),
+            ]
+            mock_search.return_value = [{
+                "id": "obs::remote-huge-001",
+                "document": huge_content,
+                "metadata": {},
+                "category": "observation",
+                "scope": "global",
+                "source": "auto-extract",
+                "importance_score": 0.9,
+                "retrieval_count": 0,
+                "created_at": "2026-03-08T00:00:00+00:00",
+                "distance": 0.1,
+                "_schema": "remote_test",
+            }]
+
+            result = semantic_context(
+                "huge entry test", threshold=0.0, budget=300
+            )
+
+        ids = [m["id"] for m in result["matches"]]
+        assert "remote-huge-001" not in ids
+
 
 class TestBuildCoreFilterGeneric:
     """Test generic JSONB fallback in _build_core_filter."""

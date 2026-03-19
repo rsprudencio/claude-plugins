@@ -157,3 +157,49 @@ class TestSemanticContextStaleness:
         assert obs["stale"] is True
         assert str(stale) in obs["stale_files"]
         assert str(fresh) not in obs["stale_files"]
+
+
+class TestAnnotateStalenessRemoteSkip:
+    """Remote schema entries must skip staleness checks.
+
+    Remote observations have file_mtimes from the remote machine. Those paths
+    never exist locally, so os.stat() always fails → permanent false-positive
+    staleness penalty. The fix: skip entries whose _schema starts with 'remote_'.
+    """
+
+    def test_remote_entries_not_penalized(self):
+        """Entries from remote schemas keep their original relevance."""
+        from tools.query import _annotate_staleness
+
+        entry = {
+            "doc_id": "obs::1234567890",
+            "metadata": {
+                "file_mtimes": {
+                    "/Users/other-user/.claude/projects/memory.md": 1772036655.36,
+                },
+            },
+            "relevance": 0.85,
+            "_schema": "remote_personio",
+        }
+        _annotate_staleness([entry], {"penalty": 0.15})
+
+        assert entry["relevance"] == 0.85
+        assert "is_stale" not in entry
+
+    def test_local_entries_still_penalized(self, tmp_path):
+        """Local entries with missing files are still penalized."""
+        from tools.query import _annotate_staleness
+
+        nonexistent = str(tmp_path / "deleted.py")
+        entry = {
+            "doc_id": "obs::9876543210",
+            "metadata": {
+                "file_mtimes": {nonexistent: 1772036655.36},
+            },
+            "relevance": 0.85,
+            "_schema": "local",
+        }
+        _annotate_staleness([entry], {"penalty": 0.15})
+
+        assert entry["relevance"] == pytest.approx(0.70, abs=0.01)
+        assert entry.get("is_stale") is True

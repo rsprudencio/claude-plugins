@@ -47,6 +47,10 @@ def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
     Reads file_mtimes from already-fetched metadata and compares against current
     filesystem state. No additional database operations.
 
+    Skips remote schema entries: their file_mtimes reference paths on the
+    remote machine that don't exist locally, so os.stat() always fails,
+    producing a permanent false-positive staleness penalty.
+
     Args:
         raw_entries: List of entry dicts with 'doc_id', 'metadata', 'relevance' keys.
         staleness_config: Config dict with 'penalty' (float) key.
@@ -56,6 +60,11 @@ def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
     for entry in raw_entries:
         doc_id = entry.get("doc_id", "")
         if not doc_id.startswith("obs::"):
+            continue
+
+        # Skip remote entries — file paths are from the remote machine
+        schema = entry.get("_schema", "")
+        if schema.startswith("remote_"):
             continue
 
         meta = entry.get("metadata", {})
@@ -1134,10 +1143,18 @@ def semantic_context(
     selected = []
 
     def _try_spend(cost: int, primary: str) -> bool:
-        """Try to spend from primary bucket, then overflow to others."""
+        """Try to spend from primary bucket, overflow to others, or split across buckets.
+
+        Phase 1: Try each bucket individually (prefer primary, then others).
+        Phase 2: If no single bucket suffices, split the cost across all buckets
+        that have remaining capacity (prevents large entries from being silently
+        dropped when total remaining budget is sufficient but fragmented).
+        """
         nonlocal local_remaining, vault_remaining, remote_remaining
         buckets = {"local": local_remaining, "vault": vault_remaining, "remote": remote_remaining}
         order = [primary] + [b for b in ("local", "vault", "remote") if b != primary]
+
+        # Phase 1: single-bucket fit
         for bucket in order:
             if buckets[bucket] >= cost:
                 if bucket == "local":
@@ -1147,6 +1164,25 @@ def semantic_context(
                 else:
                     remote_remaining -= cost
                 return True
+
+        # Phase 2: split across buckets when total remaining >= cost
+        total_available = local_remaining + vault_remaining + remote_remaining
+        if total_available >= cost:
+            remaining_cost = cost
+            for bucket in order:
+                take = min(remaining_cost, buckets[bucket])
+                if take > 0:
+                    if bucket == "local":
+                        local_remaining -= take
+                    elif bucket == "vault":
+                        vault_remaining -= take
+                    else:
+                        remote_remaining -= take
+                    remaining_cost -= take
+                if remaining_cost <= 0:
+                    break
+            return True
+
         return False
 
     for entry in deduped:
