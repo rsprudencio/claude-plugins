@@ -1244,6 +1244,22 @@ def semantic_context(
             match["heading"] = chunk_heading
         if entry.get("is_stale"):
             match["stale"] = True
+
+        # Attribution for remote memories: surface origin so the LLM
+        # can distinguish "my memory" from "synced from another user".
+        schema = entry.get("_schema", "")
+        if schema.startswith("remote_"):
+            match["source_remote"] = schema
+            # Try to extract author hint from project_path metadata
+            project_path = meta.get("project_path", "")
+            if "/Users/" in project_path:
+                # /Users/<username>/... → extract username
+                parts = project_path.split("/Users/", 1)
+                if len(parts) > 1:
+                    author = parts[1].split("/", 1)[0]
+                    if author:
+                        match["origin_user"] = author
+
         matches.append(match)
 
     query_ms = round((time.time() - start) * 1000, 1)

@@ -459,7 +459,8 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
                 rows = conn.execute(
                     sql.SQL(
                         "SELECT r.id, c.content, r.created_at,"
-                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size"
+                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size,"
+                        " r.metadata->>'project_path' AS project_path"
                         " FROM {0}.memory_refs r JOIN {0}.content c ON r.content_hash = c.hash"
                         " WHERE {1} ORDER BY {2} LIMIT %s OFFSET %s"
                     ).format(s, where, order),
@@ -479,7 +480,8 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
                     sql.SQL(
                         "SELECT r.id, c.content, r.created_at,"
                         " 1 - (c.embedding <=> %s::vector) AS score,"
-                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size"
+                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size,"
+                        " r.metadata->>'project_path' AS project_path"
                         " FROM {0}.memory_refs r JOIN {0}.content c ON r.content_hash = c.hash"
                         " ORDER BY {1} LIMIT %s OFFSET %s"
                     ).format(s, sem_order),
@@ -501,7 +503,8 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
                 rows = conn.execute(
                     sql.SQL(
                         "SELECT r.id, c.content, r.created_at,"
-                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size"
+                        " r.updated_at, r.importance_score, r.retrieval_count, LENGTH(c.content) AS doc_size,"
+                        " r.metadata->>'project_path' AS project_path"
                         " FROM {0}.memory_refs r JOIN {0}.content c ON r.content_hash = c.hash"
                         " WHERE {1} ORDER BY {2} LIMIT %s OFFSET %s"
                     ).format(s, where_sql, order),
@@ -509,7 +512,8 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
                 ).fetchall()
 
     has_rc = src.get("has_retrieval_count", src["type"] == "remote")
-    return {"rows": _rows_to_dicts(rows, req.mode, has_rc=has_rc), "total": total}
+    is_remote = src["type"] == "remote"
+    return {"rows": _rows_to_dicts(rows, req.mode, has_rc=has_rc, extract_user=is_remote), "total": total}
 
 
 @app.get("/api/content")
@@ -683,7 +687,20 @@ def _build_remote_conds(filters: dict, allowed: set) -> tuple[list, list]:
     return conds, params
 
 
-def _rows_to_dicts(rows: list, mode: str, has_rc: bool = True) -> list[dict]:
+def _extract_user_from_path(project_path: str) -> Optional[str]:
+    """Extract OS username from a project path like /Users/alice/dev/foo."""
+    if not project_path:
+        return None
+    parts = project_path.split("/")
+    for prefix in ("Users", "home"):
+        if prefix in parts:
+            idx = parts.index(prefix)
+            if idx + 1 < len(parts):
+                return parts[idx + 1]
+    return None
+
+
+def _rows_to_dicts(rows: list, mode: str, has_rc: bool = True, extract_user: bool = False) -> list[dict]:
     out = []
     for row in rows:
         doc = row[1] or ""
@@ -712,6 +729,11 @@ def _rows_to_dicts(rows: list, mode: str, has_rc: bool = True) -> list[dict]:
             size_idx = idx + 2
         if len(row) > size_idx:
             entry["doc_size"] = int(row[size_idx]) if row[size_idx] is not None else 0
+        # Remote: extract user from project_path (column after doc_size)
+        if extract_user and len(row) > size_idx + 1:
+            user = _extract_user_from_path(row[size_idx + 1])
+            if user:
+                entry["user"] = user
         out.append(entry)
     return out
 
@@ -1010,6 +1032,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 .cmeta { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 .badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface2); color: var(--muted); }
 .sbadge { background: #1c2d3f; color: var(--accent); }
+.ubadge { background: #2d1c3f; color: #c49bff; }
 .empty { color: var(--muted); text-align: center; padding: 60px 20px; font-size: 13px; }
 #statusbar { padding: 5px 14px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); min-height: 24px; }
 #more-btn { display: block; margin: 4px auto 8px; padding: 7px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; font: 12px inherit; }
@@ -1343,6 +1366,7 @@ function makeCard(r) {
   var cmeta = document.createElement('div'); cmeta.className = 'cmeta';
   if (r.created_at) { var b = document.createElement('span'); b.className = 'badge'; b.textContent = r.created_at.slice(0,10); cmeta.appendChild(b); }
   if (r.score !== undefined) { var b2 = document.createElement('span'); b2.className = 'badge sbadge'; b2.textContent = 'sim ' + r.score; cmeta.appendChild(b2); }
+  if (r.user) { var bu = document.createElement('span'); bu.className = 'badge ubadge'; bu.textContent = r.user; cmeta.appendChild(bu); }
   card.onclick = function() {
     if (selectedCard) selectedCard.classList.remove('selected');
     card.classList.add('selected');

@@ -107,6 +107,7 @@ If the database is unavailable, report the connectivity issue to the user. Fall 
 
 ### Automatic Memory Recall
 You may see `<relevant-vault-memories>` blocks injected before user messages. Reference them naturally as if you remember the information. Do not reveal the injection mechanism or list raw blocks.
+**Remote memory attribution:** Memories with `source_remote` and `origin_user` attributes came from **another user's machine** via sync — not from sessions with the current user. When referencing these, attribute the source: e.g., "From an investigation by [origin_user]..." or "According to [origin_user]'s analysis...". Never claim "we investigated" or "I stored" for remote memories you did not create.
 **Conflict handling:** If injected memories contradict the user's current statement, flag the contradiction: "I have a previous note saying X, but you're now saying Y — should I update my memory?" Do not silently override either source.
 
 ## Key Constraints

@@ -204,6 +204,10 @@ def _format_memories(matches: list, query_ms: float) -> str:
             attrs.append(f'heading="{saxutils.escape(match["heading"])}"')
         if match.get("schema"):
             attrs.append(f'schema="{saxutils.escape(match["schema"])}"')
+        if match.get("source_remote"):
+            attrs.append(f'source_remote="{saxutils.escape(match["source_remote"])}"')
+        if match.get("origin_user"):
+            attrs.append(f'origin_user="{saxutils.escape(match["origin_user"])}"')
         if display_mode == "reference":
             attrs.append('ref="vault"')
         if match.get("stale"):
