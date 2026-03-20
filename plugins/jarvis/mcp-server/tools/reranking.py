@@ -5,8 +5,8 @@ pairs after initial vector search. This second-stage reranking dramatically impr
 precision for queries where vector similarity alone falls short (negation, specificity,
 context collapse).
 
-Applied ONLY to query_vault(). NOT applied to semantic_context() (per-prompt search)
-which has a ~100ms latency budget.
+Applied to both query_vault() and semantic_context() (per-prompt search).
+Latency protected via max_latency_ms config (default 1000ms).
 
 Dependencies: onnxruntime, tokenizers (~5MB).
 Model: ~92MB ONNX, baked into Docker image at /app/models/cross-encoder/.

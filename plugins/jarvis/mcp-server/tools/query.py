@@ -1120,6 +1120,22 @@ def semantic_context(
     for k in keys_to_remove_sc:
         best_per_file.pop(k, None)
 
+    # Cross-encoder reranking: rescore all candidates regardless of schema.
+    # Runs after dedup (fewer candidates = faster inference).
+    reranking_config = get_reranking_config()
+    if reranking_config.get("enabled") and len(best_per_file) > 1:
+        from .reranking import rerank
+
+        candidates = sorted(
+            best_per_file.values(), key=lambda e: e["relevance"], reverse=True
+        )
+        docs = [e["document"] or "" for e in candidates]
+        vscores = [e["relevance"] for e in candidates]
+        blended = rerank(query, docs, vscores, reranking_config)
+        if blended is not vscores:
+            for entry, score in zip(candidates, blended):
+                entry["relevance"] = score
+
     # Sort by relevance descending
     deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
 

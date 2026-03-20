@@ -767,6 +767,111 @@ class TestSemanticContextFractionalBump:
         assert "remote-huge-001" not in ids
 
 
+class TestSemanticContextReranking:
+    """Tests for cross-encoder reranking in semantic_context()."""
+
+    @pytest.fixture(autouse=True)
+    def _no_remote_schemas(self):
+        """Isolate from remote schemas registered by other tests."""
+        import tools.schema_registry as sr
+        from tools.schema_registry import SchemaEntry, SchemaKind
+        saved = sr._registry
+        sr._registry = [e for e in sr._registry if e.kind != SchemaKind.REMOTE]
+        yield
+        sr._registry = saved
+
+    def test_reranking_applied_to_semantic_context(self, mock_config):
+        """When reranking is enabled, semantic_context calls rerank on deduped candidates."""
+        import time as _time
+        from tools.content import content_write
+
+        content_write(
+            content="First observation about database migrations",
+            content_type="observation",
+            importance_score=0.8,
+        )
+        _time.sleep(0.002)  # ensure distinct millisecond IDs
+        content_write(
+            content="Second observation about API design patterns",
+            content_type="observation",
+            importance_score=0.7,
+        )
+
+        with patch("tools.reranking.rerank") as mock_rerank:
+            # Return identity (simulate graceful fallback) to not break the flow
+            mock_rerank.side_effect = lambda q, docs, vscores, cfg: vscores
+
+            result = semantic_context("database migrations", threshold=0.0)
+
+            # rerank should have been called with the query and documents
+            assert mock_rerank.called, (
+                f"rerank not called. matches={len(result.get('matches', []))}, "
+                f"total_searched={result.get('total_searched')}"
+            )
+            call_args = mock_rerank.call_args
+            assert call_args[0][0] == "database migrations"  # query
+            assert len(call_args[0][1]) >= 2  # documents list
+            assert len(call_args[0][2]) >= 2  # vector scores list
+
+    def test_reranking_skipped_when_disabled(self, mock_config):
+        """When reranking is disabled, semantic_context skips cross-encoder."""
+        mock_config.set(memory={"reranking": {"enabled": False}})
+
+        from tools.content import content_write
+
+        content_write(
+            content="Observation with reranking disabled",
+            content_type="observation",
+            importance_score=0.8,
+        )
+
+        with patch("tools.reranking.rerank") as mock_rerank:
+            semantic_context("reranking disabled test", threshold=0.0)
+            assert not mock_rerank.called
+
+    def test_reranking_reorders_results(self, mock_config):
+        """Cross-encoder reranking can reorder results by relevance."""
+        import time as _time
+        from tools.content import content_write
+
+        content_write(
+            content="Irrelevant observation about cooking recipes and food",
+            content_type="observation",
+            importance_score=0.9,
+        )
+        _time.sleep(0.002)  # ensure distinct millisecond IDs
+        content_write(
+            content="Highly relevant observation about SQL injection vulnerabilities",
+            content_type="observation",
+            importance_score=0.5,
+        )
+
+        def fake_rerank(query, docs, vscores, cfg):
+            """Simulate cross-encoder that boosts the SQL injection doc."""
+            alpha = cfg.get("alpha", 0.7)
+            reranker_scores = []
+            for doc in docs:
+                if "SQL injection" in doc:
+                    reranker_scores.append(0.95)
+                else:
+                    reranker_scores.append(0.1)
+            # Min-max normalize
+            min_s, max_s = min(reranker_scores), max(reranker_scores)
+            if max_s - min_s > 1e-9:
+                norm = [(s - min_s) / (max_s - min_s) for s in reranker_scores]
+            else:
+                norm = [0.5] * len(reranker_scores)
+            return [alpha * n + (1 - alpha) * v for n, v in zip(norm, vscores)]
+
+        with patch("tools.reranking.rerank", side_effect=fake_rerank):
+            result = semantic_context("SQL injection vulnerabilities", threshold=0.0)
+
+        matches = result["matches"]
+        assert len(matches) >= 2
+        # The SQL injection doc should rank first after reranking
+        assert "SQL injection" in matches[0]["content"]
+
+
 class TestBuildCoreFilterGeneric:
     """Test generic JSONB fallback in _build_core_filter."""
 
