@@ -134,8 +134,8 @@ class TestRerank:
             assert result[0] > result[1]
             assert result[0] > result[2]
 
-    def test_alpha_zero_returns_vector_scores(self):
-        """alpha=0 means 100% vector scores."""
+    def test_alpha_zero_returns_normalized_vector_scores(self):
+        """alpha=0 means 100% normalized vector scores (preserves order)."""
         scores = [0.8, 0.6, 0.4]
         docs = ["doc1", "doc2", "doc3"]
 
@@ -150,9 +150,11 @@ class TestRerank:
         ), patch("tools.reranking._tokenizer", mock_tokenizer):
             result = rerank("query", docs, scores, {"alpha": 0.0})
             assert result is not scores
-            # With alpha=0, blended scores should equal vector scores
-            for r, v in zip(result, scores):
-                assert r == pytest.approx(v, abs=1e-6)
+            # With alpha=0, blended scores equal min-max normalized vector scores
+            # [0.8, 0.6, 0.4] → normalized to [1.0, 0.5, 0.0]
+            assert result[0] == pytest.approx(1.0, abs=1e-6)
+            assert result[1] == pytest.approx(0.5, abs=1e-6)
+            assert result[2] == pytest.approx(0.0, abs=1e-6)
 
     def test_alpha_one_ignores_vector(self):
         """alpha=1 means 100% reranker scores."""
@@ -227,6 +229,37 @@ class TestRerank:
         with patch("tools.reranking._init_model", return_value=False):
             result = rerank("query", ["a", "b"], scores, config=None)
             assert result is scores
+
+    def test_cross_schema_normalization_removes_vault_bias(self):
+        """Vector score normalization removes vault inflation bias.
+
+        Vault docs get inflated scores (~1.0) from _compute_relevance while
+        remote/core docs get conservative scores (~0.7) from compute_blended_score.
+        Without normalization, vault docs have an unfair floor in the alpha-blend.
+        With normalization, the cross-encoder controls the final ranking.
+        """
+        # Vault doc (inflated to 1.0) vs remote doc (conservative 0.7)
+        scores = [1.0, 0.7]
+        docs = ["random vault content about cooking", "SQL injection vulnerability VULN-1074"]
+
+        mock_session = MagicMock()
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.encode_batch.side_effect = _mock_encode_batch
+
+        # Cross-encoder says doc2 (VULN-1074) is highly relevant, doc1 is not
+        mock_session.run.side_effect = _make_batched_run([-2.0, 3.0])
+
+        with patch("tools.reranking._init_model", return_value=True), patch(
+            "tools.reranking._session", mock_session
+        ), patch("tools.reranking._tokenizer", mock_tokenizer):
+            result = rerank("SQL injection sanitization", docs, scores, {"alpha": 0.7})
+            assert result is not scores
+            # Despite vault doc having higher vector score (1.0 vs 0.7),
+            # cross-encoder should flip the ranking
+            assert result[1] > result[0], (
+                f"Remote doc (VULN-1074) should outrank inflated vault doc: "
+                f"remote={result[1]:.3f} vault={result[0]:.3f}"
+            )
 
     def test_batch_processing(self):
         """Large doc list gets processed in batches."""

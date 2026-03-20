@@ -261,9 +261,20 @@ def rerank(
         else:
             norm_scores = [0.5] * len(raw_scores)
 
-        # Alpha-blend: blended = alpha * reranker + (1 - alpha) * vector
+        # Min-max normalize vector scores to [0, 1] — removes cross-schema
+        # bias from different scoring formulas (e.g. vault _compute_relevance
+        # saturates at 1.0 while core compute_blended_score produces lower values).
+        min_v = min(vector_scores)
+        max_v = max(vector_scores)
+        if max_v - min_v > 1e-9:
+            norm_vscores = [(v - min_v) / (max_v - min_v) for v in vector_scores]
+        else:
+            norm_vscores = [0.5] * len(vector_scores)
+
+        # Alpha-blend: both sides normalized to [0, 1] for fair comparison
         blended = [
-            alpha * ns + (1 - alpha) * vs for ns, vs in zip(norm_scores, vector_scores)
+            alpha * ns + (1 - alpha) * nv
+            for ns, nv in zip(norm_scores, norm_vscores)
         ]
 
         elapsed_ms = (time.time() - start) * 1000
