@@ -13,6 +13,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /build
 
+# Install PyTorch CPU-only first (default amd64 wheel bundles CUDA/nvidia ~4GB)
+RUN uv pip install --system --no-cache \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
 # Install all dependencies via uv (single layer for caching)
 # Core: mcp, psycopg, pgvector, sentence-transformers, onnxruntime
 # Todoist: todoist-api-python
