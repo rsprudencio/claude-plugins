@@ -1,6 +1,7 @@
 {
   "vault": {
     "type": "http",
-    "url": "http://localhost:8744/mcp"
+    "url": "http://localhost:8744/mcp",
+    "headers": {}
   }
 }

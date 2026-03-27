@@ -1,1 +1,1 @@
-{"api": {"type": "http", "url": "http://localhost:8742/mcp"}}
+{"api": {"type": "http", "url": "http://localhost:8742/mcp", "headers": {}}}

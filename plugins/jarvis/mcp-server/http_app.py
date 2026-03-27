@@ -315,6 +315,10 @@ async def app(scope, receive, send):
     path = scope.get("path", "")
     method = scope.get("method", "")
 
+    # Access log — shows every HTTP request hitting the server
+    headers_dict = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope.get("headers", [])}
+    logger.info("[ACCESS] %s %s headers=%s", method, path, headers_dict)
+
     # Health check always open (Docker healthcheck, monitoring)
     if path == "/health" and method == "GET":
         await health_response(scope, receive, send)

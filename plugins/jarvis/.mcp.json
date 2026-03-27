@@ -1,1 +1,1 @@
-{"core": {"type": "http", "url": "http://localhost:8741/mcp"}}
+{"core": {"type": "http", "url": "http://localhost:8741/mcp", "headers": {}}}

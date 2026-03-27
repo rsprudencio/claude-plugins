@@ -1141,6 +1141,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
     <button class="mbtn" data-mode="semantic" onclick="setMode('semantic')">Semantic</button>
     <button class="mbtn" data-mode="metadata" onclick="setMode('metadata')">Filter</button>
     <button id="go" onclick="run()">Search</button>
+    <button id="mem-auto-refresh" onclick="toggleMemAutoRefresh()" style="padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--fg);cursor:pointer;font-size:12px" title="Auto-refresh every 60s when browser is focused">Auto 60s</button>
   </div>
   <div id="filterbar">
     <label>Category</label>
@@ -1458,6 +1459,26 @@ function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>
 
 document.getElementById('q').addEventListener('keydown', function(e) { if (e.key === 'Enter') run(); });
 
+/* ── Memory auto-refresh ─────────────────────────────────────── */
+var memAutoRefresh = null;
+function toggleMemAutoRefresh() {
+  if (memAutoRefresh) {
+    clearInterval(memAutoRefresh);
+    memAutoRefresh = null;
+  } else {
+    memAutoRefresh = setInterval(function() {
+      if (document.hasFocus() && cur && cachedResults.length > 0) run();
+    }, 60000);
+    // Also run immediately on enable
+    if (cur && cachedResults.length > 0) run();
+  }
+  var btn = document.getElementById('mem-auto-refresh');
+  if (btn) {
+    btn.style.background = memAutoRefresh ? 'var(--green)' : 'var(--bg2)';
+    btn.style.color = memAutoRefresh ? '#000' : 'var(--fg)';
+  }
+}
+
 /* ── Delete memory ────────────────────────────────────────────── */
 
 document.addEventListener('click', function(e) {
@@ -1511,6 +1532,7 @@ function switchTab(tab) {
     adm.style.display = 'block';
     adm.classList.add('active');
     loadAdmin();
+    if (memAutoRefresh) { clearInterval(memAutoRefresh); memAutoRefresh = null; var mb = document.getElementById('mem-auto-refresh'); if (mb) { mb.style.background = 'var(--bg2)'; mb.style.color = 'var(--fg)'; } }
   } else {
     mem.style.display = 'flex';
     adm.style.display = 'none';

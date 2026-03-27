@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-cleanup.sh",
+            "command": "test -n \"${CLAUDE_PLUGIN_ROOT}\" && bash \"${CLAUDE_PLUGIN_ROOT}/hooks-handlers/session-cleanup.sh\" || true",
             "timeout": 2
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/context-enrichment.sh",
+            "command": "test -n \"${CLAUDE_PLUGIN_ROOT}\" && bash \"${CLAUDE_PLUGIN_ROOT}/hooks-handlers/context-enrichment.sh\" || true",
             "timeout": 3
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/precompact-dedup.sh",
+            "command": "test -n \"${CLAUDE_PLUGIN_ROOT}\" && bash \"${CLAUDE_PLUGIN_ROOT}/hooks-handlers/precompact-dedup.sh\" || true",
             "timeout": 2
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks-handlers/stop-extract.sh",
+            "command": "test -n \"${CLAUDE_PLUGIN_ROOT}\" && bash \"${CLAUDE_PLUGIN_ROOT}/hooks-handlers/stop-extract.sh\" || true",
             "timeout": 5
           }
         ]
