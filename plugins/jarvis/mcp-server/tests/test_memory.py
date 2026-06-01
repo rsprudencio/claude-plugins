@@ -6,10 +6,154 @@ from tools.memory import (
     _parse_frontmatter_for_file,
     _extract_title_for_file,
     _build_metadata,
+    _sanitize_timestamp,
     _should_skip,
     index_vault,
     index_file,
 )
+
+
+class TestSanitizeTimestamp:
+    """Tests for frontmatter timestamp sanitization.
+
+    Obsidian writes non-standard timezone suffixes that PostgreSQL's
+    ::timestamptz cast rejects; these must be normalized before insert.
+    """
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # Common case: zero offset → Z (unchanged legacy behavior)
+            ("2026-03-02T14:23:17 (UTC +00:00)", "2026-03-02T14:23:17Z"),
+            ("2026-03-02T14:23:17 (GMT +00:00)", "2026-03-02T14:23:17Z"),
+            # Bare zone → Z
+            ("2026-03-02T14:23:17 (UTC)", "2026-03-02T14:23:17Z"),
+            ("2026-03-02T14:23:17 (GMT)", "2026-03-02T14:23:17Z"),
+            # Real offsets preserved (normalized to ±HH:MM)
+            ("2026-03-02T14:23:17 (UTC +1)", "2026-03-02T14:23:17+01:00"),
+            ("2026-03-02T14:23:17 (UTC +05:30)", "2026-03-02T14:23:17+05:30"),
+            ("2026-03-02T14:23:17 (UTC -05:00)", "2026-03-02T14:23:17-05:00"),
+            ("2026-03-02T14:23:17 (GMT -8)", "2026-03-02T14:23:17-08:00"),
+            # No suffix → returned unchanged (stripped)
+            ("2026-03-02T14:23:17Z", "2026-03-02T14:23:17Z"),
+            ("2026-03-02T14:23:17+02:00", "2026-03-02T14:23:17+02:00"),
+        ],
+    )
+    def test_timezone_suffix_variants(self, raw, expected):
+        assert _sanitize_timestamp(raw, "DEFAULT") == expected
+
+    def test_unparseable_string_passes_through(self):
+        # Not a recognized suffix → left as-is so the per-row savepoint in
+        # _upsert_batch can reject it in isolation (honest failure, not a
+        # poisoned batch).
+        assert (
+            _sanitize_timestamp("totally-not-a-timestamp", "DEFAULT")
+            == "totally-not-a-timestamp"
+        )
+
+    def test_does_not_strip_unrelated_trailing_paren(self):
+        # End-anchored to UTC/GMT only — a non-timezone trailing paren stays.
+        val = "2026-03-02T14:23:17 (revised)"
+        assert _sanitize_timestamp(val, "DEFAULT") == val
+
+    def test_timezone_only_value_returns_default(self):
+        # A value that is nothing but a timezone suffix is not a real
+        # timestamp — fall back to default, not a bare offset string.
+        assert _sanitize_timestamp("(UTC +05:30)", "DEFAULT") == "DEFAULT"
+
+    def test_none_returns_default(self):
+        assert _sanitize_timestamp(None, "DEFAULT") == "DEFAULT"
+
+    def test_unix_millis_converted(self):
+        # 1700000000000 ms = 2023-11-14T22:13:20Z
+        assert _sanitize_timestamp(1700000000000, "DEFAULT").startswith(
+            "2023-11-14T"
+        )
+
+    def test_digit_string_treated_as_millis(self):
+        assert _sanitize_timestamp("1700000000000", "DEFAULT").startswith(
+            "2023-11-14T"
+        )
+
+
+class TestFlushBatchAccounting:
+    """_flush_batch must clean up partial files and count all their chunks.
+
+    Guards the regression where per-row isolation could leave a multi-chunk
+    file half-indexed (and miscount chunks_total) when one chunk failed.
+    """
+
+    def test_partial_file_failure_counts_all_chunks_and_cleans_up(
+        self, monkeypatch
+    ):
+        import tools.memory as memory_mod
+
+        # Batch: file A (2 chunks, succeed) + file B (3 chunks, 1 fails).
+        batch_ids = [
+            "vault::A.md#chunk-0",
+            "vault::A.md#chunk-1",
+            "vault::B.md#chunk-0",
+            "vault::B.md#chunk-1",
+            "vault::B.md#chunk-2",
+        ]
+        batch_docs = ["a0", "a1", "b0", "b1", "b2"]
+        batch_meta = [
+            {"parent_file": "A.md"},
+            {"parent_file": "A.md"},
+            {"parent_file": "B.md"},
+            {"parent_file": "B.md"},
+            {"parent_file": "B.md"},
+        ]
+        errors = []
+
+        # Simulate per-row isolation: only B's middle chunk raised.
+        monkeypatch.setattr(
+            memory_mod,
+            "_upsert_batch",
+            lambda ids, docs, metas: [
+                {
+                    "id": "vault::B.md#chunk-1",
+                    "parent_file": "B.md",
+                    "error": "bad ts",
+                }
+            ],
+        )
+        deleted = []
+        monkeypatch.setattr(
+            memory_mod, "_delete_existing_chunks", lambda p: deleted.append(p)
+        )
+
+        files_failed, chunks_failed = memory_mod._flush_batch(
+            batch_ids, batch_docs, batch_meta, errors
+        )
+
+        assert files_failed == 1  # only file B
+        assert chunks_failed == 3  # ALL of B's chunks, not just the 1 that raised
+        assert deleted == ["B.md"]  # partial commit cleaned up
+        assert errors == [{"file": "B.md", "error": "bad ts"}]  # real path, one entry
+
+    def test_clean_batch_returns_zero_and_no_cleanup(self, monkeypatch):
+        import tools.memory as memory_mod
+
+        monkeypatch.setattr(memory_mod, "_upsert_batch", lambda i, d, m: [])
+        deleted = []
+        monkeypatch.setattr(
+            memory_mod, "_delete_existing_chunks", lambda p: deleted.append(p)
+        )
+        errors = []
+
+        result = memory_mod._flush_batch(
+            ["vault::A.md#chunk-0"], ["a"], [{"parent_file": "A.md"}], errors
+        )
+
+        assert result == (0, 0)
+        assert deleted == []
+        assert errors == []
+
+    def test_empty_batch_is_noop(self):
+        import tools.memory as memory_mod
+
+        assert memory_mod._flush_batch([], [], [], []) == (0, 0)
 
 
 class TestParseFrontmatter:

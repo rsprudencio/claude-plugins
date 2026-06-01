@@ -1169,8 +1169,28 @@ class MockConnection:
         cur.execute(sql, params)
         return cur
 
+    def transaction(self):
+        """Mock of psycopg's per-row transaction/savepoint context manager.
+
+        The in-memory store writes immediately (no real transactions), so
+        this is a transparent passthrough. It does NOT suppress exceptions,
+        mirroring psycopg where a failing block rolls back and re-raises —
+        which is what _upsert_batch relies on to record per-row failures.
+        """
+        return _TxnCtx()
+
     def commit(self):
         pass
+
+
+class _TxnCtx:
+    """Context manager wrapping a mock transaction/savepoint (no-op)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
 
 class _CursorCtx:

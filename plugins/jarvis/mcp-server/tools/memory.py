@@ -69,9 +69,33 @@ def _sanitize_timestamp(value, default: str) -> str:
     if isinstance(value, str) and value.isdigit():
         return _sanitize_timestamp(int(value), default)
     if isinstance(value, str) and value:
-        # Strip Obsidian's "(UTC +00:00)" or similar timezone suffixes
-        cleaned = re.sub(r"\s*\(UTC\s*[+\-]\d{2}:\d{2}\)\s*$", "Z", value).strip()
-        return cleaned
+        # Strip Obsidian's non-standard "(UTC ...)" / "(GMT ...)" timezone
+        # suffixes, which PostgreSQL's ::timestamptz cast rejects. Handles
+        # "(UTC +00:00)", "(UTC +1)", "(UTC)", "(GMT -05:00)", etc. A real
+        # offset is preserved (normalized to ±HH:MM); a bare zone or zero
+        # offset becomes "Z". End-anchored so legitimate trailing
+        # parentheticals elsewhere in the value are left untouched.
+        m = re.search(
+            r"\s*\((?:UTC|GMT)\s*([+\-]?\d{1,2})?(?::?(\d{2}))?\s*\)\s*$",
+            value,
+        )
+        if m:
+            base = value[: m.start()].rstrip()
+            if not base:
+                # Value was nothing but a timezone suffix → not a real
+                # timestamp; fall back to the default rather than emit a
+                # bare offset string.
+                return default
+            hours, minutes = m.group(1), m.group(2)
+            if hours is None:
+                offset = "Z"
+            else:
+                sign = "-" if hours.startswith("-") else "+"
+                hh = abs(int(hours))
+                mm = minutes or "00"
+                offset = "Z" if (hh == 0 and mm == "00") else f"{sign}{hh:02d}:{mm}"
+            return f"{base}{offset}"
+        return value.strip()
     return default
 
 
@@ -296,10 +320,24 @@ def _split_columns_metadata(meta: dict) -> tuple:
     return columns, jsonb
 
 
-def _upsert_batch(ids: list, docs: list, metas: list) -> None:
-    """Embed and upsert a batch of documents into obsidian.documents."""
+def _upsert_batch(ids: list, docs: list, metas: list) -> list:
+    """Embed and upsert a batch of documents into obsidian.documents.
+
+    Each row is inserted inside its own transaction/savepoint
+    (``conn.transaction()``), so a single bad row — e.g. an unparseable
+    frontmatter timestamp that fails the ``::timestamptz`` cast — is rolled
+    back in isolation without poisoning its batch siblings. Previously the
+    whole batch shared one transaction, so one bad row silently dropped up to
+    ``_BATCH_SIZE - 1`` other files.
+
+    Returns a list of per-row failures::
+
+        [{"id": ..., "parent_file": ..., "error": ...}, ...]
+
+    An empty list means every row committed.
+    """
     if not ids:
-        return
+        return []
 
     from .embedding import get_embedding_service
     from .schema import _get_pool
@@ -307,13 +345,19 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
     service = get_embedding_service()
     embeddings = service.encode_batch(docs)
 
+    failures: list = []
     pool = _get_pool()
     with pool.connection() as conn:
         with conn.cursor() as cur:
             for doc_id, doc, meta, emb in zip(ids, docs, metas, embeddings):
                 columns, jsonb = _split_columns_metadata(meta)
-                cur.execute(
-                    """INSERT INTO obsidian.documents
+                try:
+                    # Per-row transaction: commits this row on success, rolls
+                    # back only this row on failure (leaving the connection
+                    # usable for the next row).
+                    with conn.transaction():
+                        cur.execute(
+                            """INSERT INTO obsidian.documents
                        (id, document, embedding,
                         parent_file, directory, vault_type, title,
                         chunk_index, chunk_total, chunk_heading,
@@ -338,27 +382,95 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> None:
                            importance_score = EXCLUDED.importance_score,
                            metadata = EXCLUDED.metadata,
                            updated_at = EXCLUDED.updated_at""",
-                    (
-                        doc_id,
-                        doc,
-                        emb,
-                        columns.get("parent_file", ""),
-                        columns.get("directory", ""),
-                        columns.get("vault_type", "document"),
-                        columns.get("title", ""),
-                        columns.get("chunk_index", 0),
-                        columns.get("chunk_total", 1),
-                        columns.get("chunk_heading", ""),
-                        columns.get("importance_score", 0.5),
-                        metadata_to_jsonb(jsonb),
-                        meta.get("created_at"),
-                        meta.get("updated_at"),
-                    ),
-                )
-            conn.commit()
+                            (
+                                doc_id,
+                                doc,
+                                emb,
+                                columns.get("parent_file", ""),
+                                columns.get("directory", ""),
+                                columns.get("vault_type", "document"),
+                                columns.get("title", ""),
+                                columns.get("chunk_index", 0),
+                                columns.get("chunk_total", 1),
+                                columns.get("chunk_heading", ""),
+                                columns.get("importance_score", 0.5),
+                                metadata_to_jsonb(jsonb),
+                                meta.get("created_at"),
+                                meta.get("updated_at"),
+                            ),
+                        )
+                except Exception as row_err:
+                    failures.append(
+                        {
+                            "id": doc_id,
+                            "parent_file": columns.get("parent_file", ""),
+                            "error": str(row_err),
+                        }
+                    )
 
     del embeddings
     gc.collect()
+    return failures
+
+
+def _flush_batch(
+    batch_ids: list, batch_docs: list, batch_meta: list, errors: list
+) -> tuple:
+    """Upsert a batch with per-row isolation and account failures honestly.
+
+    Appends one error per failed file to ``errors`` (using the real file path,
+    not a misattributed sibling) and returns ``(files_failed, chunks_failed)``
+    so the caller can keep its counters truthful. Never raises: a catastrophic
+    failure (embedding/connection level) is attributed to every file in the
+    batch rather than silently swallowed.
+
+    Because rows commit independently, a multi-chunk file with one bad chunk
+    could otherwise leave its other chunks committed — a half-indexed file that
+    a later non-force run would skip (its ``parent_file`` is now in the DB).
+    To preserve the "a file is fully indexed or cleanly absent" invariant, any
+    partially-committed chunks of a failed file are deleted, and ``chunks_failed``
+    counts ALL of that file's chunks in the batch (so ``chunks_total`` matches
+    what actually remains).
+    """
+    if not batch_ids:
+        return 0, 0
+    try:
+        row_failures = _upsert_batch(batch_ids, batch_docs, batch_meta)
+    except Exception as batch_err:
+        logger.error("Batch upsert failed: %s", batch_err)
+        row_failures = [
+            {
+                "id": doc_id,
+                "parent_file": meta.get("parent_file", ""),
+                "error": str(batch_err),
+            }
+            for doc_id, meta in zip(batch_ids, batch_meta)
+        ]
+    if not row_failures:
+        return 0, 0
+    # One representative error per distinct failed file.
+    failed_files: dict = {}
+    for f in row_failures:
+        failed_files.setdefault(f.get("parent_file", ""), f.get("error", ""))
+    for parent_file, err in failed_files.items():
+        errors.append({"file": parent_file, "error": err})
+        # Remove any sibling chunks that committed before this file's bad
+        # chunk failed, so the file is cleanly absent rather than half-indexed.
+        if parent_file:
+            try:
+                _delete_existing_chunks(parent_file)
+            except Exception as cleanup_err:
+                logger.error(
+                    "Failed to clean up partial index for %s: %s",
+                    parent_file,
+                    cleanup_err,
+                )
+    # Count every chunk belonging to a failed file (committed-then-deleted plus
+    # failed rows), not just the rows that raised — so chunks_total stays honest.
+    chunks_failed = sum(
+        1 for meta in batch_meta if meta.get("parent_file", "") in failed_files
+    )
+    return len(failed_files), chunks_failed
 
 
 def index_vault(
@@ -485,13 +597,15 @@ def index_vault(
 
             # Flush batch — always clear even on error to prevent
             # cascade: a failed upsert must not cause an ever-growing
-            # batch that re-encodes all prior items on each retry.
+            # batch that re-encodes all prior items on each retry. Per-row
+            # isolation lives in _upsert_batch; here we keep the counters
+            # honest by backing out any files whose rows failed.
             if len(batch_ids) >= _BATCH_SIZE:
-                try:
-                    _upsert_batch(batch_ids, batch_docs, batch_meta)
-                except Exception as batch_err:
-                    logger.error("Batch upsert failed: %s", batch_err)
-                    errors.append({"file": relative, "error": f"batch: {batch_err}"})
+                files_failed, chunks_failed = _flush_batch(
+                    batch_ids, batch_docs, batch_meta, errors
+                )
+                files_indexed -= files_failed
+                chunks_total -= chunks_failed
                 batch_ids, batch_docs, batch_meta = [], [], []
 
             # Progress every 50 files
@@ -505,11 +619,11 @@ def index_vault(
             errors.append({"file": relative, "error": str(e)})
 
     # Flush remaining
-    try:
-        _upsert_batch(batch_ids, batch_docs, batch_meta)
-    except Exception as e:
-        logger.error("Final batch upsert failed: %s", e)
-        errors.append({"file": "final_batch", "error": str(e)})
+    files_failed, chunks_failed = _flush_batch(
+        batch_ids, batch_docs, batch_meta, errors
+    )
+    files_indexed -= files_failed
+    chunks_total -= chunks_failed
 
     # Get total count from obsidian.documents
     count_result = execute_query(
@@ -584,9 +698,16 @@ def index_file(relative_path: str) -> dict:
             scoring_config,
         )
 
-        # Delete old chunks + upsert new
+        # Delete old chunks + upsert new. _upsert_batch isolates per-row
+        # failures and returns them rather than raising, so a single-file
+        # index must surface those explicitly instead of reporting success.
         _delete_existing_chunks(relative_path)
-        _upsert_batch(ids, docs, metas)
+        failures = _upsert_batch(ids, docs, metas)
+        if failures:
+            return {
+                "success": False,
+                "error": failures[0].get("error", "upsert failed"),
+            }
 
         return {
             "success": True,
