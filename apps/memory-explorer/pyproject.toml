@@ -19,5 +19,13 @@ dependencies = [
 [project.optional-dependencies]
 iam = ["boto3>=1.28.0"]  # AWS IAM auth for Aurora remotes
 
+[dependency-groups]
+# psycopg[binary] ships a prebuilt libpq so tests run without a system install.
+dev = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+    "psycopg[binary]>=3.1.0",
+]
+
 [tool.uv.sources]
 jarvis-common = { path = "../../lib/jarvis-common" }

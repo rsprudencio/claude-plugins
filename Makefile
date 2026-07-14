@@ -52,11 +52,13 @@ help: ## Show available targets
 version: ## Show current plugin version
 	@echo "$(CURRENT_VERSION)"
 
-test: ## Run unit tests (core + obsidian)
+test: ## Run unit tests (core + obsidian + memory-explorer)
 	@echo "$(CYAN)Running jarvis-core unit tests...$(NC)"
-	cd plugins/jarvis/mcp-server && uv run python -m pytest tests/ --ignore=tests/e2e -x -q
+	cd plugins/jarvis/mcp-server && uv run --extra dev python -m pytest tests/ --ignore=tests/e2e -x -q
 	@echo "$(CYAN)Running jarvis-obsidian tests...$(NC)"
-	cd plugins/jarvis-obsidian/mcp-server && python3 -m pytest tests/ -x -q
+	cd plugins/jarvis-obsidian/mcp-server && uv run --extra dev python -m pytest tests/ -x -q
+	@echo "$(CYAN)Running memory-explorer tests...$(NC)"
+	cd apps/memory-explorer && uv run python -m pytest tests/ -x -q
 	@echo "$(GREEN)✓ All unit tests passed$(NC)"
 
 E2E_COMPOSE := plugins/jarvis/mcp-server/docker-compose.e2e.yml

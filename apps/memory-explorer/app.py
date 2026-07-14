@@ -126,6 +126,7 @@ def _discover_sources(local_pool: psycopg_pool.ConnectionPool) -> dict[str, dict
             "schema": "local",
             "table": "memories",
             "has_retrieval_count": True,
+            "has_status": True,
             "capabilities": ["text", "metadata"] + (["semantic"] if sem else []),
             "metadata_filters": ["category", "scope", "project", "source", "status"],
         }
@@ -140,6 +141,7 @@ def _discover_sources(local_pool: psycopg_pool.ConnectionPool) -> dict[str, dict
             "schema": "obsidian",
             "table": "documents",
             "has_retrieval_count": False,
+            "has_status": False,
             "capabilities": ["text", "metadata"] + (["semantic"] if sem else []),
             "metadata_filters": ["vault_type", "directory"],
         }
@@ -373,10 +375,16 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
         sch = sql.Identifier(schema)
         tbl = sql.Identifier(table)
         has_rc = src.get("has_retrieval_count", False)
+        has_status = src.get("has_status", False)
 
         # Exclude soft-deleted items unless user explicitly filters by status
+        # (only applies to sources that actually have a status column)
         _has_status_filter = "status" in req.filters
-        _base_where = sql.SQL("TRUE") if _has_status_filter else sql.SQL("status != 'deleted'")
+        _base_where = (
+            sql.SQL("TRUE")
+            if (_has_status_filter or not has_status)
+            else sql.SQL("status != 'deleted'")
+        )
 
         with _local_pool.connection() as conn:
             conn.execute("SET TRANSACTION READ ONLY")
@@ -418,7 +426,7 @@ def _search_sync(src: dict, req: SearchRequest) -> dict:
 
             else:  # metadata
                 conds, params = _build_conds(req.filters, allowed_filters)
-                if not _has_status_filter:
+                if has_status and not _has_status_filter:
                     conds.append(sql.SQL("status != 'deleted'"))
                 where_sql = sql.SQL(" AND ").join(conds)
                 total = _count_where(conn, schema, table, where_sql, list(params))

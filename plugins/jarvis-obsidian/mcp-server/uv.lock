@@ -362,7 +362,7 @@ wheels = [
 
 [[package]]
 name = "jarvis-common"
-version = "1.0.0"
+version = "1.2.0"
 source = { directory = "../../../lib/jarvis-common" }
 
 [[package]]

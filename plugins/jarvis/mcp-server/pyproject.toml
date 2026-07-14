@@ -1,6 +1,6 @@
 [project]
 name = "jarvis-core"
-version = "3.3.7"
+version = "3.3.8"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.11"
 dependencies = [
@@ -23,6 +23,8 @@ bedrock = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    # Prebuilt libpq so tests run without a system PostgreSQL install.
+    "psycopg[binary]>=3.1.0",
 ]
 
 [project.scripts]
