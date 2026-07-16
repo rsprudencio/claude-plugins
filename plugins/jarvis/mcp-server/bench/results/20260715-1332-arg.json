@@ -1,0 +1,54 @@
+[
+  {
+    "model": "ms-marco-MiniLM-L-6-v2",
+    "hf_path": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "kind": "rerank",
+    "dims": null,
+    "is_baseline": true,
+    "note": "production baseline; BERT-uncased, STRIPS ACCENTS",
+    "ndcg": {
+      "ArguAna": 0.345
+    },
+    "ndcg_mean": 0.345,
+    "pt_clean": null,
+    "pt_polluted": null,
+    "pt_contamination": null,
+    "pt_in_top10": null,
+    "sts": {},
+    "theta_star": null,
+    "theta_accuracy": null,
+    "ms_per_query": null,
+    "ms_per_pair": 3.1,
+    "device": "mps",
+    "ndcg_gain": -0.0552,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": true,
+    "failed": null
+  },
+  {
+    "model": "bge-reranker-v2-m3",
+    "hf_path": "BAAI/bge-reranker-v2-m3",
+    "kind": "rerank",
+    "dims": null,
+    "is_baseline": false,
+    "note": "multilingual m3-family CE; pairs with bge-m3",
+    "ndcg": {
+      "ArguAna": 0.4594
+    },
+    "ndcg_mean": 0.4594,
+    "pt_clean": null,
+    "pt_polluted": null,
+    "pt_contamination": null,
+    "pt_in_top10": null,
+    "sts": {},
+    "theta_star": null,
+    "theta_accuracy": null,
+    "ms_per_query": null,
+    "ms_per_pair": 44.5,
+    "device": "mps",
+    "ndcg_gain": 0.0592,
+    "pt_tokens_per_word": 1.2,
+    "strips_accents": false,
+    "failed": null
+  }
+]

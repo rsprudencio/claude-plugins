@@ -322,9 +322,9 @@ Let user change specific paths. All paths are relative to vault root.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | true | Enable cross-encoder reranking for `/jarvis-recall` results |
+| `enabled` | false | Enable cross-encoder reranking for `/jarvis-recall` results (disabled by default: ms-marco-MiniLM measured net-negative, −0.055 nDCG@10) |
 | `candidate_count` | 100 | How many results to over-fetch for reranking |
-| `top_k` | 10 | Final result count after reranking |
+| `top_k` | 10 | Legacy reranking cap; the caller's `n_results` decides the final result count |
 | `alpha` | 0.7 | Blend weight (0.0=vector only, 1.0=reranker only) |
 | `max_latency_ms` | 1000 | Latency budget before fallback to vector scores |
 | `batch_size` | 32 | Tokenization batch size for ONNX inference |
@@ -338,13 +338,14 @@ Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jar
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | true | Master switch for automatic memory recall |
-| `threshold` | 0.5 | Minimum relevance score (0.4=aggressive, 0.5=balanced, 0.6=conservative) |
+| `threshold` | 0.85 | Minimum raw cosine similarity; higher values favor precision |
 | `budget` | 8000 | Total character budget for injection (split 50/50 between auto-generated content and vault documents) |
+| `max_results` | 20 | Maximum injected matches after thresholding, ranking, and deduplication |
 
 Offer presets:
-- "Balanced" (default) -> `threshold: 0.5, budget: 8000`
-- "Aggressive recall" -> `threshold: 0.4, budget: 12000`
-- "Conservative" -> `threshold: 0.6, budget: 4000`
+- "Balanced" (default) -> `threshold: 0.85, budget: 8000, max_results: 20`
+- "Aggressive recall" -> `threshold: 0.80, budget: 12000, max_results: 20`
+- "Conservative" -> `threshold: 0.88, budget: 4000, max_results: 10`
 - "Disabled" -> `enabled: false`
 - "Custom" -> Ask for each setting individually
 
@@ -372,8 +373,9 @@ default_importance:   0.5
 
 === Context Enrichment ===
 enabled:              true
-threshold:            0.5
+threshold:            0.85
 budget:               8000
+max_results:          20
 
 === Auto-Extract ===
 mode:                 background

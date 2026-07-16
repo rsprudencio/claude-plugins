@@ -1,10 +1,20 @@
-"""Two-phase retrieval with blended scoring.
+"""Unified retrieval scoring — one formula for every schema (Layer 4).
 
-Phase 1 (SQL): pgvector HNSW finds top-N nearest neighbors by embedding distance.
-Phase 2 (Python): Re-rank candidates by blending similarity + effective importance.
+    score = similarity + importance_weight * (effective_importance - 0.5)
 
-This replaces the simple _compute_relevance() model with a configurable
-weighted blend that incorporates importance decay.
+Applied identically to vault chunks, local memories, and remote mirrors:
+
+- No clamp. The old vault formula's min(1.0, ...) pinned saturated chunks in
+  an arbitrary tie at exactly 1.0, destroying top-rank ordering.
+- Importance is a small additive nudge (±importance_weight/2 at the extremes),
+  never a weighted average. The old memory blend (0.7*sim + 0.3*imp) capped
+  memories at 0.94 while clamped vault scores reached 1.0 — a perfect-match
+  memory could never outrank a saturated vault chunk. No convex weighting can
+  fix that; only a single scale can (see passage-ranking-redesign.md, Layer 4).
+- effective_importance is decay-adjusted for memories (score_memory) and the
+  raw importance_score for vault chunks.
+- The relevance threshold gates on raw similarity upstream, never on this
+  boosted score — relevance (gate) and ranking (boost) stay decoupled.
 """
 
 from __future__ import annotations
@@ -13,6 +23,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .decay import compute_effective_importance
+
+DEFAULT_IMPORTANCE_WEIGHT = 0.24
 
 
 def _parse_datetime(value) -> Optional[datetime]:
@@ -30,19 +42,39 @@ def _parse_datetime(value) -> Optional[datetime]:
     return None
 
 
-def compute_blended_score(
+def compute_unified_score(
+    similarity: float,
+    effective_importance: float,
+    *,
+    importance_weight: float = DEFAULT_IMPORTANCE_WEIGHT,
+) -> float:
+    """Score a retrieval candidate on the raw similarity scale.
+
+    Args:
+        similarity: Raw cosine similarity (1 - pgvector cosine distance).
+        effective_importance: Importance 0-1 (decay-adjusted for memories,
+            raw importance_score for vault chunks).
+        importance_weight: Scale of the importance nudge (default 0.24,
+            i.e. ±0.12 at the importance extremes).
+
+    Returns:
+        Unclamped score. Neutral importance (0.5) returns similarity exactly.
+    """
+    return similarity + importance_weight * (effective_importance - 0.5)
+
+
+def score_memory(
     similarity: float,
     base_importance: float,
     created_at: datetime,
     last_retrieved_at: Optional[datetime] = None,
     retrieval_count: int = 0,
     *,
-    similarity_weight: float = 0.7,
-    importance_weight: float = 0.3,
+    importance_weight: float = DEFAULT_IMPORTANCE_WEIGHT,
     decay_config: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> tuple[float, float]:
-    """Compute blended score from similarity and effective importance.
+    """Score a memory: decay-adjust importance, then apply the unified formula.
 
     Args:
         similarity: Cosine similarity (0-1, where 1 = identical).
@@ -50,13 +82,12 @@ def compute_blended_score(
         created_at: Memory creation time.
         last_retrieved_at: Last retrieval time (None = never).
         retrieval_count: Total retrieval count.
-        similarity_weight: Weight for similarity in blend (default 0.7).
-        importance_weight: Weight for importance in blend (default 0.3).
+        importance_weight: Scale of the importance nudge (default 0.24).
         decay_config: Decay parameters (rate, half_life, boost_max, min).
         now: Override current time (for testing).
 
     Returns:
-        Tuple of (blended_score, effective_importance).
+        Tuple of (score, effective_importance).
     """
     if decay_config is None:
         decay_config = {}
@@ -73,53 +104,7 @@ def compute_blended_score(
         now=now,
     )
 
-    blended = (similarity_weight * similarity) + (importance_weight * effective_imp)
-    return blended, effective_imp
-
-
-def rerank_candidates(
-    candidates: list[dict],
-    *,
-    similarity_weight: float = 0.7,
-    importance_weight: float = 0.3,
-    decay_config: Optional[dict] = None,
-    now: Optional[datetime] = None,
-) -> list[dict]:
-    """Re-rank query candidates by blended score.
-
-    Each candidate dict must have:
-    - 'similarity': float (cosine similarity 0-1)
-    - 'base_importance': float (0-1)
-    - 'created_at': datetime or ISO string
-    - 'last_retrieved_at': datetime, ISO string, or None (optional)
-    - 'retrieval_count': int (optional, default 0)
-
-    Adds to each candidate:
-    - 'blended_score': weighted combination
-    - 'effective_importance': decay-adjusted importance
-
-    Returns candidates sorted by blended_score descending.
-    """
-    for c in candidates:
-        created = _parse_datetime(c.get("created_at"))
-        if created is None:
-            created = datetime.now(timezone.utc)
-
-        last_retrieved = _parse_datetime(c.get("last_retrieved_at"))
-
-        blended, eff_imp = compute_blended_score(
-            similarity=c.get("similarity", 0.0),
-            base_importance=c.get("base_importance", 0.5),
-            created_at=created,
-            last_retrieved_at=last_retrieved,
-            retrieval_count=int(c.get("retrieval_count", 0)),
-            similarity_weight=similarity_weight,
-            importance_weight=importance_weight,
-            decay_config=decay_config,
-            now=now,
-        )
-        c["blended_score"] = blended
-        c["effective_importance"] = eff_imp
-
-    candidates.sort(key=lambda c: c["blended_score"], reverse=True)
-    return candidates
+    score = compute_unified_score(
+        similarity, effective_imp, importance_weight=importance_weight
+    )
+    return score, effective_imp

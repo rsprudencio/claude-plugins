@@ -81,6 +81,15 @@ test-all: ## Run unit + e2e tests
 	@echo ""
 	$(MAKE) test-e2e
 
+PRESET ?= core
+KIND   ?= both
+
+bench: ## Benchmark embedding/cross-encoder models (PRESET=core|full KIND=embed|rerank|both)
+	@echo "$(CYAN)Retrieval benchmark — preset=$(PRESET) kind=$(KIND)$(NC)"
+	@echo "$(CYAN)nDCG@10 decides. STS does not select models. See bench/README.md$(NC)"
+	cd plugins/jarvis/mcp-server && \
+		uv run --extra bench python -m bench --preset $(PRESET) --kind $(KIND)
+
 bump: ## Bump version (VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic])
 	@if [ -z "$(VERSION)" ]; then \
 		echo "$(RED)Usage: make bump VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic]$(NC)"; \

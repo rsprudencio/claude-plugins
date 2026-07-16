@@ -66,18 +66,27 @@ def _jaccard_similarity(text_a: str, text_b: str) -> float:
 
 
 def _is_duplicate_observation(content: str, threshold: float) -> bool:
-    """Embedding-relevance dedup for observations."""
+    """Embedding-similarity dedup for observations."""
     result = query_vault(
         query=content,
-        n_results=1,
+        n_results=5,
         filter={"type": "observation"},
     )
     if not result.get("success") or not result.get("results"):
         return False
 
-    top = result["results"][0]
-    relevance = float(top.get("relevance", 0.0))
-    return relevance >= threshold
+    # Duplicate detection is a similarity question — gate on raw similarity,
+    # not the importance-boosted relevance score (an important observation is
+    # not more likely to be a duplicate). query_vault orders by relevance, so
+    # the top hit is not necessarily the nearest-by-similarity observation
+    # (importance nudges and staleness penalties can push a true near-duplicate
+    # below an unrelated-but-fresh one) — take the max similarity across the
+    # candidate window. Fall back to relevance for entries without similarity.
+    best = max(
+        float(r.get("similarity", r.get("relevance", 0.0)))
+        for r in result["results"]
+    )
+    return best >= threshold
 
 
 def _is_duplicate_worklog(task_summary: str, session_id: str, threshold: float) -> bool:
@@ -170,9 +179,10 @@ def get_prompt_context(prompt: str) -> dict:
     todoist_cfg = get_todoist_prompt_alerts_config()
 
     budget = _safe_int(config.get("budget"), 8000)
-    threshold = float(config.get("threshold", 0.5))
+    threshold = float(config.get("threshold", 0.85))
     enabled = bool(config.get("enabled", True))
     debug = bool(config.get("debug", False))
+    max_results = max(1, min(100, _safe_int(config.get("max_results"), 20)))
 
     result = {
         "success": True,
@@ -199,6 +209,7 @@ def get_prompt_context(prompt: str) -> dict:
         budget=budget,
         skip_retrieval_increment=False,
         schemas=_parse_schemas(schemas_str),
+        max_results=max_results,
     )
     result.update(
         {

@@ -230,13 +230,13 @@ class TestRerank:
             result = rerank("query", ["a", "b"], scores, config=None)
             assert result is scores
 
-    def test_cross_schema_normalization_removes_vault_bias(self):
-        """Vector score normalization removes vault inflation bias.
+    def test_cross_encoder_can_flip_vector_ranking(self):
+        """A strong cross-encoder signal can override the vector-score order.
 
-        Vault docs get inflated scores (~1.0) from _compute_relevance while
-        remote/core docs get conservative scores (~0.7) from compute_blended_score.
-        Without normalization, vault docs have an unfair floor in the alpha-blend.
-        With normalization, the cross-encoder controls the final ranking.
+        Min-max normalization puts vector scores and CE scores on the same
+        [0, 1] scale for the alpha-blend; it cannot reorder the vector ranking
+        itself (cross-schema comparability comes from the unified scoring in
+        tools/ranking.py). The CE component is what reorders.
         """
         # Vault doc (inflated to 1.0) vs remote doc (conservative 0.7)
         scores = [1.0, 0.7]
@@ -550,7 +550,9 @@ class TestRerankingConfig:
         from tools.config import get_reranking_config
 
         config = get_reranking_config()
-        assert config["enabled"] is True
+        # Disabled by default: ms-marco-MiniLM measured net-negative
+        # (−0.055 nDCG@10 on ArguAna vs the bi-encoder alone).
+        assert config["enabled"] is False
         assert config["candidate_count"] == 100
         assert config["top_k"] == 10
         assert config["alpha"] == 0.7
@@ -573,7 +575,7 @@ class TestRerankingConfig:
 
         config = get_reranking_config()
         assert config["top_k"] == 5
-        assert config["enabled"] is True  # default preserved
+        assert config["enabled"] is False  # default preserved
 
 
 class TestQueryVaultReranking:
@@ -607,6 +609,7 @@ class TestQueryVaultReranking:
         """When reranking succeeds, response includes reranking metadata."""
         self._reset_db(mock_config)
         self._index_test_files(mock_config)
+        mock_config.set(memory={"reranking": {"enabled": True}})
 
         from tools.query import query_vault
 
@@ -671,12 +674,13 @@ class TestQueryVaultReranking:
             assert result["success"] is True
 
 
-    def test_reranking_uses_top_k(self, mock_config):
-        """When reranking succeeds, result count uses top_k from config."""
+    def test_reranking_honors_n_results_not_top_k(self, mock_config):
+        """Defect #8: the caller's n_results decides the result count — the
+        old code silently returned top_k (10) when reranking applied."""
         self._reset_db(mock_config)
         self._index_test_files(mock_config)
         mock_config.set(
-            memory={"reranking": {"enabled": True, "top_k": 2}}
+            memory={"reranking": {"enabled": True, "top_k": 10}}
         )
 
         from tools.query import query_vault
@@ -690,8 +694,11 @@ class TestQueryVaultReranking:
         with patch("tools.reranking._init_model", return_value=True), patch(
             "tools.reranking._session", mock_session
         ), patch("tools.reranking._tokenizer", mock_tokenizer):
-            result = query_vault("test", n_results=10)
+            result = query_vault("test", n_results=2)
             assert result["success"] is True
-            # Should be capped by top_k=2
+            # Caller asked for 2 — top_k=10 must not expand the result set
             assert len(result["results"]) <= 2
+            # Must be unconditional — without it, the count assertion also
+            # passes when reranking silently fails to apply (vacuous).
+            assert result["reranking"]["applied"] is True
 

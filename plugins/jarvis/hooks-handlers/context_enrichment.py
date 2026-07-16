@@ -74,6 +74,9 @@ def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
     try:
         TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
         scores = [m["relevance"] for m in matches]
+        # The threshold gates on raw similarity, not relevance — log both so
+        # recalibration analyzes the quantity the gate actually compares.
+        similarities = [m.get("similarity", 0.0) for m in matches]
         n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")
         budget = result.get("budget_used", {})
         entry = {
@@ -84,6 +87,7 @@ def _write_telemetry(prompt: str, query_ms: int, matches: list, result: dict):
             "n_core": len(matches) - n_vault,
             "n_vault": n_vault,
             "scores": [round(s, 3) for s in scores],
+            "similarities": [round(s, 3) for s in similarities],
             "budget_local_used": budget.get("local", 0),
             "budget_vault_used": budget.get("vault", 0),
             "budget_remote_used": budget.get("remote", 0),

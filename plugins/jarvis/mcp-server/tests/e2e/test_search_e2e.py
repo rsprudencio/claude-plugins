@@ -117,3 +117,80 @@ def test_vault_document_search(e2e_config):
     result = query_vault("Python list comprehension", n_results=5)
     assert result["success"] is True
     assert len(result["results"]) >= 1
+
+
+def test_self_match_memory_ranks_first(e2e_config):
+    """Defect #6 regression (Layer 4 unified scoring): a perfect-match memory
+    must rank #1, even against high-similarity, high-importance, freshly
+    indexed vault chunks.
+
+    Under the pre-v3.4.0 formulas this fails: the memory's blended score
+    capped at 0.7*1.0 + 0.3*0.8 = 0.94 while the vault chunk's clamped score
+    pinned at min(1.0, 0.95 + 0.096 + 0.08) = 1.0 — in production a memory
+    queried with its own embedding ranked #2534 of 2,864.
+    """
+    import math
+
+    from tools.content import content_write
+    from tools.embedding import get_embedding_service
+    from tools.memory import index_file
+    from tools.query import query_vault
+    from tools.schema import execute_query
+
+    # Text chosen to trigger no query expansion (expansion would change the
+    # query embedding and break the exact self-match).
+    memory_text = (
+        "Quantum chromodynamics lattice simulation favors staggered fermions"
+    )
+    write_result = content_write(
+        content=memory_text,
+        content_type="learning",
+        importance_score=0.8,
+        skip_secret_scan=True,
+    )
+    assert write_result["success"] is True
+    memory_id = write_result["id"]
+
+    # Vault decoy: index a real file, then plant an embedding at cosine ~0.9
+    # to the query vector — a strong-but-imperfect match with high importance.
+    vault_dir = e2e_config["vault_dir"]
+    decoy_file = vault_dir / "notes" / "decoy.md"
+    decoy_file.write_text(
+        "---\ntype: note\nimportance: high\n---\n"
+        "# Decoy\n\nStrong but imperfect match content."
+    )
+    # Relative path — index_file stores it verbatim as parent_file
+    index_result = index_file("notes/decoy.md")
+    assert index_result["success"] is True
+
+    v = get_embedding_service().encode(memory_text)
+    # Unit vector orthogonal to v (Gram-Schmidt on e0)
+    e0 = [1.0] + [0.0] * (len(v) - 1)
+    dot = sum(a * b for a, b in zip(e0, v))
+    u = [a - dot * b for a, b in zip(e0, v)]
+    norm = math.sqrt(sum(x * x for x in u))
+    u = [x / norm for x in u]
+    # cos(v, w) = 0.9 exactly (before halfvec rounding)
+    w = [0.9 * a + math.sqrt(1 - 0.81) * b for a, b in zip(v, u)]
+
+    updated = execute_query(
+        "UPDATE obsidian.documents SET embedding = %s::halfvec, "
+        "importance_score = 0.9 WHERE parent_file = %s RETURNING id",
+        ("[" + ",".join(f"{x:.8f}" for x in w) + "]", "notes/decoy.md"),
+    )
+    assert len(updated) == 1
+
+    result = query_vault(memory_text, n_results=5)
+    assert result["success"] is True
+    assert len(result["results"]) >= 2
+
+    top = result["results"][0]
+    assert top["id"] == memory_id, (
+        f"perfect-match memory must rank #1, got {top['id']} "
+        f"(relevance {top['relevance']}, similarity {top.get('similarity')})"
+    )
+    # The decoy must still be present and strong — otherwise this test isn't
+    # exercising the cross-schema comparison at all.
+    decoy_hits = [r for r in result["results"] if r["path"] == "notes/decoy.md"]
+    assert decoy_hits, "decoy chunk must appear in results"
+    assert decoy_hits[0]["similarity"] >= 0.85

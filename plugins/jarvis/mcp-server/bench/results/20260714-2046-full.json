@@ -1,0 +1,290 @@
+[
+  {
+    "model": "granite-small-en-r2",
+    "hf_path": "ibm-granite/granite-embedding-small-english-r2",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": true,
+    "note": "production baseline (R2, English-only)",
+    "ndcg": {
+      "SciFact": 0.7554,
+      "NFCorpus": 0.3697,
+      "ArguAna": 0.3964
+    },
+    "ndcg_mean": 0.5072,
+    "pt_clean": 0.7554,
+    "pt_polluted": 0.7554,
+    "pt_contamination": 0.0,
+    "pt_in_top10": 0.03,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.7686,
+      "STSBenchmarkMultilingualSTS/pt": 0.6008,
+      "Assin2STS/pt": 0.5588
+    },
+    "theta_star": 0.88,
+    "theta_accuracy": 0.9083,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 2.3,
+    "strips_accents": false,
+    "failed": null
+  },
+  {
+    "model": "granite-97m-multi-r2",
+    "hf_path": "ibm-granite/granite-embedding-97m-multilingual-r2",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": false,
+    "note": "R2 multilingual, small",
+    "ndcg": {
+      "SciFact": 0.6867,
+      "NFCorpus": 0.2922,
+      "ArguAna": 0.3917
+    },
+    "ndcg_mean": 0.4569,
+    "pt_clean": 0.6867,
+    "pt_polluted": 0.6812,
+    "pt_contamination": -0.0055,
+    "pt_in_top10": 0.39,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.7781,
+      "STSBenchmarkMultilingualSTS/pt": 0.7123,
+      "Assin2STS/pt": 0.6644
+    },
+    "theta_star": 0.87,
+    "theta_accuracy": 0.9032,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": false,
+    "failed": null
+  },
+  {
+    "model": "granite-311m-multi-r2",
+    "hf_path": "ibm-granite/granite-embedding-311m-multilingual-r2",
+    "kind": "embed",
+    "dims": 768,
+    "is_baseline": false,
+    "note": "R2 multilingual, large; ships ONNX incl. quantized",
+    "ndcg": {
+      "SciFact": 0.7089,
+      "NFCorpus": 0.3108,
+      "ArguAna": 0.4179
+    },
+    "ndcg_mean": 0.4792,
+    "pt_clean": 0.7089,
+    "pt_polluted": 0.7049,
+    "pt_contamination": -0.004,
+    "pt_in_top10": 0.36,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.7898,
+      "STSBenchmarkMultilingualSTS/pt": 0.7586,
+      "Assin2STS/pt": 0.6861
+    },
+    "theta_star": 0.88,
+    "theta_accuracy": 0.9083,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": false,
+    "failed": null
+  },
+  {
+    "model": "granite-107m-multi-r1",
+    "hf_path": "ibm-granite/granite-embedding-107m-multilingual",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": false,
+    "note": "R1 generation \u2014 kept as a control",
+    "ndcg": {
+      "SciFact": 0.6285,
+      "NFCorpus": 0.2697,
+      "ArguAna": 0.3802
+    },
+    "ndcg_mean": 0.4261,
+    "pt_clean": 0.6285,
+    "pt_polluted": 0.6233,
+    "pt_contamination": -0.0052,
+    "pt_in_top10": 0.65,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.7698,
+      "STSBenchmarkMultilingualSTS/pt": 0.7542,
+      "Assin2STS/pt": 0.6631
+    },
+    "theta_star": 0.765,
+    "theta_accuracy": 0.896,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.2,
+    "strips_accents": false,
+    "failed": null
+  },
+  {
+    "model": "bge-small-en-v1.5",
+    "hf_path": "BAAI/bge-small-en-v1.5",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": false,
+    "note": "BERT-uncased: STRIPS ACCENTS (gra\u00e7a -> graca)",
+    "ndcg": {
+      "SciFact": 0.72,
+      "NFCorpus": 0.3371,
+      "ArguAna": 0.4287
+    },
+    "ndcg_mean": 0.4953,
+    "pt_clean": 0.72,
+    "pt_polluted": 0.72,
+    "pt_contamination": 0.0,
+    "pt_in_top10": 0.03,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.8586,
+      "STSBenchmarkMultilingualSTS/pt": 0.6568,
+      "Assin2STS/pt": 0.5661
+    },
+    "theta_star": 0.74,
+    "theta_accuracy": 0.9439,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": true,
+    "failed": null
+  },
+  {
+    "model": "bge-base-en-v1.5",
+    "hf_path": "BAAI/bge-base-en-v1.5",
+    "kind": "embed",
+    "dims": 768,
+    "is_baseline": false,
+    "note": "",
+    "ndcg": {
+      "SciFact": 0.7376,
+      "NFCorpus": 0.3694,
+      "ArguAna": 0.453
+    },
+    "ndcg_mean": 0.52,
+    "pt_clean": 0.7376,
+    "pt_polluted": 0.7376,
+    "pt_contamination": 0.0,
+    "pt_in_top10": 0.01,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.8642,
+      "STSBenchmarkMultilingualSTS/pt": 0.6571,
+      "Assin2STS/pt": 0.5563
+    },
+    "theta_star": 0.705,
+    "theta_accuracy": 0.945,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": true,
+    "failed": null
+  },
+  {
+    "model": "e5-small-v2",
+    "hf_path": "intfloat/e5-small-v2",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": false,
+    "note": "",
+    "ndcg": {
+      "SciFact": 0.6797,
+      "NFCorpus": 0.3173,
+      "ArguAna": 0.3444
+    },
+    "ndcg_mean": 0.4471,
+    "pt_clean": 0.6797,
+    "pt_polluted": 0.6797,
+    "pt_contamination": 0.0,
+    "pt_in_top10": 0.05,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.8492,
+      "STSBenchmarkMultilingualSTS/pt": 0.6857,
+      "Assin2STS/pt": 0.6246
+    },
+    "theta_star": 0.88,
+    "theta_accuracy": 0.948,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.9,
+    "strips_accents": true,
+    "failed": null
+  },
+  {
+    "model": "multilingual-e5-small",
+    "hf_path": "intfloat/multilingual-e5-small",
+    "kind": "embed",
+    "dims": 384,
+    "is_baseline": false,
+    "note": "",
+    "ndcg": {
+      "SciFact": 0.6694,
+      "NFCorpus": 0.3044,
+      "ArguAna": 0.359
+    },
+    "ndcg_mean": 0.4443,
+    "pt_clean": 0.6694,
+    "pt_polluted": 0.6683,
+    "pt_contamination": -0.0011,
+    "pt_in_top10": 0.04,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.8359,
+      "STSBenchmarkMultilingualSTS/pt": 0.7773,
+      "Assin2STS/pt": 0.7427
+    },
+    "theta_star": 0.89,
+    "theta_accuracy": 0.9256,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.2,
+    "strips_accents": false,
+    "failed": null
+  },
+  {
+    "model": "multilingual-e5-base",
+    "hf_path": "intfloat/multilingual-e5-base",
+    "kind": "embed",
+    "dims": 768,
+    "is_baseline": false,
+    "note": "",
+    "ndcg": {
+      "SciFact": 0.6887,
+      "NFCorpus": 0.3105,
+      "ArguAna": 0.3548
+    },
+    "ndcg_mean": 0.4513,
+    "pt_clean": 0.6887,
+    "pt_polluted": 0.6887,
+    "pt_contamination": 0.0,
+    "pt_in_top10": 0.01,
+    "sts": {
+      "STSBenchmarkMultilingualSTS/en": 0.842,
+      "STSBenchmarkMultilingualSTS/pt": 0.7768,
+      "Assin2STS/pt": 0.7445
+    },
+    "theta_star": 0.885,
+    "theta_accuracy": 0.9337,
+    "ms_per_query": null,
+    "ms_per_pair": null,
+    "device": "mps",
+    "ndcg_gain": null,
+    "pt_tokens_per_word": 1.2,
+    "strips_accents": false,
+    "failed": null
+  }
+]

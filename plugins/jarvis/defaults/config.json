@@ -30,8 +30,9 @@
     },
     "context_enrichment": {
       "enabled": true,
-      "threshold": 0.5,
+      "threshold": 0.85,
       "budget": 8000,
+      "max_results": 20,
       "debug": false,
       "passive_retrieval_increment": 0.01,
       "schemas": "all"
@@ -55,7 +56,7 @@
       "intent_patterns": []
     },
     "reranking": {
-      "enabled": true,
+      "enabled": false,
       "candidate_count": 100,
       "top_k": 10,
       "alpha": 0.7,
@@ -96,8 +97,7 @@
       "min_importance": 0.05
     },
     "ranking": {
-      "similarity_weight": 0.7,
-      "importance_weight": 0.3,
+      "importance_weight": 0.24,
       "overfetch_factor": 5
     },
     "consolidation": {

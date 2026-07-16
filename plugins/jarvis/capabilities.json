@@ -484,8 +484,8 @@
       "semantic_search": "Vector similarity search across all indexed content via pgvector",
       "auto_index": "Every .md vault file written through jarvis_store is auto-indexed to PostgreSQL pgvector",
       "secret_detection": "Regex scanner blocks secrets (API keys, passwords) from being stored",
-      "recency_boost": "Recent content (within configurable days) gets boosted in search ranking",
-      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2) for improved precision on /jarvis-recall and jarvis_retrieve(query=...). Applied after vector search, not to context enrichment.",
+      "recency_boost": "Recency contributes to the importance score at index time (exponential decay, memory_scoring.recency_half_life_days). There is no query-time recency boost since v3.4.0 — updated_at is the reindex timestamp, not an authoring date.",
+      "cross_encoder_reranking": "Second-stage pairwise reranking using ONNX cross-encoder model (ms-marco-MiniLM-L-6-v2). DISABLED by default since v3.4.0: measured net-negative on retrieval quality (\u22120.055 nDCG@10 on ArguAna vs the bi-encoder alone). Re-enable only with a reranker that measurably improves labeled nDCG.",
       "conflict_detection": {
         "description": "Automatic contradiction detection on content writes — supersedes stale entries when new content contradicts them",
         "pipeline": ["negation pre-filter (cheap regex gate)", "embedding similarity + Jaccard word divergence", "optional LLM verification (Haiku)"],
@@ -518,7 +518,7 @@
         "worklog": "Single worklog entry per extraction capturing what the user was working on, categorized by workstream"
       },
       "dedup": {
-        "observations": "Global dedup via pgvector embedding relevance score. If the nearest existing observation has relevance >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
+        "observations": "Global dedup via pgvector embedding similarity. If the nearest existing observation has raw similarity >= threshold, the new observation is skipped. Configurable at memory.auto_extract.dedup_threshold (default 0.95).",
         "worklogs": "Cross-session dedup via Jaccard word-overlap against last 20 worklogs globally. Prevents redundant entries across sessions for the same workstream. Configurable at memory.worklog.dedup_threshold (default 0.5)."
       }
     },
@@ -577,7 +577,7 @@
     "memory": {
       "secret_detection": { "type": "boolean", "default": true, "description": "Enable secret scanning before memory writes" },
       "importance_scoring": { "type": "boolean", "default": true, "description": "Enable importance scoring" },
-      "recency_boost_days": { "type": "integer", "default": 7, "description": "Days within which recency boost is applied" },
+      "recency_boost_days": { "type": "integer", "default": 7, "description": "Legacy key, no longer consumed — recency lives in memory_scoring.recency_half_life_days (index-time importance)" },
       "default_importance": { "type": "number", "default": 0.5, "description": "Default importance score (0.0-1.0) for new memories" },
       "postgres_url": { "type": "string", "default": "postgresql://jarvis:jarvis@localhost:5432/jarvis", "description": "PostgreSQL connection URL for pgvector storage" }
     },
@@ -586,14 +586,15 @@
       "mode": { "type": "string", "default": "background", "options": ["disabled", "background"] },
       "min_turn_chars": { "type": "integer", "default": 200, "description": "Minimum text in a turn to trigger extraction" },
       "max_transcript_lines": { "type": "integer", "default": 500, "description": "Max new lines to read from transcript per invocation" },
-      "dedup_threshold": { "type": "float", "default": 0.95, "description": "Embedding relevance threshold for observation dedup. Higher = stricter (fewer false positives). Lower = catches more duplicates. Scale: 0.0 = unrelated, 1.0 = identical meaning." },
+      "dedup_threshold": { "type": "float", "default": 0.95, "description": "Raw cosine-similarity threshold for observation dedup. Higher = stricter (fewer false positives). Lower = catches more duplicates. Scale: -1.0 to 1.0; 1.0 is identical direction." },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging to ~/.jarvis/debug.auto-extraction.log" }
     },
 
     "memory_context_enrichment": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
-      "threshold": { "type": "float", "default": 0.5, "description": "Minimum relevance score for injection (0.4=aggressive, 0.5=balanced, 0.6=conservative)" },
+      "threshold": { "type": "float", "default": 0.85, "description": "Minimum raw cosine similarity for injection. Importance boosts never rescue an off-topic match. This is an interim high-precision gate; recalibrate on labeled real usage." },
       "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (3-way split: local/vault/remote when remote schemas present, otherwise 50/50 local/vault; unused budget overflows to other buckets)" },
+      "max_results": { "type": "integer", "default": 20, "description": "Maximum memories injected after thresholding, ranking, and deduplication. The character budget may reduce this further." },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for context enrichment" },
       "passive_retrieval_increment": { "type": "float", "default": 0.01, "description": "Fractional retrieval_count bump per passive surfacing (0=disabled, 0.01=default, 1.0=same as explicit recall)" },
       "schemas": { "type": "string", "default": "all", "description": "Which schemas to search: 'all' (default), 'local', 'obsidian', or comma-separated (e.g. 'local,remote_personio')" }
@@ -621,9 +622,9 @@
     },
 
     "memory_reranking": {
-      "enabled": { "type": "boolean", "default": true, "description": "Enable cross-encoder reranking for query_vault() results. Uses ONNX model (~23MB, downloaded on first use)." },
+      "enabled": { "type": "boolean", "default": false, "description": "Enable cross-encoder reranking for query_vault() results. Disabled by default: ms-marco-MiniLM measured net-negative (\u22120.055 nDCG@10). Uses ONNX model (~23MB, downloaded on first use)." },
       "candidate_count": { "type": "integer", "default": 100, "description": "How many results to over-fetch from pgvector for reranking" },
-      "top_k": { "type": "integer", "default": 10, "description": "Final result count after reranking" },
+      "top_k": { "type": "integer", "default": 10, "description": "Legacy reranking cap; the caller's n_results decides the final result count" },
       "alpha": { "type": "float", "default": 0.7, "description": "Blend weight: 0.0=vector only, 1.0=reranker only, 0.7=recommended blend" },
       "max_latency_ms": { "type": "integer", "default": 1000, "description": "Latency budget — if exceeded, falls back to vector scores" },
       "batch_size": { "type": "integer", "default": 32, "description": "Tokenization batch size for ONNX inference" }

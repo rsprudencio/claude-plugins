@@ -339,8 +339,10 @@ class TestConfigGetters:
     def test_get_ranking_config_defaults(self, mock_cfg):
         from tools.config import get_ranking_config
         cfg = get_ranking_config()
-        assert cfg["similarity_weight"] == 0.7
-        assert cfg["importance_weight"] == 0.3
+        # Unified scoring (Layer 4): single additive importance nudge —
+        # the old similarity_weight/importance_weight blend is gone.
+        assert "similarity_weight" not in cfg
+        assert cfg["importance_weight"] == 0.24
         assert cfg["overfetch_factor"] == 5
 
     @patch("tools.config.get_config", return_value={})

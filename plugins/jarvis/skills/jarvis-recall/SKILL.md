@@ -78,9 +78,9 @@ Pass as `filter` parameter to `jarvis_retrieve(query=...)`.
 
 ## Cross-Encoder Reranking
 
-When enabled (default), results are reranked using a cross-encoder model after initial vector search. This improves precision for nuanced queries.
+**Disabled by default since v3.4.0**: the ms-marco-MiniLM cross-encoder measured net-negative on retrieval quality (−0.055 nDCG@10 on ArguAna vs the bi-encoder alone). Re-enable only with a reranker that measurably improves labeled nDCG.
 
-- **Response metadata**: When reranking is applied, the response includes `reranking: {applied: true, alpha: 0.7, candidates: N, top_k: K}`
+- **Response metadata**: When reranking is applied, the response includes `reranking: {applied: true, alpha: 0.7, candidates: N, top_k: K}`. The final result count always honors the caller's `n_results`.
 - **Graceful fallback**: If the model isn't available or latency exceeds budget, vector scores are used silently
 - **First use**: The ONNX model (~23MB) is downloaded automatically to `~/.jarvis/models/cross-encoder/`
 - **Not applied to context enrichment** (`semantic_context`) — only to explicit `/jarvis-recall` queries

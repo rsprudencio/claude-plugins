@@ -1,6 +1,6 @@
 [project]
 name = "jarvis-core"
-version = "3.3.8"
+version = "3.4.0"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.11"
 dependencies = [
@@ -25,6 +25,15 @@ dev = [
     "pytest-cov>=4.0.0",
     # Prebuilt libpq so tests run without a system PostgreSQL install.
     "psycopg[binary]>=3.1.0",
+]
+# Retrieval benchmark (bench/). Heavy, and NOT shipped in the Docker image —
+# torch and the MTEB dataset suite are only needed to evaluate candidate models.
+# mteb pulls pytrec-eval-terrier, which compiles C++ (needs a toolchain).
+bench = [
+    "mteb>=2.0.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.0.0",
+    "scipy>=1.11.0",
 ]
 
 [project.scripts]

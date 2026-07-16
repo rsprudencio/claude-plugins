@@ -377,11 +377,65 @@ class TestSemanticContext:
             ],
         )
 
-        # High threshold should return fewer/no results for off-topic query
+        # High threshold should return fewer/no results for off-topic query.
+        # The gate compares RAW similarity (not the importance-boosted
+        # relevance), so importance can never rescue an off-topic match.
         result = semantic_context("chocolate cake recipe", threshold=0.9)
-        # With very high threshold, only extremely relevant results pass
         for match in result["matches"]:
-            assert match["relevance"] >= 0.9
+            assert match["similarity"] >= 0.9
+
+    def test_threshold_gates_on_raw_similarity_not_boosted_relevance(
+        self, mock_config
+    ):
+        """Importance can never rescue an off-topic match past the gate, and
+        can never sink an on-topic one below it — relevance (gate) and
+        ranking (boost) are decoupled."""
+        from unittest.mock import patch
+
+        from tools.query import semantic_context
+
+        # Seed one real doc so the non-empty-collection check passes
+        _seed_docs(
+            mock_config.db,
+            ids=["vault::notes/filler.md"],
+            documents=["Filler document"],
+            metadatas=[{"vault_type": "note", "directory": "notes"}],
+        )
+
+        def _row(doc_id, distance, importance):
+            parent = doc_id.replace("vault::", "").split("#")[0]
+            return {
+                "id": doc_id,
+                "document": f"content for {parent}",
+                "distance": distance,
+                "_schema": "obsidian",
+                "parent_file": parent,
+                "directory": "notes",
+                "vault_type": "note",
+                "title": "T",
+                "chunk_index": 0,
+                "chunk_total": 1,
+                "chunk_heading": "",
+                "importance_score": importance,
+                "metadata": {},
+            }
+
+        rows = [
+            # similarity 0.7, importance 1.0 → boosted relevance 0.82
+            _row("vault::notes/important-offtopic.md", 0.3, 1.0),
+            # similarity 0.8, importance 0.0 → boosted relevance 0.68
+            _row("vault::notes/plain-ontopic.md", 0.2, 0.0),
+        ]
+        with patch("tools.query._cross_schema_search", return_value=rows):
+            result = semantic_context("unrelated query", threshold=0.75)
+
+        ids = [m["id"] for m in result["matches"]]
+        # Gate on boosted relevance would pass this (0.82 >= 0.75); the raw
+        # similarity gate must filter it (0.7 < 0.75).
+        assert "notes/important-offtopic.md" not in ids
+        # Gate on boosted relevance would filter this (0.68 < 0.75); the raw
+        # similarity gate must pass it (0.8 >= 0.75).
+        assert "notes/plain-ontopic.md" in ids
 
     def test_budget_limits_results(self, mock_config):
         """Small budget limits number of returned matches."""
@@ -406,6 +460,32 @@ class TestSemanticContext:
         # Large budget should return more
         result_large = semantic_context("career goals", budget=8000, threshold=0.0)
         assert len(result_small["matches"]) <= len(result_large["matches"])
+
+    def test_max_results_caps_injection_after_ranking(self, mock_config):
+        """The injection count is capped independently of a generous budget."""
+        from tools.query import semantic_context
+
+        ids = [f"vault::notes/capped{i}.md" for i in range(30)]
+        docs = [f"Career leadership planning memory {i}" for i in range(30)]
+        metas = [
+            {
+                "vault_type": "note",
+                "directory": "notes",
+                "title": f"Capped {i}",
+                "importance_score": 0.5,
+            }
+            for i in range(30)
+        ]
+        _seed_docs(mock_config.db, ids, docs, metas)
+
+        result = semantic_context(
+            "career leadership planning",
+            threshold=-1.0,
+            budget=100_000,
+            max_results=20,
+        )
+
+        assert len(result["matches"]) == 20
 
     def test_sensitive_dirs_excluded(self, mock_config):
         """Results from documents/ and people/ are never returned."""
@@ -582,7 +662,9 @@ class TestSemanticContext:
         # Budget=2000: half=1000 per side
         # Vault side: 1000/120 ≈ 8 refs (enough for all 5)
         # Core side: 1000/~300 ≈ 3 obs (enough for all 3)
-        result = semantic_context("career goals leadership", budget=2000, threshold=0.0)
+        # Raw cosine spans -1..1; disable the quality gate so this test isolates
+        # budget allocation across schemas.
+        result = semantic_context("career goals leadership", budget=2000, threshold=-1.0)
         matches = result["matches"]
 
         vault_matches = [m for m in matches if m.get("display_mode") == "reference"]
@@ -646,8 +728,9 @@ class TestContextEnrichmentConfig:
 
         config = get_context_enrichment_config()
         assert config["enabled"] is True
-        assert config["threshold"] == 0.5
+        assert config["threshold"] == 0.85
         assert config["budget"] == 8000
+        assert config["max_results"] == 20
         assert config["passive_retrieval_increment"] == 0.01
 
     def test_disabled(self, mock_config):
@@ -804,3 +887,46 @@ class TestDedupIntegration:
         self.mock_filter.assert_called_once()
         call_args = self.mock_filter.call_args
         assert call_args[0][1] == ""  # No session_id in direct mode
+
+
+class TestDecayDisabledScoring:
+    """When memory.decay.enabled is False, core-like rows route through the
+    unified formula with RAW base importance — same scale as vault chunks."""
+
+    def test_decay_disabled_memory_scores_with_raw_importance(self, mock_config):
+        from unittest.mock import patch
+
+        from tools.query import semantic_context
+        from tools.ranking import compute_unified_score
+
+        mock_config.set(memory={"decay": {"enabled": False}})
+
+        # Seed one real doc so the non-empty-collection check passes
+        _seed_docs(
+            mock_config.db,
+            ids=["vault::notes/filler2.md"],
+            documents=["Filler document two"],
+            metadatas=[{"vault_type": "note", "directory": "notes"}],
+        )
+
+        row = {
+            "id": "obs::1738850000000",
+            "document": "memory content",
+            "distance": 0.08,  # raw cosine similarity 0.92
+            "_schema": "local",
+            "category": "observation",
+            "scope": "global",
+            "source": "auto-extract",
+            "importance_score": 0.9,
+            "metadata": {},
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        with patch("tools.query._cross_schema_search", return_value=[row]):
+            result = semantic_context("decay disabled scoring", threshold=0.0)
+
+        assert len(result["matches"]) == 1
+        match = result["matches"][0]
+        similarity = 1.0 - 0.08
+        expected = compute_unified_score(similarity, 0.9)
+        assert match["relevance"] == round(expected, 3)
+        assert match["similarity"] == round(similarity, 3)

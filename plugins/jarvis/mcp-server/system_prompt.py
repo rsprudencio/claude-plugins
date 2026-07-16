@@ -127,7 +127,7 @@ Jarvis supports syncing memories to multiple remote PostgreSQL instances via an 
 ## Importance Decay & Consolidation
 Jarvis uses time-based importance decay and LLM-driven consolidation to maintain memory quality.
 - **Decay**: Memories lose effective importance over time unless reinforced by retrieval. Computed at query time — no background mutations.
-- **Two-phase retrieval**: pgvector HNSW finds candidates → Python re-ranks by blended score (similarity + effective importance).
+- **Two-phase retrieval**: pgvector HNSW finds candidates → Python scores every schema with one unified formula (raw similarity + a small effective-importance nudge, no clamp).
 - **Consolidation**: ANN-based clustering finds redundant memory groups. LLM synthesizes summaries with provenance. Contradictions flagged, never auto-resolved.
 - **Management**: `/jarvis-consolidate` skill for dry-run, interactive review, and undo.
 - Consolidation is **disabled by default** — zero overhead until explicitly enabled.

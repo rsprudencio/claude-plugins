@@ -61,6 +61,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
         budget=1200,
         skip_retrieval_increment=False,
         schemas=None,  # default "all" → _parse_schemas returns None
+        max_results=20,
     )
     assert result["success"] is True
     assert len(result["matches"]) == 1
@@ -356,3 +357,42 @@ def test_observation_project_scope_kept_when_files_inside_project(monkeypatch):
     meta = calls[0]["extra_metadata"]
     assert meta.get("scope") == "project"
     assert meta.get("project") == "personio-framework"
+
+
+def test_observation_dedup_gates_on_similarity_not_relevance(monkeypatch):
+    """Dedup is a similarity question: an importance-boosted relevance above
+    the threshold must NOT trigger dedup when raw similarity is below it."""
+    monkeypatch.setattr(
+        hook_endpoints,
+        "query_vault",
+        lambda **kwargs: {
+            "success": True,
+            "results": [{"similarity": 0.93, "relevance": 0.97, "preview": "x"}],
+        },
+    )
+    assert hook_endpoints._is_duplicate_observation("content", 0.95) is False
+
+
+def test_observation_dedup_takes_max_similarity_across_window(monkeypatch):
+    """query_vault orders by relevance, so the nearest-by-similarity candidate
+    can rank below fresher entries — the gate must scan the whole candidate
+    window for the max similarity, not just the top-by-relevance hit."""
+    captured = {}
+
+    def fake_query_vault(**kwargs):
+        captured.update(kwargs)
+        return {
+            "success": True,
+            "results": [
+                # Fresh unrelated observation: top by relevance, sim below gate
+                {"similarity": 0.90, "relevance": 1.02},
+                # Stale true duplicate: dragged down by staleness penalty
+                {"similarity": 0.97, "relevance": 0.71},
+            ],
+        }
+
+    monkeypatch.setattr(hook_endpoints, "query_vault", fake_query_vault)
+    assert hook_endpoints._is_duplicate_observation("content", 0.95) is True
+    assert captured.get("n_results", 1) > 1, (
+        "dedup must fetch a candidate window, not a single top-relevance hit"
+    )

@@ -9,87 +9,21 @@ from tools.query import (
     collection_stats,
     memory_read,
     memory_stats,  # backward-compatible aliases
-    _compute_relevance,
     _extract_preview,
     _display_path,
     _increment_retrieval_counts,
+    _parse_optional_row_datetime,
     _build_core_filter,
     _build_vault_filter,
     semantic_context,
 )
+from tools.ranking import compute_unified_score
 
 
-class TestComputeRelevance:
-    """Tests for distance-to-relevance conversion."""
-
-    def test_zero_distance_is_max_relevance(self):
-        assert _compute_relevance(0.0) == 1.0
-
-    def test_max_distance_is_zero_relevance(self):
-        assert _compute_relevance(2.0) == 0.0
-
-    def test_mid_distance(self):
-        assert _compute_relevance(1.0) == 0.5
-
-    def test_high_importance_boost(self):
-        base = _compute_relevance(0.5, "medium")
-        boosted = _compute_relevance(0.5, "high")
-        assert boosted == base + 0.10
-
-    def test_critical_importance_boost(self):
-        base = _compute_relevance(0.5, "medium")
-        boosted = _compute_relevance(0.5, "critical")
-        assert boosted == base + 0.12
-
-    def test_low_importance_penalty(self):
-        base = _compute_relevance(0.5, "medium")
-        penalized = _compute_relevance(0.5, "low")
-        assert penalized == base - 0.05
-
-    def test_clamped_to_zero(self):
-        # Very high distance + low importance should not go below 0
-        result = _compute_relevance(2.0, "low")
-        assert result == 0.0
-
-    def test_clamped_to_one(self):
-        # Zero distance + high importance should not exceed 1
-        result = _compute_relevance(0.0, "high")
-        assert result == 1.0
-
-    def test_recency_boost_within_day(self):
-        from datetime import datetime, timezone, timedelta
-
-        recent = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        base = _compute_relevance(0.5, "medium")
-        boosted = _compute_relevance(0.5, "medium", updated_at=recent)
-        assert boosted == base + 0.08
-
-    def test_recency_boost_within_week(self):
-        from datetime import datetime, timezone, timedelta
-
-        few_days = (datetime.now(timezone.utc) - timedelta(days=3)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-        base = _compute_relevance(0.5, "medium")
-        boosted = _compute_relevance(0.5, "medium", updated_at=few_days)
-        assert boosted == base + 0.05
-
-    def test_no_recency_boost_old(self):
-        old = "2020-01-01T00:00:00Z"
-        base = _compute_relevance(0.5, "medium")
-        same = _compute_relevance(0.5, "medium", updated_at=old)
-        assert same == base
-
-    def test_no_recency_boost_none(self):
-        base = _compute_relevance(0.5, "medium")
-        same = _compute_relevance(0.5, "medium", updated_at=None)
-        assert same == base
-
-    def test_invalid_date_no_crash(self):
-        result = _compute_relevance(0.5, "medium", updated_at="not-a-date")
-        assert isinstance(result, float)
+def test_missing_optional_datetime_stays_none():
+    """Absent retrieval timestamps must not look freshly retrieved."""
+    assert _parse_optional_row_datetime(None) is None
+    assert _parse_optional_row_datetime("not-a-date") is None
 
 
 class TestExtractPreview:
@@ -264,16 +198,29 @@ class TestQueryVault:
         assert paths.count("notes/auth-guide.md") == 1
 
     def test_importance_score_affects_relevance(self):
-        """Documents with higher importance_score should get relevance boost."""
-        low_score = _compute_relevance(0.5, importance_score=0.3)
-        high_score = _compute_relevance(0.5, importance_score=0.9)
+        """Documents with higher importance_score should get a relevance boost."""
+        similarity = 1.0 - 0.5
+        low_score = compute_unified_score(similarity, 0.3)
+        high_score = compute_unified_score(similarity, 0.9)
         assert high_score > low_score
 
-    def test_importance_score_backward_compat(self):
-        """When importance_score is None, should fall back to string importance."""
-        base = _compute_relevance(0.5, "medium", importance_score=None)
-        boosted = _compute_relevance(0.5, "high", importance_score=None)
-        assert boosted == base + 0.10
+    def test_n_results_honored_when_reranking_applied(self, mock_config):
+        """Defect #8 regression: callers asking for N results get N, even when
+        reranking rescores the candidates (the old code returned top_k=10)."""
+        mock_config.set(memory={"reranking": {"enabled": True}})
+        self._index_test_files(mock_config)
+
+        def fake_rerank(query, docs, vscores, cfg):
+            return [s * 0.9 for s in vscores]  # new list → reranking_applied
+
+        with patch("tools.reranking.rerank", side_effect=fake_rerank):
+            result = query_vault("authentication decisions", n_results=2)
+
+        assert result["success"] is True
+        assert len(result["results"]) <= 2
+        # Must be unconditional — without it, the count assertion also passes
+        # when reranking silently fails to apply (vacuous for defect #8).
+        assert result["reranking"]["applied"] is True
 
 
 class TestDocRead:
@@ -785,6 +732,7 @@ class TestSemanticContextReranking:
         import time as _time
         from tools.content import content_write
 
+        mock_config.set(memory={"reranking": {"enabled": True}})
         content_write(
             content="First observation about database migrations",
             content_type="observation",
@@ -801,7 +749,9 @@ class TestSemanticContextReranking:
             # Return identity (simulate graceful fallback) to not break the flow
             mock_rerank.side_effect = lambda q, docs, vscores, cfg: vscores
 
-            result = semantic_context("database migrations", threshold=0.0)
+            # Raw cosine spans -1..1; -1 disables the quality gate for this
+            # reranking integration test.
+            result = semantic_context("database migrations", threshold=-1.0)
 
             # rerank should have been called with the query and documents
             assert mock_rerank.called, (
@@ -834,6 +784,7 @@ class TestSemanticContextReranking:
         import time as _time
         from tools.content import content_write
 
+        mock_config.set(memory={"reranking": {"enabled": True}})
         content_write(
             content="Irrelevant observation about cooking recipes and food",
             content_type="observation",

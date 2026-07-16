@@ -22,13 +22,14 @@ from .config import (
     get_ranking_config, get_reranking_config, get_staleness_config,
 )
 from .format_support import detect_format
+from .ranking import DEFAULT_IMPORTANCE_WEIGHT, compute_unified_score, score_memory
 from .staleness import check_staleness, deserialize_mtimes
 
 
-def _parse_row_datetime(value) -> datetime:
-    """Parse a datetime from row data (str, datetime, or None → now)."""
+def _parse_optional_row_datetime(value) -> Optional[datetime]:
+    """Parse an optional datetime from row data without inventing a timestamp."""
     if value is None:
-        return datetime.now(timezone.utc)
+        return None
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if isinstance(value, str):
@@ -37,7 +38,12 @@ def _parse_row_datetime(value) -> datetime:
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             pass
-    return datetime.now(timezone.utc)
+    return None
+
+
+def _parse_row_datetime(value) -> datetime:
+    """Parse a required datetime from row data (missing/invalid → now)."""
+    return _parse_optional_row_datetime(value) or datetime.now(timezone.utc)
 
 
 def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
@@ -80,56 +86,15 @@ def _annotate_staleness(raw_entries: list, staleness_config: dict) -> None:
         if result["is_stale"]:
             entry["is_stale"] = True
             entry["staleness_info"] = result
-            entry["relevance"] = max(0.0, entry["relevance"] - penalty)
+            # No floor: scores are unclamped (Layer 4), and flooring at 0.0
+            # would let a stale entry outrank fresher negative-scored ones.
+            entry["relevance"] -= penalty
 
 
 def _detect_format_from_entry(entry: dict) -> str:
     """Detect format from a query result entry's parent_file path."""
     parent_file = entry.get("parent_file", "")
     return detect_format(parent_file) if parent_file else "markdown"
-
-
-def _compute_relevance(
-    distance: float,
-    importance: str = "medium",
-    updated_at: Optional[str] = None,
-    importance_score: Optional[float] = None,
-) -> float:
-    """Convert cosine distance to relevance score with boosts.
-
-    pgvector cosine distance (<=> operator) ranges from 0 (identical)
-    to 2 (opposite). We convert to a 0-1 relevance score and apply
-    importance + recency adjustments.
-
-    When importance_score (float 0-1 from scoring module) is available, it
-    provides a more nuanced boost than the string importance field.
-    """
-    base = 1.0 - (distance / 2.0)
-
-    # Use numeric importance_score when available, fall back to string importance
-    if importance_score is not None:
-        # Map 0.0-1.0 score to -0.12..+0.12 boost (centered at 0.5)
-        boost = (importance_score - 0.5) * 0.24
-    else:
-        boost = {"high": 0.10, "critical": 0.12, "medium": 0.0, "low": -0.05}.get(
-            importance, 0.0
-        )
-
-    # Recency boost: recent updates get a small relevance bump
-    recency_boost = 0.0
-    if updated_at:
-        try:
-            updated = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            days_ago = (now - updated).total_seconds() / 86400
-            if days_ago <= 1:
-                recency_boost = 0.08
-            elif days_ago <= 7:
-                recency_boost = 0.05
-        except (ValueError, TypeError):
-            pass
-
-    return max(0.0, min(1.0, base + boost + recency_boost))
 
 
 def _extract_preview(content: str, max_len: int = 150, fmt: str = "markdown") -> str:
@@ -698,12 +663,16 @@ def query_vault(
     except Exception as e:
         return {"success": False, "error": f"Embedding failed: {e}"}
 
-    # Over-fetch to account for chunk deduplication (and reranking if enabled)
+    # Over-fetch to account for chunk deduplication (and reranking if enabled).
+    # The window fills by raw vector distance BEFORE per-file chunk dedup, so
+    # a multi-chunk document can crowd out others — overfetch_factor (default 5)
+    # sizes the window to survive dedup.
     reranking_config = get_reranking_config()
-    if reranking_config.get("enabled", True):
+    if reranking_config.get("enabled", False):
         fetch_count = min(reranking_config.get("candidate_count", 100), total)
     else:
-        fetch_count = min(n_results * 3, 60, total)
+        overfetch = get_ranking_config().get("overfetch_factor", 5)
+        fetch_count = min(n_results * max(int(overfetch), 1), 60, total)
 
     try:
         rows = _cross_schema_search(
@@ -737,7 +706,8 @@ def query_vault(
             meta = _format_vault_result(row)
 
         distance = float(row["distance"])
-        similarity = 1.0 - (distance / 2.0)
+        # pgvector cosine distance is ``1 - cosine_similarity``.
+        similarity = 1.0 - distance
 
         # Use numeric importance_score
         imp_score = 0.5
@@ -748,27 +718,31 @@ def query_vault(
             except (ValueError, TypeError):
                 pass
 
-        # D12: Two-phase ranking with decay for LOCAL + REMOTE (core-like) schemas.
+        # Unified scoring (Layer 4): one formula for every schema. Memories get
+        # decay-adjusted importance; vault chunks use raw importance_score. No
+        # recency term — updated_at is the reindex timestamp, not an authoring
+        # date, so it would add a constant cross-schema offset after reindexes.
         # Note: remote retrieval_count stays frozen (mirrors are read-only) — this
         # is intentional; remote retrieval patterns should not influence local ranking.
+        importance_weight = ranking_cfg.get(
+            "importance_weight", DEFAULT_IMPORTANCE_WEIGHT
+        )
         if use_decay and schema in core_like:
-            from .ranking import compute_blended_score
-            blended, eff_imp = compute_blended_score(
+            relevance, _ = score_memory(
                 similarity=similarity,
                 base_importance=imp_score,
                 created_at=_parse_row_datetime(row.get("created_at") or meta.get("created_at")),
-                last_retrieved_at=_parse_row_datetime(meta.get("last_retrieved_at")),
+                last_retrieved_at=_parse_optional_row_datetime(
+                    meta.get("last_retrieved_at")
+                ),
                 retrieval_count=int(float(meta.get("retrieval_count", 0))),
-                similarity_weight=ranking_cfg.get("similarity_weight", 0.7),
-                importance_weight=ranking_cfg.get("importance_weight", 0.3),
+                importance_weight=importance_weight,
                 decay_config=decay_config,
             )
-            relevance = blended
         else:
-            # Vault docs + fallback: original relevance formula
-            importance = meta.get("importance", "medium")
-            updated_at = meta.get("updated_at")
-            relevance = _compute_relevance(distance, importance, updated_at, imp_score)
+            relevance = compute_unified_score(
+                similarity, imp_score, importance_weight=importance_weight
+            )
 
         # Determine parent file for chunk dedup
         parent_file = meta.get("parent_file")
@@ -781,6 +755,7 @@ def query_vault(
                 "doc_id": row["id"],
                 "parent_file": parent_file,
                 "relevance": relevance,
+                "similarity": similarity,
                 "document": row["document"],
                 "metadata": meta,
                 "_schema": schema,
@@ -834,8 +809,9 @@ def query_vault(
                 entry["relevance"] = score
             reranking_applied = True
 
-    # Sort by relevance descending and trim to final count
-    final_count = reranking_config.get("top_k", 10) if reranking_applied else n_results
+    # Sort by relevance descending and trim to the caller's n_results —
+    # reranking rescores candidates but never expands the requested count.
+    final_count = n_results
     deduped = sorted(
         best_per_file.values(), key=lambda e: e["relevance"], reverse=True
     )[:final_count]
@@ -871,6 +847,7 @@ def query_vault(
             "type": doc_type,
             "importance": doc_importance,
             "relevance": round(entry["relevance"], 3),
+            "similarity": round(entry.get("similarity", 0.0), 3),
             "preview": preview,
             "tags": tags,
             "schema": schema,
@@ -920,15 +897,17 @@ def query_vault(
 
 def semantic_context(
     query: str,
-    threshold: float = 0.5,
+    threshold: float = 0.85,
     budget: int = 8000,
     skip_retrieval_increment: bool = False,
     schemas: Optional[list[str]] = None,
+    max_results: int = 20,
 ) -> dict:
     """Search vault memories for per-prompt context injection.
 
     Searches both local.memories and obsidian.documents. Differs from query_vault():
-    - Applies minimum relevance threshold (filters low-scoring results)
+    - Applies a minimum raw-cosine threshold (filters low-scoring results)
+    - Caps the injected result count independently of the character budget
     - Budget-based allocation: core content shown in full, vault as references
     - Fractionally increments retrieval counts (configurable, default 0.01)
     - Filters out sensitive directories (documents/, people/)
@@ -944,8 +923,10 @@ def semantic_context(
 
     Args:
         query: User's raw prompt text
-        threshold: Minimum relevance score 0.0-1.0 (default 0.5)
+        threshold: Minimum raw cosine similarity (default 0.85)
         budget: Total character budget for injection (default 8000, split 50/50)
+        max_results: Maximum matches to inject after ranking/deduplication
+            (default 20, clamped to 1-100). The budget may reduce this further.
         skip_retrieval_increment: If True, skip the retrieval count write-back.
             Surfaced IDs are returned in the result dict so the caller can
             bump them externally (e.g., via HTTP POST to the MCP server).
@@ -955,6 +936,11 @@ def semantic_context(
         includes 'surfaced_ids' list for deferred bumping.
     """
     start = time.time()
+    try:
+        max_results = int(max_results)
+    except (TypeError, ValueError):
+        max_results = 20
+    max_results = min(max(max_results, 1), 100)
 
     try:
         from .embedding import get_embedding_service
@@ -1028,7 +1014,8 @@ def semantic_context(
             meta = _format_vault_result(row)
 
         distance = float(row["distance"])
-        similarity = 1.0 - (distance / 2.0)
+        # pgvector cosine distance is ``1 - cosine_similarity``.
+        similarity = 1.0 - distance
 
         # Filter sensitive directories
         directory = meta.get("directory", "")
@@ -1050,29 +1037,35 @@ def semantic_context(
             except (ValueError, TypeError):
                 pass
 
-        # D12: Two-phase ranking with decay for core-like schemas (LOCAL + REMOTE).
+        # Threshold gates on RAW similarity, before any importance boost —
+        # relevance (gate) and ranking (boost) stay decoupled, so importance
+        # can never rescue an off-topic match past the gate.
+        if similarity < threshold:
+            continue
+
+        # Unified scoring (Layer 4): one formula for every schema. Memories get
+        # decay-adjusted importance; vault chunks use raw importance_score. No
+        # recency term (updated_at is the reindex timestamp, not authoring date).
         # Remote retrieval_count stays frozen — mirrors are read-only.
+        importance_weight = ranking_cfg.get(
+            "importance_weight", DEFAULT_IMPORTANCE_WEIGHT
+        )
         if use_decay and schema in core_like_sc:
-            from .ranking import compute_blended_score
-            blended, eff_imp = compute_blended_score(
+            relevance, _ = score_memory(
                 similarity=similarity,
                 base_importance=imp_score,
                 created_at=_parse_row_datetime(row.get("created_at") or meta.get("created_at")),
-                last_retrieved_at=_parse_row_datetime(meta.get("last_retrieved_at")),
+                last_retrieved_at=_parse_optional_row_datetime(
+                    meta.get("last_retrieved_at")
+                ),
                 retrieval_count=int(float(meta.get("retrieval_count", 0))),
-                similarity_weight=ranking_cfg.get("similarity_weight", 0.7),
-                importance_weight=ranking_cfg.get("importance_weight", 0.3),
+                importance_weight=importance_weight,
                 decay_config=decay_config,
             )
-            relevance = blended
         else:
-            importance = meta.get("importance", "medium")
-            updated_at = meta.get("updated_at")
-            relevance = _compute_relevance(distance, importance, updated_at, imp_score)
-
-        # Apply threshold
-        if relevance < threshold:
-            continue
+            relevance = compute_unified_score(
+                similarity, imp_score, importance_weight=importance_weight
+            )
 
         # Determine parent file for chunk dedup
         parent_file = meta.get("parent_file")
@@ -1085,6 +1078,7 @@ def semantic_context(
                 "doc_id": row["id"],
                 "parent_file": parent_file,
                 "relevance": relevance,
+                "similarity": similarity,
                 "document": row["document"],
                 "metadata": meta,
                 "_schema": schema,
@@ -1137,7 +1131,9 @@ def semantic_context(
                 entry["relevance"] = score
 
     # Sort by relevance descending
-    deduped = sorted(best_per_file.values(), key=lambda e: e["relevance"], reverse=True)
+    deduped = sorted(
+        best_per_file.values(), key=lambda e: e["relevance"], reverse=True
+    )[:max_results]
 
     # Budget-based selection: 3-way split (local / obsidian / remote).
     # Each bucket gets a guaranteed share; unused budget overflows to others.
@@ -1251,6 +1247,7 @@ def semantic_context(
         match = {
             "id": entry["parent_file"],
             "relevance": round(entry["relevance"], 3),
+            "similarity": round(entry.get("similarity", 0.0), 3),
             "type": doc_type,
             "content": content,
             "display_mode": entry["display_mode"],

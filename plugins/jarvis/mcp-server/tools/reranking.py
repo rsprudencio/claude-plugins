@@ -261,9 +261,11 @@ def rerank(
         else:
             norm_scores = [0.5] * len(raw_scores)
 
-        # Min-max normalize vector scores to [0, 1] — removes cross-schema
-        # bias from different scoring formulas (e.g. vault _compute_relevance
-        # saturates at 1.0 while core compute_blended_score produces lower values).
+        # Min-max normalize vector scores to [0, 1] so they share a scale with
+        # the normalized CE scores in the alpha-blend. Note: this is a strictly
+        # increasing affine map — it cannot reorder the vector ranking itself.
+        # Cross-schema comparability comes from the unified scoring formula
+        # (tools/ranking.py), not from this normalization.
         min_v = min(vector_scores)
         max_v = max(vector_scores)
         if max_v - min_v > 1e-9:

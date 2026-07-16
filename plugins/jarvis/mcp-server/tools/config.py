@@ -190,8 +190,9 @@ def get_context_enrichment_config() -> dict:
     """Get context enrichment (per-prompt search) configuration with defaults."""
     defaults = {
         "enabled": True,
-        "threshold": 0.5,
+        "threshold": 0.85,
         "budget": 8000,
+        "max_results": 20,
         "debug": False,
         "passive_retrieval_increment": 0.01,
     }
@@ -210,9 +211,14 @@ def get_expansion_config() -> dict:
 
 
 def get_reranking_config() -> dict:
-    """Get cross-encoder reranking configuration with defaults."""
+    """Get cross-encoder reranking configuration with defaults.
+
+    Disabled by default: the ms-marco-MiniLM cross-encoder measured net-negative
+    on retrieval quality (−0.055 nDCG@10 on ArguAna vs the bi-encoder alone).
+    Re-enable only with a reranker that measurably improves labeled nDCG.
+    """
     defaults = {
-        "enabled": True,
+        "enabled": False,
         "candidate_count": 100,
         "top_k": 10,
         "alpha": 0.7,
@@ -282,10 +288,14 @@ def get_decay_config() -> dict:
 
 
 def get_ranking_config() -> dict:
-    """Get blended ranking configuration with defaults."""
+    """Get unified ranking configuration with defaults.
+
+    importance_weight scales the additive importance nudge in the unified
+    score (score = similarity + importance_weight * (importance - 0.5)).
+    The old similarity_weight key from the removed 0.7/0.3 blend is ignored.
+    """
     defaults = {
-        "similarity_weight": 0.7,
-        "importance_weight": 0.3,
+        "importance_weight": 0.24,
         "overfetch_factor": 5,
     }
     return _merge_with_defaults(defaults, _get_memory_section("ranking"))
