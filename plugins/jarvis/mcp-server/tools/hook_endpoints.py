@@ -179,7 +179,7 @@ def get_prompt_context(prompt: str) -> dict:
     todoist_cfg = get_todoist_prompt_alerts_config()
 
     budget = _safe_int(config.get("budget"), 8000)
-    threshold = float(config.get("threshold", 0.876))
+    threshold = float(config.get("threshold", 0.85))
     enabled = bool(config.get("enabled", True))
     debug = bool(config.get("debug", False))
     max_results = max(1, min(100, _safe_int(config.get("max_results"), 20)))

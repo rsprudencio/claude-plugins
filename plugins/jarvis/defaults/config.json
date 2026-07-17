@@ -30,7 +30,7 @@
     },
     "context_enrichment": {
       "enabled": true,
-      "threshold": 0.876,
+      "threshold": 0.85,
       "budget": 8000,
       "max_results": 20,
       "debug": false,

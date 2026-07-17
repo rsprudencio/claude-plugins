@@ -190,7 +190,7 @@ def get_context_enrichment_config() -> dict:
     """Get context enrichment (per-prompt search) configuration with defaults."""
     defaults = {
         "enabled": True,
-        "threshold": 0.876,
+        "threshold": 0.85,
         "budget": 8000,
         "max_results": 20,
         "debug": False,

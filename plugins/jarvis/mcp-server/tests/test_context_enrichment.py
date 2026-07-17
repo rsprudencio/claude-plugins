@@ -800,7 +800,7 @@ class TestContextEnrichmentConfig:
 
         config = get_context_enrichment_config()
         assert config["enabled"] is True
-        assert config["threshold"] == 0.876
+        assert config["threshold"] == 0.85
         assert config["budget"] == 8000
         assert config["max_results"] == 20
         assert config["passive_retrieval_increment"] == 0.01

@@ -979,7 +979,7 @@ def query_vault(
 
 def semantic_context(
     query: str,
-    threshold: float = 0.876,
+    threshold: float = 0.85,
     budget: int = 8000,
     skip_retrieval_increment: bool = False,
     schemas: Optional[list[str]] = None,
@@ -1005,7 +1005,7 @@ def semantic_context(
 
     Args:
         query: User's raw prompt text
-        threshold: Minimum raw cosine similarity (default 0.876)
+        threshold: Minimum raw cosine similarity (default 0.85)
         budget: Total character budget for injection (default 8000, split 50/50)
         max_results: Maximum matches to inject after ranking/deduplication
             (default 20, clamped to 1-100). The budget may reduce this further.

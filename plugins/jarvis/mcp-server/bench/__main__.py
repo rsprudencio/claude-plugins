@@ -81,8 +81,9 @@ def render(cards: list[Scorecard], preset: str, device: str = "cpu") -> str:
                   "into the English corpus; `0.0000` means Portuguese content is correctly "
                   "ignored and does **not** create false positives. Negative = it harms real matches.",
               "**θ\\*** = cosine threshold calibrated against human labels — this is the value "
-              "`memory.context_enrichment.threshold` should take. Production injection uses `0.876`, "
-              "calibrated separately against labeled real usage on 2026-07-17.", ""]
+              "`memory.context_enrichment.threshold` should take. Production injection uses `0.85` "
+              "(recall-favoring operating point; the 2026-07-17 calibration measured 0.876 as the "
+              "zero-false-positive point but at only 0.26 recall).", ""]
 
     if rerank:
         L += [

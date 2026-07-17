@@ -338,13 +338,14 @@ Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jar
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | true | Master switch for automatic memory recall |
-| `threshold` | 0.876 | Minimum raw cosine similarity; higher values favor precision |
+| `threshold` | 0.85 | Minimum raw cosine similarity; higher values favor precision (0.876 = zero false positives but ~0.26 recall), lower values favor recall |
 | `budget` | 8000 | Total character budget for injection (split 50/50 between auto-generated content and vault documents) |
 | `max_results` | 20 | Maximum injected matches after thresholding, ranking, and deduplication |
 
 Offer presets:
-- "Calibrated high precision" (default) -> `threshold: 0.876, budget: 8000, max_results: 20`
+- "Balanced" (default) -> `threshold: 0.85, budget: 8000, max_results: 20`
 - "Aggressive recall" -> `threshold: 0.80, budget: 12000, max_results: 20`
+- "High precision (zero false positives)" -> `threshold: 0.876, budget: 8000, max_results: 20`
 - "Conservative" -> `threshold: 0.88, budget: 4000, max_results: 10`
 - "Disabled" -> `enabled: false`
 - "Custom" -> Ask for each setting individually
@@ -373,7 +374,7 @@ default_importance:   0.5
 
 === Context Enrichment ===
 enabled:              true
-threshold:            0.876
+threshold:            0.85
 budget:               8000
 max_results:          20
 
