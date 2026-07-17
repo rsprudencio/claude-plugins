@@ -1,0 +1,43 @@
+{
+  "name": "jarvis-obsidian",
+  "version": "1.0.0",
+  "description": "Obsidian vault PKM workflows - JARVIS protocol, git audit trail, journal, exploration",
+  "author": {
+    "name": "Raphael Prudencio"
+  },
+  "homepage": "https://github.com/rsprudencio/jarvis",
+  "repository": "https://github.com/rsprudencio/jarvis",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "jarvis",
+    "obsidian",
+    "pkm",
+    "knowledge-vault",
+    "journal"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "vault": {
+      "type": "http",
+      "url": "http://localhost:8744/mcp",
+      "headers": {}
+    }
+  },
+  "interface": {
+    "displayName": "Jarvis Obsidian",
+    "shortDescription": "Obsidian vault workflows and git-backed history",
+    "longDescription": "Explore and maintain an Obsidian knowledge vault with journal workflows, git audit trails, and structured PKM operations.",
+    "developerName": "Raphael Prudencio",
+    "category": "Productivity",
+    "capabilities": [
+      "Obsidian workflows",
+      "Vault operations",
+      "Git history"
+    ],
+    "defaultPrompt": [
+      "Explore related notes in my vault.",
+      "Summarize recent changes to my vault.",
+      "Help me update today's journal."
+    ]
+  }
+}

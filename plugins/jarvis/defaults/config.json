@@ -30,11 +30,13 @@
     },
     "context_enrichment": {
       "enabled": true,
-      "threshold": 0.85,
+      "threshold": 0.876,
       "budget": 8000,
       "max_results": 20,
       "debug": false,
       "passive_retrieval_increment": 0.01,
+      "semantic_dedup_enabled": true,
+      "semantic_dedup_threshold": 0.86,
       "schemas": "all"
     },
     "chunking": {

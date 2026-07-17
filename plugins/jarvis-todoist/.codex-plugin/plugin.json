@@ -1,0 +1,43 @@
+{
+  "name": "jarvis-todoist",
+  "version": "1.6.0",
+  "description": "Todoist integration with built-in REST API - task management analyst (requires jarvis)",
+  "author": {
+    "name": "Raphael Prudencio"
+  },
+  "homepage": "https://github.com/rsprudencio/jarvis",
+  "repository": "https://github.com/rsprudencio/jarvis",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "jarvis",
+    "todoist",
+    "task-management",
+    "productivity",
+    "gtd"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "api": {
+      "type": "http",
+      "url": "http://localhost:8742/mcp",
+      "headers": {}
+    }
+  },
+  "interface": {
+    "displayName": "Jarvis Todoist",
+    "shortDescription": "Todoist task capture, routing, and analysis",
+    "longDescription": "Connect Jarvis to Todoist for inbox processing, task routing, planning, and productivity workflows.",
+    "developerName": "Raphael Prudencio",
+    "category": "Productivity",
+    "capabilities": [
+      "Task management",
+      "Todoist integration",
+      "Inbox routing"
+    ],
+    "defaultPrompt": [
+      "Process my Todoist inbox.",
+      "Help me organize my open tasks.",
+      "Route these items to the right projects."
+    ]
+  }
+}

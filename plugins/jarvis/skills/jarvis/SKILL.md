@@ -1,4 +1,5 @@
 ---
+name: jarvis
 description: Activate Jarvis identity and load strategic context. Fallback for users without the jarvis executable.
 ---
 

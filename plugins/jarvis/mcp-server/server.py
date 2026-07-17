@@ -647,6 +647,10 @@ async def main():
     except Exception as e:
         logger.warning("Schema registry rebuild deferred: %s", e)
 
+    # Stdio clients have the same first-query latency constraint as HTTP hooks.
+    from tools.embedding import warm_embedding_service
+    warm_embedding_service()
+
     async with stdio_server() as (read_stream, write_stream):
         server_task = server.run(
             read_stream, write_stream, server.create_initialization_options()

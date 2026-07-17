@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "UserPromptSubmit",
+  "session_id": "codex-session-1",
+  "turn_id": "codex-turn-1",
+  "cwd": "/workspace/jarvis",
+  "prompt": "Please make passive extraction independent of the Codex transcript format."
+}

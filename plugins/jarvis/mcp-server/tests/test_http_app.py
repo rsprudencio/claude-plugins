@@ -27,12 +27,21 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """Create a test client for the raw ASGI app.
 
     We reload the module per test because StreamableHTTPSessionManager
-    can only run() once per instance.
+    can only run() once per instance. Embedding initialization is covered
+    separately; HTTP transport tests must not load the production ONNX model.
     """
+    monkeypatch.setattr(
+        "tools.embedding.warm_embedding_service",
+        lambda: 0.0,
+    )
+    monkeypatch.setattr("tools.schema.ensure_schema", lambda: None)
+    monkeypatch.setattr("tools.schema.check_model_consistency", lambda: None)
+    monkeypatch.setattr("tools.schema_registry.rebuild_registry", lambda: None)
+    monkeypatch.setattr("server.get_background_tasks", lambda: [])
     import http_app as mod
 
     importlib.reload(mod)

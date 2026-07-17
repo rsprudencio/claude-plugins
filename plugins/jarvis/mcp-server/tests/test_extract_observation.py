@@ -22,6 +22,7 @@ from extract_observation import (
     replay_ingest_queue,
     write_watermark,
 )
+from turn_state import capture_user_prompt
 
 
 def _make_transcript(tmp_path: Path, user_text: str, assistant_text: str) -> str:
@@ -335,3 +336,90 @@ def test_main_does_not_advance_watermark_on_haiku_failure(tmp_path, monkeypatch)
         extract_observation.main()
     assert exc.value.code == 0
     assert read_watermark("session-xyz") == -1
+
+
+def test_main_extracts_codex_turn_without_transcript(tmp_path, monkeypatch):
+    """Codex Stop input is paired with saved prompt state without transcript parsing."""
+    monkeypatch.setenv("JARVIS_HOME", str(tmp_path / ".jarvis"))
+    monkeypatch.setattr(extract_observation, "WATERMARK_DIR", tmp_path / "sessions")
+    prompt_text = "Please keep Codex passive extraction independent of transcript internals."
+    assistant_text = (
+        "Implemented a normalized turn journal and retained Claude transcript parsing "
+        "as a richer fallback path."
+    )
+    assert capture_user_prompt(
+        {
+            "session_id": "codex-session",
+            "turn_id": "turn-1",
+            "prompt": prompt_text,
+            "cwd": str(tmp_path),
+        }
+    )
+    stop_input = {
+        "session_id": "codex-session",
+        "turn_id": "turn-1",
+        "last_assistant_message": assistant_text,
+    }
+    monkeypatch.setenv("JARVIS_HOOK_INPUT", json.dumps(stop_input))
+
+    ingested = []
+
+    def _fake_post_json(endpoint_path, payload, **kwargs):
+        if endpoint_path == "/hook/auto-extract/context":
+            return {
+                "success": True,
+                "data": {
+                    "auto_extract": {"min_turn_chars": 10, "max_observations": 3},
+                    "worklog": {"enabled": False},
+                    "known_workstreams": [],
+                },
+            }
+        if endpoint_path == "/hook/auto-extract/ingest":
+            ingested.append(payload)
+            return {
+                "success": True,
+                "data": {"observations": [{"status": "stored", "id": "obs-1"}]},
+            }
+        raise AssertionError(f"Unexpected endpoint: {endpoint_path}")
+
+    monkeypatch.setattr(extract_observation, "post_json", _fake_post_json)
+
+    def _fake_call_haiku(extraction_prompt, mode="background"):
+        assert prompt_text in extraction_prompt
+        assert assistant_text in extraction_prompt
+        return (
+            {
+                "observations": [
+                    {
+                        "content": "Codex extraction uses normalized hook turn state.",
+                        "importance_score": 0.6,
+                        "tags": ["codex", "hooks"],
+                        "scope": "project",
+                    }
+                ]
+            },
+            100,
+            40,
+            "API",
+        )
+
+    monkeypatch.setattr(extract_observation, "call_haiku", _fake_call_haiku)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "extract_observation.py",
+            "background",
+            "-",
+            "codex-session",
+            str(tmp_path),
+            "main",
+        ],
+    )
+
+    extract_observation.main()
+
+    assert len(ingested) == 1
+    assert ingested[0]["context"]["transcript_line"] == 0
+    assert read_watermark("codex-session.normalized-turns") == 0
+    assert read_watermark("codex-session") == -1

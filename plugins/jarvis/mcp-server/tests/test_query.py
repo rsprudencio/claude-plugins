@@ -2,7 +2,7 @@
 
 import os
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from tools.query import (
     query_vault,
     doc_read,
@@ -15,6 +15,7 @@ from tools.query import (
     _parse_optional_row_datetime,
     _build_core_filter,
     _build_vault_filter,
+    _semantic_deduplicate_context,
     semantic_context,
 )
 from tools.ranking import compute_unified_score
@@ -492,6 +493,84 @@ class TestIncrementRetrievalCountsFractional:
         assert row is not None
         # vault rows don't track retrieval_count
         assert "retrieval_count" not in row or row.get("retrieval_count") is None
+
+
+class TestSemanticContextDeduplication:
+    """Redundant local memory/observation/worklog records inject once."""
+
+    class FakeEmbeddingService:
+        def __init__(self, vectors):
+            self.vectors = vectors
+
+        def encode_batch(self, texts, batch_size=8):
+            return [self.vectors[text] for text in texts]
+
+    @staticmethod
+    def _entry(doc_id, doc_type, document, project="jarvis", relevance=0.9):
+        return {
+            "doc_id": doc_id,
+            "parent_file": doc_id,
+            "relevance": relevance,
+            "similarity": relevance,
+            "document": document,
+            "metadata": {"type": doc_type, "project": project},
+            "_schema": "local",
+        }
+
+    def test_prefers_durable_memory_over_redundant_transient_records(self):
+        entries = [
+            self._entry("worklog::1", "worklog", "worklog", relevance=0.95),
+            self._entry("obs::1", "observation", "observation", relevance=0.93),
+            self._entry("memory::global::1", "memory", "memory", relevance=0.90),
+            self._entry("obs::2", "observation", "different", relevance=0.88),
+        ]
+        service = self.FakeEmbeddingService(
+            {
+                "worklog": [1.0, 0.0],
+                "observation": [0.99, 0.01],
+                "memory": [0.98, 0.02],
+                "different": [0.0, 1.0],
+            }
+        )
+
+        result, suppressed = _semantic_deduplicate_context(
+            entries, service, similarity_threshold=0.90
+        )
+
+        assert {entry["doc_id"] for entry in result} == {
+            "memory::global::1",
+            "obs::2",
+        }
+        assert suppressed == 2
+
+    def test_does_not_merge_equally_similar_records_across_projects(self):
+        entries = [
+            self._entry("memory::a::1", "memory", "first", project="a"),
+            self._entry("obs::b", "observation", "second", project="b"),
+        ]
+        service = self.FakeEmbeddingService(
+            {"first": [1.0, 0.0], "second": [1.0, 0.0]}
+        )
+
+        result, suppressed = _semantic_deduplicate_context(
+            entries, service, similarity_threshold=0.90
+        )
+
+        assert result == entries
+        assert suppressed == 0
+
+    def test_embedding_failure_preserves_all_candidates(self):
+        entries = [
+            self._entry("obs::1", "observation", "one"),
+            self._entry("worklog::1", "worklog", "two"),
+        ]
+        service = MagicMock()
+        service.encode_batch.side_effect = RuntimeError("model unavailable")
+
+        result, suppressed = _semantic_deduplicate_context(entries, service, 0.90)
+
+        assert result == entries
+        assert suppressed == 0
 
 
 class TestSemanticContextFractionalBump:

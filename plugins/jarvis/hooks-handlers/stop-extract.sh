@@ -11,8 +11,9 @@ fi
 #
 # Reads Stop hook JSON from stdin, checks config, then routes:
 # - disabled: exit 0 immediately
-# - background/background-api/background-cli: pass transcript path directly
-#   to extract_observation.py in background, exit immediately
+# - background/background-api/background-cli: pass the transcript path when
+#   available; Codex can instead supply last_assistant_message, which is joined
+#   with prompt state by extract_observation.py
 #
 # The Python script handles per-session watermarking internally —
 # no temp files or line counting needed here.
@@ -52,14 +53,17 @@ try:
         print('skip\tdisabled')
         sys.exit(0)
 
-    # Extract transcript_path and expand ~ to home directory
+    # Claude supplies a transcript. Codex's supported path is the normalized
+    # prompt state plus last_assistant_message, so a transcript is optional.
     transcript_path = hook_data.get('transcript_path', '')
-    if not transcript_path:
-        print('skip\tno_transcript_path')
+    has_assistant = bool(hook_data.get('last_assistant_message'))
+    if not transcript_path and not has_assistant:
+        print('skip\tno_turn_source')
         sys.exit(0)
 
-    # Safely expand ~ using Python (not shell eval)
-    transcript_path = os.path.expanduser(transcript_path)
+    # Safely expand ~ using Python (not shell eval). A dash is an explicit
+    # no-transcript sentinel understood by the worker.
+    transcript_path = os.path.expanduser(transcript_path) if transcript_path else '-'
 
     session_id = hook_data.get('session_id', 'unknown')
 
@@ -80,8 +84,8 @@ fi
 # Parse proceed components
 IFS=$'\t' read -r _ MODE TRANSCRIPT_PATH SESSION_ID <<< "$CHECK_RESULT"
 
-# Validate transcript file exists
-if [ ! -f "$TRANSCRIPT_PATH" ]; then
+# Validate a supplied transcript; normalized state needs no transcript file.
+if [ "$TRANSCRIPT_PATH" != "-" ] && [ ! -f "$TRANSCRIPT_PATH" ]; then
     exit 0
 fi
 

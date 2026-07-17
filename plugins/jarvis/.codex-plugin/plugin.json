@@ -1,0 +1,42 @@
+{
+  "name": "jarvis",
+  "version": "3.4.0",
+  "description": "Core Jarvis - vault management, content API, semantic memory",
+  "author": {
+    "name": "Raphael Prudencio"
+  },
+  "homepage": "https://github.com/rsprudencio/jarvis",
+  "repository": "https://github.com/rsprudencio/jarvis",
+  "license": "CC-BY-NC-4.0",
+  "keywords": [
+    "jarvis",
+    "vault",
+    "semantic-memory",
+    "content-api"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "core": {
+      "type": "http",
+      "url": "http://localhost:8741/mcp",
+      "headers": {}
+    }
+  },
+  "interface": {
+    "displayName": "Jarvis",
+    "shortDescription": "Semantic memory and personal knowledge retrieval",
+    "longDescription": "Manage a personal knowledge vault, retrieve quality-gated semantic memories, and enrich Codex sessions with relevant context.",
+    "developerName": "Raphael Prudencio",
+    "category": "Productivity",
+    "capabilities": [
+      "Semantic memory",
+      "Knowledge retrieval",
+      "Session context"
+    ],
+    "defaultPrompt": [
+      "Find relevant memories for this task.",
+      "Search my vault for related context.",
+      "Show what Jarvis remembers about this topic."
+    ]
+  }
+}

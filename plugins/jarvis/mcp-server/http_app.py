@@ -380,6 +380,12 @@ async def _handle_lifespan(scope, receive, send):
             except Exception as e:
                 logger.warning("Schema registry rebuild deferred: %s", e)
 
+            # Complete local model initialization before Uvicorn marks startup
+            # complete. This keeps the first UserPromptSubmit request inside its
+            # 2.5s deadline instead of paying the ONNX cold-start cost.
+            from tools.embedding import warm_embedding_service
+            warm_embedding_service()
+
             _run_ctx = session_manager.run()
             await _run_ctx.__aenter__()
             _bg_tasks = [asyncio.create_task(t) for t in get_background_tasks()]

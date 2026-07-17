@@ -7,11 +7,14 @@ with UNION ALL for cross-schema search (DAR F5: preserves HNSW index usage).
 All document IDs use namespaced format (vault:: prefix) for type-safe identification.
 """
 
+import logging
 import os
 import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
+
+import numpy as np
 
 from .schema import execute_query, jsonb_to_metadata, metadata_to_jsonb
 from .paths import get_path, SENSITIVE_PATHS
@@ -24,6 +27,85 @@ from .config import (
 from .format_support import detect_format
 from .ranking import DEFAULT_IMPORTANCE_WEIGHT, compute_unified_score, score_memory
 from .staleness import check_staleness, deserialize_mtimes
+
+
+logger = logging.getLogger(__name__)
+
+_INJECTION_DEDUP_TYPES = {"memory", "observation", "worklog"}
+_INJECTION_TYPE_PRIORITY = {"memory": 3, "observation": 2, "worklog": 1}
+
+
+def _semantic_deduplicate_context(
+    entries: list[dict],
+    embedding_service,
+    similarity_threshold: float,
+) -> tuple[list[dict], int]:
+    """Collapse redundant local memory/observation/worklog candidates.
+
+    Only records from the same project are compared. Durable strategic memories
+    win over observations and worklogs even when a transient record has a small
+    ranking advantage. Any embedding failure preserves the original candidates.
+    """
+    eligible = []
+    for index, entry in enumerate(entries):
+        meta = entry.get("metadata") or {}
+        doc_type = str(meta.get("type") or "").lower()
+        if entry.get("_schema") != SCHEMA_LOCAL or doc_type not in _INJECTION_DEDUP_TYPES:
+            continue
+        document = entry.get("document") or ""
+        if document.strip():
+            eligible.append((index, entry, doc_type, document))
+
+    if len(eligible) < 2:
+        return entries, 0
+
+    try:
+        vectors = np.asarray(
+            embedding_service.encode_batch([item[3] for item in eligible]),
+            dtype=np.float32,
+        )
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        vectors = vectors / np.clip(norms, a_min=1e-12, a_max=None)
+    except Exception as exc:
+        logger.warning("Semantic injection dedup skipped: %s", exc)
+        return entries, 0
+
+    threshold = min(max(float(similarity_threshold), -1.0), 1.0)
+    ordered = sorted(
+        range(len(eligible)),
+        key=lambda pos: (
+            -_INJECTION_TYPE_PRIORITY[eligible[pos][2]],
+            -float(eligible[pos][1].get("relevance", 0.0)),
+        ),
+    )
+    kept_positions: list[int] = []
+    suppressed_indexes: set[int] = set()
+
+    for pos in ordered:
+        index, entry, _, _ = eligible[pos]
+        project = str((entry.get("metadata") or {}).get("project") or "")
+        duplicate = False
+        for kept_pos in kept_positions:
+            kept_entry = eligible[kept_pos][1]
+            kept_project = str(
+                (kept_entry.get("metadata") or {}).get("project") or ""
+            )
+            if project != kept_project:
+                continue
+            if float(np.dot(vectors[pos], vectors[kept_pos])) >= threshold:
+                duplicate = True
+                break
+        if duplicate:
+            suppressed_indexes.add(index)
+        else:
+            kept_positions.append(pos)
+
+    if not suppressed_indexes:
+        return entries, 0
+    return (
+        [entry for index, entry in enumerate(entries) if index not in suppressed_indexes],
+        len(suppressed_indexes),
+    )
 
 
 def _parse_optional_row_datetime(value) -> Optional[datetime]:
@@ -897,7 +979,7 @@ def query_vault(
 
 def semantic_context(
     query: str,
-    threshold: float = 0.85,
+    threshold: float = 0.876,
     budget: int = 8000,
     skip_retrieval_increment: bool = False,
     schemas: Optional[list[str]] = None,
@@ -923,7 +1005,7 @@ def semantic_context(
 
     Args:
         query: User's raw prompt text
-        threshold: Minimum raw cosine similarity (default 0.85)
+        threshold: Minimum raw cosine similarity (default 0.876)
         budget: Total character budget for injection (default 8000, split 50/50)
         max_results: Maximum matches to inject after ranking/deduplication
             (default 20, clamped to 1-100). The budget may reduce this further.
@@ -1130,9 +1212,22 @@ def semantic_context(
             for entry, score in zip(candidates, blended):
                 entry["relevance"] = score
 
+    # Suppress semantically redundant local records before the final cap. This
+    # targets auto-extraction overlap (memory + observation + worklog) without
+    # collapsing distinct vault references or records from different projects.
+    enrichment_config = get_context_enrichment_config()
+    semantic_duplicates_suppressed = 0
+    candidates = list(best_per_file.values())
+    if enrichment_config.get("semantic_dedup_enabled", True):
+        candidates, semantic_duplicates_suppressed = _semantic_deduplicate_context(
+            candidates,
+            service,
+            enrichment_config.get("semantic_dedup_threshold", 0.86),
+        )
+
     # Sort by relevance descending
     deduped = sorted(
-        best_per_file.values(), key=lambda e: e["relevance"], reverse=True
+        candidates, key=lambda e: e["relevance"], reverse=True
     )[:max_results]
 
     # Budget-based selection: 3-way split (local / obsidian / remote).
@@ -1282,6 +1377,7 @@ def semantic_context(
         "query_ms": query_ms,
         "total_searched": total,
         "skipped_sensitive": skipped_sensitive,
+        "semantic_duplicates_suppressed": semantic_duplicates_suppressed,
         "budget_used": {
             "local": (third if has_remote else half) - local_remaining,
             "vault": (third if has_remote else half) - vault_remaining,

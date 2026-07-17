@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -399,6 +400,29 @@ def get_embedding_service() -> EmbeddingService:
     _service = EmbeddingService(**kwargs)
     _service_cache_key = key
     return _service
+
+
+def warm_embedding_service() -> float | None:
+    """Load and probe the local embedding backend before serving hook traffic.
+
+    Returns elapsed milliseconds for local backends. Bedrock is deliberately
+    skipped: warming a remote backend would add a billable network request and
+    cannot eliminate network cold starts.
+    """
+    service = get_embedding_service()
+    if service.backend == "bedrock":
+        logger.info("Skipping startup warmup for remote Bedrock embeddings")
+        return None
+
+    started = time.perf_counter()
+    vector = service.encode("Jarvis embedding startup warmup")
+    if len(vector) != service.dimensions:
+        raise ValueError(
+            f"Embedding warmup produced {len(vector)}d, expected {service.dimensions}d"
+        )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    logger.info("Embedding startup warmup completed in %.1f ms", elapsed_ms)
+    return elapsed_ms
 
 
 def reset_embedding_service() -> None:

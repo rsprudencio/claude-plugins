@@ -707,6 +707,34 @@ class TestGetEmbeddingService:
         assert svc._model is None
 
 
+class TestWarmEmbeddingService:
+    """Startup warmup loads local models before hooks can receive traffic."""
+
+    def test_warms_local_backend_with_one_probe(self, monkeypatch):
+        from tools import embedding
+
+        service = MagicMock()
+        service.backend = "onnx"
+        service.dimensions = 384
+        service.encode.return_value = [0.0] * 384
+        monkeypatch.setattr(embedding, "get_embedding_service", lambda: service)
+
+        elapsed_ms = embedding.warm_embedding_service()
+
+        service.encode.assert_called_once_with("Jarvis embedding startup warmup")
+        assert elapsed_ms >= 0
+
+    def test_skips_remote_bedrock_backend(self, monkeypatch):
+        from tools import embedding
+
+        service = MagicMock()
+        service.backend = "bedrock"
+        monkeypatch.setattr(embedding, "get_embedding_service", lambda: service)
+
+        assert embedding.warm_embedding_service() is None
+        service.encode.assert_not_called()
+
+
 class TestEmbeddingConfig:
     """Tests for get_embedding_config()."""
 

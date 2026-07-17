@@ -179,7 +179,7 @@ def get_prompt_context(prompt: str) -> dict:
     todoist_cfg = get_todoist_prompt_alerts_config()
 
     budget = _safe_int(config.get("budget"), 8000)
-    threshold = float(config.get("threshold", 0.85))
+    threshold = float(config.get("threshold", 0.876))
     enabled = bool(config.get("enabled", True))
     debug = bool(config.get("debug", False))
     max_results = max(1, min(100, _safe_int(config.get("max_results"), 20)))
@@ -191,6 +191,7 @@ def get_prompt_context(prompt: str) -> dict:
         "matches": [],
         "query_ms": 0,
         "total_searched": 0,
+        "semantic_duplicates_suppressed": 0,
         "budget_used": {"core": 0, "vault": 0, "total": budget},
         "todoist_prompt_alerts": {
             "enabled": bool(todoist_cfg.get("enabled", False)),
@@ -216,6 +217,9 @@ def get_prompt_context(prompt: str) -> dict:
             "matches": search.get("matches", []),
             "query_ms": search.get("query_ms", 0),
             "total_searched": search.get("total_searched", 0),
+            "semantic_duplicates_suppressed": search.get(
+                "semantic_duplicates_suppressed", 0
+            ),
             "budget_used": search.get(
                 "budget_used",
                 {"core": 0, "vault": 0, "total": budget},

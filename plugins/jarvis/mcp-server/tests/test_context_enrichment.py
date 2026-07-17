@@ -21,6 +21,12 @@ sys.path.insert(0, HOOKS_DIR)
 
 import context_enrichment as context_enrichment_module
 from context_enrichment import _should_skip_prompt, _extract_prompt, _format_memories
+from harness import (
+    CLAUDE,
+    CODEX,
+    detect_harness,
+    format_user_prompt_submit_output,
+)
 
 
 def _seed_docs(db, ids, documents, metadatas):
@@ -210,6 +216,72 @@ class TestPromptExtraction:
         """Returns empty string for empty prompt values."""
         data = json.dumps({"prompt": ""})
         assert _extract_prompt(data) == ""
+
+
+# --- Harness Compatibility Tests ---
+
+
+class TestHarnessCompatibility:
+    """Tests the Claude/Codex UserPromptSubmit protocol boundary."""
+
+    def test_detects_claude_from_legacy_plugin_root(self):
+        assert detect_harness({"CLAUDE_PLUGIN_ROOT": "/plugins/jarvis"}) == CLAUDE
+
+    def test_detects_codex_from_plugin_root(self):
+        # Codex exposes both variables for compatibility. PLUGIN_ROOT wins.
+        assert detect_harness(
+            {
+                "PLUGIN_ROOT": "/plugins/jarvis",
+                "CLAUDE_PLUGIN_ROOT": "/plugins/jarvis",
+            }
+        ) == CODEX
+
+    def test_defaults_to_claude_plain_output_without_hook_environment(self):
+        """Direct/unit callers retain the historical plain-text behavior."""
+        assert detect_harness({}) == CLAUDE
+
+    def test_claude_output_is_plain_context(self):
+        context = "<relevant-vault-memories>memory</relevant-vault-memories>"
+        assert format_user_prompt_submit_output(context, CLAUDE) == context
+
+    def test_codex_output_uses_hook_specific_additional_context(self):
+        context = "<relevant-vault-memories>mémoire</relevant-vault-memories>"
+        output = format_user_prompt_submit_output(context, CODEX)
+
+        assert json.loads(output) == {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": context,
+            }
+        }
+        # Keep human-readable Unicode in diagnostics and captured hook output.
+        assert "mémoire" in output
+
+    @pytest.mark.parametrize("harness", [CLAUDE, CODEX])
+    def test_empty_context_is_silent_for_every_harness(self, harness):
+        assert format_user_prompt_submit_output("", harness) == ""
+
+
+class TestHookManifestPortability:
+    """Keep every Jarvis hook reachable from both plugin harnesses."""
+
+    def test_all_hook_commands_prefer_codex_root_with_claude_fallback(self):
+        manifest_path = os.path.join(HOOKS_DIR, "..", "hooks", "hooks.json")
+        with open(manifest_path) as manifest_file:
+            hooks = json.load(manifest_file)["hooks"]
+
+        commands = [
+            hook["command"]
+            for event_groups in hooks.values()
+            for event_group in event_groups
+            for hook in event_group["hooks"]
+            if hook["type"] == "command"
+        ]
+
+        assert commands
+        for command in commands:
+            assert '${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}' in command
+            assert 'bash "${PLUGIN_DIR}/' in command
 
 
 # --- Output Formatting Tests ---
@@ -728,7 +800,7 @@ class TestContextEnrichmentConfig:
 
         config = get_context_enrichment_config()
         assert config["enabled"] is True
-        assert config["threshold"] == 0.85
+        assert config["threshold"] == 0.876
         assert config["budget"] == 8000
         assert config["max_results"] == 20
         assert config["passive_retrieval_increment"] == 0.01
@@ -797,8 +869,10 @@ class TestDedupIntegration:
         from unittest.mock import patch
         with patch("precompact_dedup.STATE_DIR", tmp_path), \
              patch("context_enrichment.write_injection_state") as mock_write, \
+             patch("context_enrichment._write_telemetry") as mock_telemetry, \
              patch("context_enrichment.filter_already_injected", side_effect=lambda m, s: m) as mock_filter:
             self.mock_write = mock_write
+            self.mock_telemetry = mock_telemetry
             self.mock_filter = mock_filter
             self.tmp_path = tmp_path
             yield
@@ -866,6 +940,114 @@ class TestDedupIntegration:
         expected_hashes = [compute_content_hash(m["content"]) for m in matches]
         assert call_args[0][1] == expected_hashes
         assert call_args[0][2] == ["a.md", "b.md"]
+
+    @pytest.mark.parametrize("harness", [CLAUDE, CODEX])
+    def test_hook_output_matches_active_harness_protocol(
+        self, harness, monkeypatch, capsys
+    ):
+        """The same retrieval result gets only a harness-specific envelope."""
+        matches = [
+            {
+                "content": "Prefer focused memory injection.",
+                "id": "decision/retrieval.md",
+                "relevance": 0.91,
+                "type": "decision",
+            },
+        ]
+        calls = []
+
+        def fake_post(path, payload, **kwargs):
+            calls.append((path, payload, kwargs))
+            return self._make_success_response(matches)
+
+        monkeypatch.setattr(context_enrichment_module, "post_json", fake_post)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugins/jarvis")
+        if harness == CODEX:
+            monkeypatch.setenv("PLUGIN_ROOT", "/plugins/jarvis")
+            hook_input = {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "codex-session",
+                "turn_id": "turn-17",
+                "cwd": "/workspace",
+                "prompt": "How should memory retrieval remain focused?",
+            }
+        else:
+            monkeypatch.delenv("PLUGIN_ROOT", raising=False)
+            hook_input = {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "claude-session",
+                "transcript_path": "/tmp/transcript.jsonl",
+                "cwd": "/workspace",
+                "prompt": "How should memory retrieval remain focused?",
+            }
+
+        monkeypatch.setattr(sys, "argv", ["context_enrichment.py", "--hook"])
+        monkeypatch.setattr(
+            sys, "stdin", __import__("io").StringIO(json.dumps(hook_input))
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            context_enrichment_module.main()
+
+        assert exc.value.code == 0
+        stdout = capsys.readouterr().out.strip()
+        if harness == CODEX:
+            response = json.loads(stdout)
+            assert set(response) == {"hookSpecificOutput"}
+            hook_output = response["hookSpecificOutput"]
+            assert hook_output["hookEventName"] == "UserPromptSubmit"
+            injected = hook_output["additionalContext"]
+        else:
+            assert stdout.startswith("<relevant-vault-memories")
+            injected = stdout
+
+        assert "Prefer focused memory injection." in injected
+        assert calls == [
+            (
+                "/hook/prompt-context",
+                {"prompt": "How should memory retrieval remain focused?"},
+                {"timeout_seconds": 2.5},
+            )
+        ]
+        self.mock_filter.assert_called_once_with(matches, hook_input["session_id"])
+        self.mock_write.assert_called_once()
+        self.mock_telemetry.assert_called_once()
+
+    @pytest.mark.parametrize("harness", [CLAUDE, CODEX])
+    def test_no_matches_emit_no_hook_output(self, harness, monkeypatch, capsys):
+        """A valid zero-result search stays completely silent."""
+        monkeypatch.setattr(
+            context_enrichment_module,
+            "post_json",
+            lambda *a, **kw: self._make_success_response([]),
+        )
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plugins/jarvis")
+        if harness == CODEX:
+            monkeypatch.setenv("PLUGIN_ROOT", "/plugins/jarvis")
+        else:
+            monkeypatch.delenv("PLUGIN_ROOT", raising=False)
+        monkeypatch.setattr(sys, "argv", ["context_enrichment.py", "--hook"])
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            __import__("io").StringIO(
+                json.dumps(
+                    {
+                        "hook_event_name": "UserPromptSubmit",
+                        "session_id": "empty-session",
+                        "prompt": "A substantive prompt with no matching memory",
+                    }
+                )
+            ),
+        )
+
+        with pytest.raises(SystemExit) as exc:
+            context_enrichment_module.main()
+
+        assert exc.value.code == 0
+        assert capsys.readouterr().out == ""
+        self.mock_write.assert_not_called()
+        self.mock_telemetry.assert_not_called()
 
     def test_no_filter_when_no_session_id(self, monkeypatch, capsys):
         """Direct mode (no --hook) passes empty session_id to filter."""

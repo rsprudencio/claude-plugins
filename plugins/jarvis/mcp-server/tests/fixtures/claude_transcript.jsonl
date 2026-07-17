@@ -1,0 +1,2 @@
+{"type":"user","message":{"content":[{"type":"text","text":"Preserve Claude transcript extraction as the preferred rich input."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/workspace/jarvis/hook.py"}},{"type":"text","text":"The Claude transcript adapter remains authoritative when it yields a complete turn."}],"usage":{"input_tokens":180,"output_tokens":75}}}

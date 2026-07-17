@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """Auto-Extract background worker: analyzes conversation turns and extracts observations.
 
-Usage: python3 extract_observation.py <mode> <transcript_path> [session_id]
+Usage: python3 extract_observation.py <mode> <transcript_path|-> [session_id]
 
-The Stop hook fires after every conversation round. This script uses a
-per-session line watermark (similar to Filebeat/Kafka consumer offsets)
-to track the last processed transcript line, avoiding re-analysis of
-already-seen turns.
+The Stop hook fires after every conversation round. Claude turns are read from
+its transcript when available. Harness-neutral prompt/response state is used as
+a fallback (notably for Codex), so extraction does not depend on Codex's
+transcript representation. Each source has its own per-session watermark.
 
 Pipeline:
-1. Read watermark for this session → know where we left off
-2. Read new transcript lines from watermark+1 onward
-3. Parse ALL new user→assistant turns (forward scan)
+1. Read the source-specific watermark for this session
+2. Prefer new Claude transcript turns; otherwise normalize saved hook state
+3. Collect ALL new complete user→assistant turns
 4. Substance gate: total conversation text exceeds char threshold
 5. Build session prompt including ALL turns (budget truncates, not excludes)
 6. Call Haiku to extract 1-3 behavioral observations
 7. Store observations via content_write
-8. Advance watermark to last line read
+8. Advance the selected source's watermark
 """
 import json
 import os
@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from hook_http_client import post_json
+from turn_state import complete_stop_turn
 
 # Import anthropic at module level for easier testing (imported conditionally in function)
 try:
@@ -1665,9 +1666,9 @@ def main():
     """Main entry point: watermark-based multi-turn extraction pipeline.
 
     Flow:
-    1. Read watermark → know where we left off
-    2. Read new lines from transcript
-    3. Parse all turns → find complete user→assistant pairs
+    1. Prefer complete new turns from the Claude transcript
+    2. Fall back to normalized prompt/Stop state for transcript independence
+    3. Select that source's independent watermark
     4. Extract first user message (from line 0, for context)
     5. Substance gate → total conversation text exceeds threshold
     6. Compute content budget from ALL turns
@@ -1686,10 +1687,10 @@ def main():
     - Observations stored: advance
     - Storage failure: advance (Haiku already ran, no point retrying)
     """
-    # Args: <mode> <transcript_path> [session_id] [project_path] [git_branch]
+    # Args: <mode> <transcript_path|-> [session_id] [project_path] [git_branch]
     if len(sys.argv) < 3:
         print(
-            "Usage: extract_observation.py <mode> <transcript_path> [session_id] [project_path] [git_branch]",
+            "Usage: extract_observation.py <mode> <transcript_path|-> [session_id] [project_path] [git_branch]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1742,30 +1743,48 @@ def main():
         worklog_config.get("dedup_threshold"), _DEDUP_JACCARD_THRESHOLD
     )
 
-    # Step 1: Read watermark
-    watermark = read_watermark(session_id)
-
-    # Step 2: Read new transcript lines
-    start_from = watermark + 1  # Start after last processed line
-    indexed_lines, total_lines = read_transcript_from(
-        transcript_path, start_from, max_lines
-    )
-
-    if not indexed_lines:
-        print("No new transcript lines since last extraction", file=sys.stderr)
-        sys.exit(0)
-
-    # Step 3: Parse all turns
-    turns = parse_all_turns(indexed_lines)
-    last_line_read = indexed_lines[-1][0]  # Absolute index of last line we read
+    # Steps 1-4: Prefer Claude's richer transcript representation. If it is
+    # absent or cannot yield a complete Claude turn, join the persisted prompt
+    # with Stop's last_assistant_message instead. Watermarks stay separate
+    # because transcript line numbers and normalized turn sequences are not
+    # comparable.
+    transcript_watermark = read_watermark(session_id)
+    indexed_lines = []
+    if transcript_path and transcript_path != "-":
+        indexed_lines, _ = read_transcript_from(
+            transcript_path, transcript_watermark + 1, max_lines
+        )
+    turns = parse_all_turns(indexed_lines) if indexed_lines else []
+    watermark_session_id = session_id
+    last_line_read = indexed_lines[-1][0] if indexed_lines else -1
+    first_user_text = extract_first_user_message(transcript_path) if turns else ""
 
     if not turns:
-        print("No complete turns in new transcript lines", file=sys.stderr)
-        write_watermark(session_id, last_line_read)
-        sys.exit(0)
+        normalized_watermark_id = f"{session_id}.normalized-turns"
+        normalized_watermark = read_watermark(normalized_watermark_id)
+        try:
+            stop_data = json.loads(hook_input) if hook_input else {}
+        except (json.JSONDecodeError, TypeError):
+            stop_data = {}
+        if not isinstance(stop_data, dict):
+            stop_data = {}
+        normalized_turns, last_sequence, normalized_first_user = complete_stop_turn(
+            stop_data,
+            start_sequence=normalized_watermark + 1,
+        )
+        if normalized_turns:
+            turns = normalized_turns
+            last_line_read = last_sequence
+            first_user_text = normalized_first_user[:_FIRST_USER_MAX_CHARS]
+            watermark_session_id = normalized_watermark_id
 
-    # Step 4: Extract first user message (from line 0, independent of watermark)
-    first_user_text = extract_first_user_message(transcript_path)
+    if not turns:
+        if indexed_lines:
+            print("No complete turns in new transcript lines", file=sys.stderr)
+            write_watermark(session_id, last_line_read)
+        else:
+            print("No complete transcript or normalized turns", file=sys.stderr)
+        sys.exit(0)
 
     # Step 5: Substance gate — total conversation text must exceed threshold
     # This is a cost optimization: don't call Haiku on near-empty sessions.
@@ -1778,7 +1797,7 @@ def main():
             f"Conversation too short ({total_text} chars < {min_chars})",
             file=sys.stderr,
         )
-        write_watermark(session_id, last_line_read)
+        write_watermark(watermark_session_id, last_line_read)
         sys.exit(0)
 
     # Step 6: Compute content budget from ALL turns
@@ -1829,7 +1848,7 @@ def main():
             hook_input=hook_input,
             debug=debug,
         )
-        write_watermark(session_id, last_line_read)
+        write_watermark(watermark_session_id, last_line_read)
         sys.exit(0)
 
     # Step 10: Build a single ingest payload for server-side dedup + persistence.
@@ -1924,7 +1943,7 @@ def main():
             debug=debug,
         )
         # Post-Haiku persistence failure still advances watermark.
-        write_watermark(session_id, last_line_read)
+        write_watermark(watermark_session_id, last_line_read)
         sys.exit(0)
 
     ingest_data = ingest_response.get("data") or {}
@@ -1988,7 +2007,7 @@ def main():
     )
 
     # Step 11: Advance watermark (even on storage failure — Haiku already ran)
-    write_watermark(session_id, last_line_read)
+    write_watermark(watermark_session_id, last_line_read)
 
 
 if __name__ == "__main__":

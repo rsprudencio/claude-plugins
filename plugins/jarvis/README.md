@@ -1,6 +1,6 @@
-# Jarvis - AI Assistant Plugin for Claude Code
+# Jarvis - AI Assistant Plugin for Claude Code and Codex
 
-Jarvis is a context-aware AI assistant that manages your personal knowledge vault, maintains a git-audited trail of all operations, and integrates with Todoist for task management.
+Jarvis is a context-aware AI assistant for Claude Code and local Codex. It manages your personal knowledge vault, maintains a git-audited trail of operations, and integrates with Todoist for task management.
 
 ## Installation
 
@@ -16,6 +16,15 @@ curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/maste
 claude plugin marketplace add rsprudencio/jarvis
 claude plugin install jarvis@jarvis-plugins
 # Then inside Claude: /jarvis-settings
+```
+
+**Codex** (local CLI, IDE, or desktop app):
+
+```bash
+codex plugin marketplace add rsprudencio/jarvis
+codex plugin add jarvis@jarvis-plugins
+codex plugin add jarvis-obsidian@jarvis-plugins
+# Restart Codex, review /hooks, then start a new thread.
 ```
 
 ## Quick Start

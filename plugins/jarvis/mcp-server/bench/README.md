@@ -12,10 +12,26 @@ Results land in `bench/results/<stamp>-<preset>.md` (+ `.json`). **Commit them.*
 scorecard is the record of *why* a model was chosen and the bar the next candidate has
 to clear.
 
-## Why public datasets and not the vault
+## Calibrating passive injection on real memories
+
+Public benchmarks select the retrieval model. The final injection threshold is a
+different decision: calibrate it against labeled prompts and the live personal corpus.
+
+```bash
+make calibrate-injection
+```
+
+This sweeps raw-cosine thresholds using `bench/injection_quality_cases.json`, requires
+at least 95% rejection of hard-negative prompts, and then maximizes recall inside that
+quality constraint. With the current 19 negative cases, 95% means all 19 must be
+rejected. It queries the deployed container with retrieval-count increments disabled.
+Refresh the dated labels whenever the indexed corpus changes materially.
+
+## Why model selection uses public datasets, not the vault
 
 The vault is organic — it grows, changes, and its content is personal. A labelled set
-built from it would rot immediately and couldn't be shared or re-run.
+built from it is unsuitable for reusable model selection, but it is exactly what the
+deployment-specific injection gate must use.
 
 It also isn't necessary. The memory system's job is *"find the right passage among
 thousands of blobs of text"* — which is **exactly** what a retrieval benchmark with

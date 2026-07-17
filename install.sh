@@ -1,9 +1,11 @@
 #!/bin/bash
-# Jarvis Plugin Installer
+# Jarvis Plugin Installer for Claude Code and Codex
 # curl -fsSL https://raw.githubusercontent.com/rsprudencio/jarvis/refs/heads/master/install.sh | bash
+# Codex-only: curl .../install.sh | JARVIS_HARNESS=codex bash
 set -e
 
 JARVIS_HOME="${JARVIS_HOME:-$HOME/.jarvis}"
+JARVIS_HARNESS="${JARVIS_HARNESS:-auto}"
 MARKETPLACE_NAME="jarvis-plugins"
 MARKETPLACE_REPO="https://github.com/rsprudencio/jarvis"
 
@@ -56,17 +58,62 @@ echo -e "${NC}"
 echo -e "  ${BOLD}AI Assistant Plugin Installer${NC}"
 echo ""
 
+# Keep the existing Claude-first behavior when both harnesses are installed.
+if [ "$JARVIS_HARNESS" = "auto" ]; then
+    if command -v claude >/dev/null 2>&1; then
+        JARVIS_HARNESS="claude"
+    elif command -v codex >/dev/null 2>&1; then
+        JARVIS_HARNESS="codex"
+    fi
+fi
+
+case "$JARVIS_HARNESS" in
+    claude|codex) ;;
+    *)
+        fail "Neither Claude Code nor Codex CLI was found"
+        echo ""
+        echo -e "  Install one harness, or set ${BLUE}JARVIS_HARNESS=claude|codex${NC}."
+        echo ""
+        exit 1
+        ;;
+esac
+
+if [ "$JARVIS_HARNESS" = "codex" ]; then
+    PLUGIN_INSTALL_VERB="add"
+else
+    PLUGIN_INSTALL_VERB="install"
+fi
+
+AUTO_EXTRACT_MODE_OVERRIDE=""
+if [ "$JARVIS_HARNESS" = "codex" ] \
+    && [ -z "${ANTHROPIC_API_KEY:-}" ] \
+    && ! command -v claude >/dev/null 2>&1; then
+    AUTO_EXTRACT_MODE_OVERRIDE="disabled"
+    warn "Passive auto-extraction will be disabled (no Anthropic key or Claude CLI)"
+fi
+
+plugin_cli() {
+    "$JARVIS_HARNESS" plugin "$@"
+}
+
+plugin_install() {
+    plugin_cli "$PLUGIN_INSTALL_VERB" "$1"
+}
+
+ok "Harness: $JARVIS_HARNESS"
+echo ""
+
 # ═══════════════════════════════════════════════
 # 📦 Install Core Plugin
 # ═══════════════════════════════════════════════
 
 DOCKER_IMAGE="ghcr.io/rsprudencio/jarvis:latest"
 
-# Verify Claude CLI exists (silent check)
-if ! command -v claude >/dev/null 2>&1; then
-    fail "Claude Code CLI not found"
+# Verify the selected harness exists (silent check)
+if ! command -v "$JARVIS_HARNESS" >/dev/null 2>&1; then
+    fail "$JARVIS_HARNESS CLI not found"
     echo ""
-    echo -e "  Install Claude Code first: ${BLUE}https://claude.ai/code${NC}"
+    echo -e "  Set ${BLUE}JARVIS_HARNESS=claude|codex${NC} to select an installed harness."
     echo ""
     exit 1
 fi
@@ -88,25 +135,38 @@ echo -e "${BOLD}📦 Install Core Plugin${NC}"
 echo ""
 
 # Add marketplace (may fail if already added — that's OK)
-claude plugin marketplace add rsprudencio/jarvis >/dev/null 2>&1 || true
+plugin_cli marketplace add rsprudencio/jarvis >/dev/null 2>&1 || true
 
 # Verify marketplace is available
-if ! claude plugin marketplace list 2>/dev/null | grep -q "jarvis-plugins"; then
+if ! plugin_cli marketplace list 2>/dev/null | grep -q "jarvis-plugins"; then
     fail "Could not add marketplace"
-    echo -e "  Run manually: ${BLUE}claude plugin marketplace add rsprudencio/jarvis${NC}"
+    echo -e "  Run manually: ${BLUE}$JARVIS_HARNESS plugin marketplace add rsprudencio/jarvis${NC}"
     exit 1
+fi
+
+# Codex snapshots Git marketplaces locally. Refresh an existing snapshot before
+# installation; a fresh add is already current, so an upgrade failure is only a warning.
+if [ "$JARVIS_HARNESS" = "codex" ]; then
+    plugin_cli marketplace upgrade "$MARKETPLACE_NAME" >/dev/null 2>&1 \
+        || warn "Could not refresh the Codex marketplace snapshot"
 fi
 
 # Install core plugin
 echo -e "  Installing ${BLUE}jarvis@jarvis-plugins${NC}..."
-claude plugin install jarvis@jarvis-plugins >/dev/null 2>&1 || {
+plugin_install jarvis@jarvis-plugins >/dev/null 2>&1 || {
     fail "Could not install jarvis plugin"
     echo ""
-    echo -e "  Try manually: ${BLUE}claude plugin install jarvis@jarvis-plugins${NC}"
+    echo -e "  Try manually: ${BLUE}$JARVIS_HARNESS plugin $PLUGIN_INSTALL_VERB jarvis@jarvis-plugins${NC}"
     exit 1
 }
 
-ok "Plugin installed"
+echo -e "  Installing ${BLUE}jarvis-obsidian@jarvis-plugins${NC}..."
+plugin_install jarvis-obsidian@jarvis-plugins >/dev/null 2>&1 || {
+    fail "Could not install the required Jarvis vault plugin"
+    exit 1
+}
+
+ok "Core and vault plugins installed"
 echo ""
 
 # ═══════════════════════════════════════════════
@@ -148,43 +208,67 @@ echo ""
 echo -e "  ${BOLD}Available extensions:${NC}"
 echo -e "    ${CYAN}[1]${NC} jarvis-todoist   — Task management via Todoist"
 echo -e "    ${CYAN}[2]${NC} jarvis-strategic — Strategic analysis & briefings"
-echo -e "    ${CYAN}[3]${NC} jarvis-toolbelt  — Adversarial & security review agents"
-echo -e "    ${CYAN}[4]${NC} All"
-echo -e "    ${CYAN}[5]${NC} Skip"
+if [ "$JARVIS_HARNESS" = "claude" ]; then
+    echo -e "    ${CYAN}[3]${NC} jarvis-toolbelt  — Adversarial & security review agents"
+    echo -e "    ${CYAN}[4]${NC} All"
+    echo -e "    ${CYAN}[5]${NC} Skip"
+    DEFAULT_EXT_CHOICE="5"
+else
+    echo -e "    ${CYAN}[3]${NC} All supported Codex extensions"
+    echo -e "    ${CYAN}[4]${NC} Skip"
+    DEFAULT_EXT_CHOICE="4"
+fi
 echo ""
-ask "  Choice [5]: " EXT_CHOICE "5"
+ask "  Choice [$DEFAULT_EXT_CHOICE]: " EXT_CHOICE "$DEFAULT_EXT_CHOICE"
 
 install_ext() {
-    claude plugin install "$1@$MARKETPLACE_NAME" 2>/dev/null && ok "$1 installed" || warn "$1 install failed"
+    plugin_install "$1@$MARKETPLACE_NAME" 2>/dev/null && ok "$1 installed" || warn "$1 install failed"
 }
 
-case "$EXT_CHOICE" in
-    1) install_ext jarvis-todoist ;;
-    2) install_ext jarvis-strategic ;;
-    3) install_ext jarvis-toolbelt ;;
-    4)
-        install_ext jarvis-todoist
-        install_ext jarvis-strategic
-        install_ext jarvis-toolbelt
-        ;;
-    *) info "Skipping extensions" ;;
-esac
+if [ "$JARVIS_HARNESS" = "claude" ]; then
+    case "$EXT_CHOICE" in
+        1) install_ext jarvis-todoist ;;
+        2) install_ext jarvis-strategic ;;
+        3) install_ext jarvis-toolbelt ;;
+        4)
+            install_ext jarvis-todoist
+            install_ext jarvis-strategic
+            install_ext jarvis-toolbelt
+            ;;
+        *) info "Skipping extensions" ;;
+    esac
+else
+    case "$EXT_CHOICE" in
+        1) install_ext jarvis-todoist ;;
+        2) install_ext jarvis-strategic ;;
+        3)
+            install_ext jarvis-todoist
+            install_ext jarvis-strategic
+            ;;
+        *) info "Skipping extensions" ;;
+    esac
+fi
 
 echo ""
 
-# Resolve installed plugin directory from Claude's plugin system (post-extensions)
-PLUGIN_DIR=$(claude plugin list --json 2>/dev/null | $PYTHON_CMD -c "
+# Resolve the installed core directory from the selected harness (post-extensions).
+PLUGIN_DIR=$(plugin_cli list --json 2>/dev/null | $PYTHON_CMD -c "
 import sys, json
-for p in json.load(sys.stdin):
-    if p.get('id', '').startswith('jarvis@'):
-        print(p['installPath'])
+data = json.load(sys.stdin)
+plugins = data if isinstance(data, list) else data.get('installed', [])
+for p in plugins:
+    plugin_id = p.get('id', p.get('pluginId', ''))
+    if plugin_id.startswith('jarvis@'):
+        path = p.get('installPath') or p.get('source', {}).get('path')
+        if path:
+            print(path)
         break
 " 2>/dev/null)
 
 if [ -z "$PLUGIN_DIR" ] || [ ! -d "$PLUGIN_DIR" ]; then
     fail "Plugin directory not found"
-    echo "    Run: claude plugin list --json"
-    echo "    Try reinstalling: claude plugin install jarvis@$MARKETPLACE_NAME"
+    echo "    Run: $JARVIS_HARNESS plugin list --json"
+    echo "    Try reinstalling: $JARVIS_HARNESS plugin $PLUGIN_INSTALL_VERB jarvis@$MARKETPLACE_NAME"
     exit 1
 fi
 
@@ -284,12 +368,18 @@ if [ "$SKIP_CONFIG" != true ]; then
     echo ""
 fi
 
-# Shell integration (always offer executable install, independent of config)
-echo -e "  ${BOLD}Shell Integration${NC}"
-echo "  The 'jarvis' command launches Claude with your Jarvis identity."
-echo -e "  ${YELLOW}⚠️  Highly recommended — this is the only way to make Claude fully impersonate Jarvis.${NC}"
-echo ""
-ask "  Install 'jarvis' command to your PATH? [Y/n]: " SHELL_SETUP "Y"
+# The shipped launcher and statusline are Claude-specific. Codex loads Jarvis
+# through its plugin manifest, so installing either would be misleading.
+if [ "$JARVIS_HARNESS" = "claude" ]; then
+    echo -e "  ${BOLD}Shell Integration${NC}"
+    echo "  The 'jarvis' command launches Claude with your Jarvis identity."
+    echo -e "  ${YELLOW}⚠️  Highly recommended — this is the only way to make Claude fully impersonate Jarvis.${NC}"
+    echo ""
+    ask "  Install 'jarvis' command to your PATH? [Y/n]: " SHELL_SETUP "Y"
+else
+    SHELL_SETUP="N"
+    info "Codex loads Jarvis directly; skipping the Claude launcher"
+fi
 
 echo ""
 
@@ -318,8 +408,10 @@ cfg['vault_path'] = sys.argv[2]
 cfg['vault_confirmed'] = True
 cfg['configured_at'] = sys.argv[3]
 cfg['file_format'] = sys.argv[4]
+if sys.argv[5]:
+    cfg.setdefault('memory', {}).setdefault('auto_extract', {})['mode'] = sys.argv[5]
 json.dump(cfg, sys.stdout, indent=2)
-" "$TEMPLATE" "$VAULT_PATH" "$TIMESTAMP" "${FILE_FORMAT:-md}" > "$JARVIS_HOME/config.json"
+" "$TEMPLATE" "$VAULT_PATH" "$TIMESTAMP" "${FILE_FORMAT:-md}" "$AUTO_EXTRACT_MODE_OVERRIDE" > "$JARVIS_HOME/config.json"
     else
         # Fallback: minimal config if template not found in plugin distribution
         cat > "$JARVIS_HOME/config.json" << FALLBACKEOF
@@ -372,7 +464,9 @@ if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     fi
 else
     info "Skipping shell integration"
-    echo -e "  You can still activate Jarvis inside any Claude session by typing: ${BLUE}/jarvis:jarvis${NC}"
+    if [ "$JARVIS_HARNESS" = "claude" ]; then
+        echo -e "  You can still activate Jarvis inside any Claude session by typing: ${BLUE}/jarvis:jarvis${NC}"
+    fi
 fi
 
 echo ""
@@ -509,10 +603,12 @@ chmod +x "$HELPER_SCRIPT"
 ok "Management helper: $HELPER_SCRIPT"
 
 # Copy toolbelt scripts to ~/.jarvis/bin/ if toolbelt was installed
-if [ "$EXT_CHOICE" = "3" ] || [ "$EXT_CHOICE" = "4" ]; then
+if [ "$JARVIS_HARNESS" = "claude" ] \
+    && { [ "$EXT_CHOICE" = "3" ] || [ "$EXT_CHOICE" = "4" ]; }; then
     mkdir -p "$JARVIS_HOME/bin"
+    # Claude caches <marketplace>/<plugin>/<version>.
     MARKETPLACE_DIR="$(dirname "$(dirname "$PLUGIN_DIR")")"
-    DAR_SRC=$(ls "$MARKETPLACE_DIR"/jarvis-toolbelt/*/bin/dar-review 2>/dev/null | head -1)
+    DAR_SRC=$(find "$MARKETPLACE_DIR/jarvis-toolbelt" -path '*/bin/dar-review' -type f 2>/dev/null | head -1)
     if [ -n "$DAR_SRC" ] && [ -f "$DAR_SRC" ]; then
         cp "$DAR_SRC" "$JARVIS_HOME/bin/dar-review"
         chmod +x "$JARVIS_HOME/bin/dar-review"
@@ -527,10 +623,15 @@ echo ""
 # 📊 Statusline Setup (optional)
 # ═══════════════════════════════════════════════
 
-echo -e "${BOLD}📊 Statusline${NC}"
-echo "  Jarvis includes a statusline showing model, MCP servers, cost, context, and server health."
-echo ""
-ask "  Install Jarvis statusline? [Y/n]: " STATUSLINE_SETUP "Y"
+if [ "$JARVIS_HARNESS" = "codex" ]; then
+    STATUSLINE_SETUP="N"
+    info "Codex selected; skipping the Claude-specific statusline"
+else
+    echo -e "${BOLD}📊 Statusline${NC}"
+    echo "  Jarvis includes a statusline showing model, MCP servers, cost, context, and server health."
+    echo ""
+    ask "  Install Jarvis statusline? [Y/n]: " STATUSLINE_SETUP "Y"
+fi
 
 if [ "$STATUSLINE_SETUP" = "Y" ] || [ "$STATUSLINE_SETUP" = "y" ]; then
     SL_SRC="$PLUGIN_DIR/statusline/statusline.py"
@@ -592,9 +693,15 @@ fi
 echo -e "  Config:      ${CYAN}$JARVIS_HOME/config.json${NC}"
 echo ""
 echo -e "  ${BOLD}Quick Start:${NC}"
-echo -e "    ${BLUE}\$ jarvis${NC}                     — Launch Jarvis"
-echo -e "    ${BLUE}\$ jarvis \"/jarvis-recall AI tools\"${NC}  — Search your vault"
-echo -e "    ${BLUE}/jarvis-settings${NC}              — Update configuration"
+if [ "$JARVIS_HARNESS" = "codex" ]; then
+    echo -e "    ${BLUE}\$ codex${NC}                      — Launch Codex with Jarvis loaded"
+    echo -e "    ${BLUE}/hooks${NC}                        — Review and trust Jarvis hooks"
+    echo -e "    Ask Codex to find relevant memories for your task."
+else
+    echo -e "    ${BLUE}\$ jarvis${NC}                     — Launch Jarvis"
+    echo -e "    ${BLUE}\$ jarvis \"/jarvis-recall AI tools\"${NC}  — Search your vault"
+    echo -e "    ${BLUE}/jarvis-settings${NC}              — Update configuration"
+fi
 
 echo ""
 echo -e "  ${BOLD}Docker Management:${NC}"
@@ -613,5 +720,9 @@ if [ "$SHELL_SETUP" = "Y" ] || [ "$SHELL_SETUP" = "y" ]; then
     fi
 fi
 
-echo -e "  ${BOLD}First time? Just run: jarvis${NC}"
+if [ "$JARVIS_HARNESS" = "codex" ]; then
+    echo -e "  ${BOLD}Restart Codex, trust the hooks in /hooks, then start a new thread.${NC}"
+else
+    echo -e "  ${BOLD}First time? Just run: jarvis${NC}"
+fi
 echo ""

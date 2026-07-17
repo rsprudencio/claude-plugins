@@ -10,16 +10,24 @@
 #   make build            — Docker build + tag
 #   make restart          — restart Docker container
 #   make reinstall        — reinstall Claude plugins
+#   make reinstall-codex  — install supported Codex plugins
 #   make release VERSION=x — full pipeline (test→bump→build→restart→reinstall)
 
-.PHONY: help version bump test test-e2e test-all build restart reinstall release clean
+.PHONY: help version bump validate-plugins test test-e2e test-all bench calibrate-injection build restart reinstall reinstall-codex release clean
 
 # ─── Configuration ──────────────────────────────────────────────────
 
-# Plugin selection (PLUGIN=jarvis|todoist|strategic, default: jarvis)
+# Plugin selection (default: jarvis)
 PLUGIN        ?= jarvis
-PLUGIN_DIR    := plugins/$(if $(filter todoist,$(PLUGIN)),jarvis-todoist,$(if $(filter strategic,$(PLUGIN)),jarvis-strategic,jarvis))
+PLUGIN_DIR_jarvis    := plugins/jarvis
+PLUGIN_DIR_todoist   := plugins/jarvis-todoist
+PLUGIN_DIR_strategic := plugins/jarvis-strategic
+PLUGIN_DIR_toolbelt  := plugins/jarvis-toolbelt
+PLUGIN_DIR_obsidian  := plugins/jarvis-obsidian
+PLUGIN_DIR    := $(PLUGIN_DIR_$(PLUGIN))
 PLUGIN_JSON   := $(PLUGIN_DIR)/.claude-plugin/plugin.json
+CODEX_PLUGIN_JSON := $(PLUGIN_DIR)/.codex-plugin/plugin.json
+CLAUDE_MARKETPLACE := .claude-plugin/marketplace.json
 PYPROJECT     := $(PLUGIN_DIR)/mcp-server/pyproject.toml
 CURRENT_VERSION := $(shell jq -r .version $(PLUGIN_JSON) 2>/dev/null || echo "unknown")
 
@@ -47,7 +55,7 @@ help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
-	@echo "$(YELLOW)Full release:$(NC)  make release VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic]"
+	@echo "$(YELLOW)Full release:$(NC)  make release VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic|toolbelt|obsidian]"
 
 version: ## Show current plugin version
 	@echo "$(CURRENT_VERSION)"
@@ -60,6 +68,11 @@ test: ## Run unit tests (core + obsidian + memory-explorer)
 	@echo "$(CYAN)Running memory-explorer tests...$(NC)"
 	cd apps/memory-explorer && uv run python -m pytest tests/ -x -q
 	@echo "$(GREEN)✓ All unit tests passed$(NC)"
+
+validate-plugins: ## Check Claude/Codex manifest and marketplace parity
+	@echo "$(CYAN)Validating dual-harness plugin packaging...$(NC)"
+	cd plugins/jarvis/mcp-server && uv run --extra dev python -m pytest tests/test_plugin_packaging.py -q
+	@echo "$(GREEN)✓ Plugin packaging is consistent$(NC)"
 
 E2E_COMPOSE := plugins/jarvis/mcp-server/docker-compose.e2e.yml
 E2E_PG_URL  := postgresql://jarvis:jarvis@localhost:25432/jarvis?sslmode=disable
@@ -90,16 +103,35 @@ bench: ## Benchmark embedding/cross-encoder models (PRESET=core|full KIND=embed|
 	cd plugins/jarvis/mcp-server && \
 		uv run --extra bench python -m bench --preset $(PRESET) --kind $(KIND)
 
-bump: ## Bump version (VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic])
+calibrate-injection: ## Sweep the passive-injection threshold against labeled real memories
+	@echo "$(CYAN)Injection quality calibration against the live Jarvis store$(NC)"
+	docker compose -f $(COMPOSE_FILE) exec -T -w /app/jarvis-core jarvis \
+		python -m bench.injection_calibration --no-write
+
+bump: ## Bump version (VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic|toolbelt|obsidian])
 	@if [ -z "$(VERSION)" ]; then \
-		echo "$(RED)Usage: make bump VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic]$(NC)"; \
+		echo "$(RED)Usage: make bump VERSION=x.y.z [PLUGIN=jarvis|todoist|strategic|toolbelt|obsidian]$(NC)"; \
 		echo "Current $(PLUGIN) version: $(CURRENT_VERSION)"; \
+		exit 1; \
+	fi
+	@if [ -z "$(PLUGIN_DIR)" ]; then \
+		echo "$(RED)Unknown plugin: $(PLUGIN)$(NC)"; \
 		exit 1; \
 	fi
 	@echo "$(CYAN)Bumping $(PLUGIN): $(CURRENT_VERSION) → $(VERSION)$(NC)"
 	@jq --arg v "$(VERSION)" '.version = $$v' $(PLUGIN_JSON) > $(PLUGIN_JSON).tmp && \
 		mv $(PLUGIN_JSON).tmp $(PLUGIN_JSON)
 	@echo "  $(PLUGIN_JSON)"
+	@if [ -f "$(CODEX_PLUGIN_JSON)" ]; then \
+		jq --arg v "$(VERSION)" '.version = $$v' $(CODEX_PLUGIN_JSON) > $(CODEX_PLUGIN_JSON).tmp && \
+		mv $(CODEX_PLUGIN_JSON).tmp $(CODEX_PLUGIN_JSON); \
+		echo "  $(CODEX_PLUGIN_JSON)"; \
+	fi
+	@jq --arg name "$$(jq -r .name $(PLUGIN_JSON))" --arg v "$(VERSION)" \
+		'(.plugins[] | select(.name == $$name) | .version) = $$v' \
+		$(CLAUDE_MARKETPLACE) > $(CLAUDE_MARKETPLACE).tmp && \
+		mv $(CLAUDE_MARKETPLACE).tmp $(CLAUDE_MARKETPLACE)
+	@echo "  $(CLAUDE_MARKETPLACE)"
 	@if [ -f "$(PYPROJECT)" ]; then \
 		sed -i '' 's/^version = ".*"/version = "$(VERSION)"/' $(PYPROJECT); \
 		echo "  $(PYPROJECT)"; \
@@ -124,11 +156,18 @@ restart: ## Restart Docker container via compose
 		(docker ps --filter "name=jarvis" -q | xargs -r docker stop 2>/dev/null; \
 		 docker ps -a --filter "name=jarvis" -q | xargs -r docker rm 2>/dev/null) || true
 	@docker compose -f $(COMPOSE_FILE) up -d
-	@echo "Waiting for health check..."
-	@sleep 4
-	@curl -sf http://localhost:8741/health > /dev/null && \
-		echo "$(GREEN)✓ Container healthy$(NC)" || \
-		echo "$(RED)✗ Health check failed$(NC)"
+	@echo "Waiting for health check (embedding model warms before readiness)..."
+	@attempt=0; \
+	while [ $$attempt -lt 30 ]; do \
+		if curl -sf http://localhost:8741/health > /dev/null; then \
+			echo "$(GREEN)✓ Container healthy$(NC)"; \
+			exit 0; \
+		fi; \
+		attempt=$$((attempt + 1)); \
+		sleep 1; \
+	done; \
+	echo "$(RED)✗ Health check failed after 30s$(NC)"; \
+	exit 1
 
 reinstall: ## Reinstall all 5 Claude plugins (CLAUDE_DIR= required)
 	@if [ -z "$(CLAUDE_DIR)" ]; then \
@@ -155,6 +194,16 @@ reinstall: ## Reinstall all 5 Claude plugins (CLAUDE_DIR= required)
 	@echo "$(GREEN)✓ All plugins reinstalled$(NC)"
 	@echo "$(YELLOW)⚠ RESTART CLAUDE CODE to apply changes$(NC)"
 
+reinstall-codex: ## Upgrade marketplace and install all supported Codex plugins
+	@echo "$(CYAN)Installing supported Codex plugins...$(NC)"
+	codex plugin marketplace upgrade jarvis-plugins
+	codex plugin add jarvis@jarvis-plugins
+	codex plugin add jarvis-todoist@jarvis-plugins
+	codex plugin add jarvis-strategic@jarvis-plugins
+	codex plugin add jarvis-obsidian@jarvis-plugins
+	@echo "$(GREEN)✓ Supported Codex plugins installed$(NC)"
+	@echo "$(YELLOW)⚠ RESTART CODEX, review /hooks, and start a new thread$(NC)"
+
 release: ## Full pipeline: test → bump → build → restart → reinstall (requires VERSION=x.y.z)
 	@if [ -z "$(VERSION)" ]; then \
 		echo "$(RED)Usage: make release VERSION=x.y.z$(NC)"; \
@@ -180,6 +229,7 @@ release: ## Full pipeline: test → bump → build → restart → reinstall (re
 	@echo "  2. git tag -a v$(VERSION) -m 'Version $(VERSION): ...'"
 	@echo "  3. git push && git push --tags  (when ready)"
 	@echo "  4. $(YELLOW)Restart Claude Code$(NC)"
+	@echo "  5. Run 'make reinstall-codex' if publishing for Codex$(NC)"
 
 clean: ## Remove local Docker images
 	@echo "$(CYAN)Cleaning Docker images...$(NC)"

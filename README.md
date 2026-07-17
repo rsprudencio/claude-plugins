@@ -1,6 +1,6 @@
-# Jarvis - Personal AI Assistant for Claude Code
+# Jarvis - Personal AI Assistant for Claude Code and Codex
 
-A plugin marketplace that turns Claude Code into **Jarvis** — a context-aware personal assistant with a knowledge vault, semantic memory, and strategic awareness.
+A dual-harness plugin marketplace that adds **Jarvis** to Claude Code and local Codex — a context-aware personal assistant with a knowledge vault, semantic memory, and strategic awareness.
 
 Jarvis manages a folder of Markdown or Org-mode files (your "vault") as a personal knowledge base. It journals your thoughts, tracks your goals, searches by meaning, and learns from your conversations — all with a git-audited trail.
 
@@ -49,6 +49,25 @@ docker compose -f ~/.jarvis/docker-compose.yml up -d
 This walks you through vault path selection, auto-extract mode, and shell integration.
 
 See [docker/README.md](docker/README.md) for full Docker setup guide.
+
+### Codex Install (Local CLI, IDE, or Desktop App)
+
+Jarvis uses local MCP servers and lifecycle hooks, so Codex support applies to
+local Codex surfaces running on the same host as Jarvis. Add the marketplace
+and install the core plugin:
+
+```bash
+codex plugin marketplace add rsprudencio/jarvis
+codex plugin add jarvis@jarvis-plugins
+codex plugin add jarvis-obsidian@jarvis-plugins
+```
+
+Install Todoist or Strategic in the same way, then restart the Codex host,
+open `/hooks` in Codex CLI, and trust the Jarvis hooks. Start a new thread after
+installation so Codex loads the new skills, MCP servers, and hook definitions.
+
+See [Codex support](docs/CODEX.md) for the complete install, upgrade, trust, and
+validation workflow.
 
 ### Verify Installation
 

@@ -1,0 +1,56 @@
+{
+  "name": "jarvis-plugins",
+  "interface": {
+    "displayName": "Jarvis Plugins"
+  },
+  "plugins": [
+    {
+      "name": "jarvis",
+      "source": {
+        "source": "local",
+        "path": "./plugins/jarvis"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "jarvis-todoist",
+      "source": {
+        "source": "local",
+        "path": "./plugins/jarvis-todoist"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "jarvis-strategic",
+      "source": {
+        "source": "local",
+        "path": "./plugins/jarvis-strategic"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "jarvis-obsidian",
+      "source": {
+        "source": "local",
+        "path": "./plugins/jarvis-obsidian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

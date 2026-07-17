@@ -190,11 +190,13 @@ def get_context_enrichment_config() -> dict:
     """Get context enrichment (per-prompt search) configuration with defaults."""
     defaults = {
         "enabled": True,
-        "threshold": 0.85,
+        "threshold": 0.876,
         "budget": 8000,
         "max_results": 20,
         "debug": False,
         "passive_retrieval_increment": 0.01,
+        "semantic_dedup_enabled": True,
+        "semantic_dedup_threshold": 0.86,
     }
     return _merge_with_defaults(defaults, _get_memory_section("context_enrichment"))
 

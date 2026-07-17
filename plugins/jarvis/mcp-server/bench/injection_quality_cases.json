@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "as_of": "2026-07-17",
+  "description": "User-specific passive-injection labels for the production Jarvis corpus. Positive cases name acceptable injected IDs; hard negatives require no injection.",
+  "cases": [
+    {"id": "fix-error-exact-abuse", "query": "The fix_error chat intent is unconditionally free. Abusers edit the error text into an arbitrary instruction and reuse one error_id to run the expensive agent for free.", "expected_ids": ["lovable-fix-error-abuse-controls"]},
+    {"id": "fix-error-targeted-direction", "query": "What targeted control did we choose for repeated fix_error abuse without reviving the blunt ratio limiter?", "expected_ids": ["lovable-fix-error-abuse-controls"]},
+    {"id": "fix-error-history", "query": "Why was the old free-message ratio limiter deliberately removed, and why should we not simply add it back?", "expected_ids": ["lovable-fix-error-abuse-controls"]},
+    {"id": "fix-error-per-error-cap", "query": "What was the plan for graduating the per-project per-error 5 attempts per 24 hour cap from shadow mode?", "expected_ids": ["lovable-fix-error-abuse-controls"]},
+    {"id": "fix-error-ownership", "query": "Who owns the WhiteCircle detect warn ban path for fix_error fraud, and what should happen to abusive requests?", "expected_ids": ["lovable-fix-error-abuse-controls"]},
+
+    {"id": "config-token-settled", "query": "What is the settled decision about the legacy GitHub credential found in the config repository history?", "expected_ids": ["config-repo-legacy-token-settled"]},
+    {"id": "config-token-scan", "query": "A secret scan rediscovered the known dead token in the dotfiles history. Should we raise it again?", "expected_ids": ["config-repo-legacy-token-settled"]},
+    {"id": "config-token-no-rewrite", "query": "Should we scrub and force-push the config repo because of the previously revoked credential?", "expected_ids": ["config-repo-legacy-token-settled"]},
+    {"id": "config-token-scope", "query": "Does the closed credential exemption apply to every future secret found in the config repo or only the one verified dead token?", "expected_ids": ["config-repo-legacy-token-settled"]},
+
+    {"id": "phase5-model-scores", "query": "Which optional phase compared granite English 768 dimensions at 59.5 nDCG against the 384 dimensional small model at 55.6?", "expected_ids": ["roadmaps/v3/v3-migration-phase5.md"]},
+    {"id": "phase5-halfvec", "query": "Why could a 768d embedding upgrade have the same storage cost as 384d float32 when using pgvector halfvec?", "expected_ids": ["roadmaps/v3/v3-migration-phase5.md"]},
+    {"id": "phase5-coordination", "query": "What prerequisites and coordinated schema change were required before the optional 768 dimensional re-embedding migration?", "expected_ids": ["roadmaps/v3/v3-migration-phase5.md"]},
+
+    {"id": "reranker-model-selection", "query": "Which cross encoder was selected as the best size speed quality tradeoff at roughly 80MB and 400ms per 100 pairs?", "expected_ids": ["roadmaps/memory-management/08-cross-encoder-reranking.md"]},
+    {"id": "reranker-l12-rejection", "query": "Why was ms-marco MiniLM L12 rejected for the Jarvis reranking path despite better quality?", "expected_ids": ["roadmaps/memory-management/08-cross-encoder-reranking.md"]},
+    {"id": "reranker-alternatives", "query": "Why were bge-reranker-base and Cohere rerank not selected for the self-contained CLI design?", "expected_ids": ["roadmaps/memory-management/08-cross-encoder-reranking.md"]},
+
+    {"id": "decay-floor-formula", "query": "What formula enforces the minimum importance floor after base decay and retrieval boost?", "expected_ids": ["roadmaps/v3/v3-migration-phase8.md"]},
+    {"id": "decay-floor-dar", "query": "How was DAR finding C-F2 resolved in the phase 8 importance decay design?", "expected_ids": ["roadmaps/v3/v3-migration-phase8.md"]},
+
+    {"id": "single-vault-yagni", "query": "Why did we decide to keep ChromaDB single-vault during phase 2 instead of implementing multi-vault search?", "expected_ids": ["journal/jarvis/2026/02/20260206140530-chromadb-multi-vault-strategy.md"]},
+    {"id": "multi-vault-future-reference", "query": "What architectural discussion was preserved for future reference even though the current memory system stayed single-vault?", "expected_ids": ["journal/jarvis/2026/02/20260206140530-chromadb-multi-vault-strategy.md"]},
+
+    {"id": "negative-sourdough", "query": "Give me a sourdough bread recipe for a cold kitchen.", "expected_ids": []},
+    {"id": "negative-image-rate-limit", "query": "How should an image editor rate-limit repeated failed image uploads that reuse the same request ID?", "expected_ids": []},
+    {"id": "negative-api-idempotency", "query": "Should a public payments API accept reused request IDs for idempotency?", "expected_ids": []},
+    {"id": "negative-current-token", "query": "I found a brand new active production credential today; how should I rotate and report it?", "expected_ids": []},
+    {"id": "negative-git-history-general", "query": "Explain how interactive rebase rewrites ordinary commit messages in a public tutorial repository.", "expected_ids": []},
+    {"id": "negative-vector-game", "query": "How do I migrate a game engine nearest-neighbor index from 384-dimensional vectors to 768 dimensions?", "expected_ids": []},
+    {"id": "negative-half-float-rendering", "query": "Should a graphics shader store color buffers as half floats to reduce GPU memory?", "expected_ids": []},
+    {"id": "negative-ecommerce-rerank", "query": "Recommend a hosted reranking API for an ecommerce product search service that may depend on the network.", "expected_ids": []},
+    {"id": "negative-radioactive-decay", "query": "Calculate the remaining mass of a radioactive isotope after three half lives.", "expected_ids": []},
+    {"id": "negative-password-vault", "query": "Should a password manager support multiple encrypted vaults for different family members?", "expected_ids": []},
+    {"id": "negative-weather", "query": "Will it rain in Stockholm this weekend?", "expected_ids": []},
+    {"id": "negative-garden", "query": "When should I prune an apple tree in a Scandinavian climate?", "expected_ids": []},
+    {"id": "negative-database-backup", "query": "Design a PostgreSQL backup retention schedule for a small accounting application.", "expected_ids": []},
+    {"id": "negative-free-shipping", "query": "How can an online shop prevent abuse of free shipping coupons?", "expected_ids": []},
+    {"id": "negative-ui-pixels", "query": "Should this responsive layout use a 384 pixel or 768 pixel image breakpoint?", "expected_ids": []},
+    {"id": "negative-error-handling", "query": "What naming convention should a Rust library use for unique error identifiers?", "expected_ids": []},
+    {"id": "negative-cli-model", "query": "How do I package a large language model behind a generic command line interface?", "expected_ids": []},
+    {"id": "negative-cache-ttl", "query": "Choose a cache TTL and eviction policy for anonymous website sessions.", "expected_ids": []},
+    {"id": "negative-multi-tenant-search", "query": "Design tenant isolation for a hosted multi-customer search platform.", "expected_ids": []}
+  ]
+}

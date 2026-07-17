@@ -592,7 +592,7 @@
 
     "memory_context_enrichment": {
       "enabled": { "type": "boolean", "default": true, "description": "Master switch for automatic vault memory injection on every user message" },
-      "threshold": { "type": "float", "default": 0.85, "description": "Minimum raw cosine similarity for injection. Importance boosts never rescue an off-topic match. This is an interim high-precision gate; recalibrate on labeled real usage." },
+      "threshold": { "type": "float", "default": 0.876, "description": "Minimum raw cosine similarity for injection. Calibrated on 2026-07-17 against labeled real usage for zero hard-negative injections; importance boosts never rescue an off-topic match." },
       "budget": { "type": "integer", "default": 8000, "description": "Total character budget for injection (3-way split: local/vault/remote when remote schemas present, otherwise 50/50 local/vault; unused budget overflows to other buckets)" },
       "max_results": { "type": "integer", "default": 20, "description": "Maximum memories injected after thresholding, ranking, and deduplication. The character budget may reduce this further." },
       "debug": { "type": "boolean", "default": false, "description": "Enable debug logging for context enrichment" },

@@ -5,9 +5,9 @@ Usage:
   Hook mode:  echo '{"prompt":"..."}' | python3 context_enrichment.py --hook
   Direct:     python3 context_enrichment.py "query text here"
 
-Called by the UserPromptSubmit hook. Outputs XML-formatted vault memories
-to stdout for injection into Claude's context. Silent on errors (exit 0,
-no output) to avoid disrupting the user's conversation.
+Called by the UserPromptSubmit hook. Outputs XML-formatted vault memories as
+plain context for Claude Code or in Codex's structured hook response. Silent
+on errors (exit 0, no output) to avoid disrupting the user's conversation.
 """
 import json
 import os
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Tuple
 
 from hook_http_client import post_json
+from harness import format_user_prompt_submit_output
 from precompact_dedup import compute_content_hash, filter_already_injected, write_injection_state
 
 
@@ -246,7 +247,8 @@ def main():
     """Run per-prompt semantic search and output results to stdout."""
     # Determine prompt text source
     session_id = ""
-    if len(sys.argv) >= 2 and sys.argv[1] == "--hook":
+    hook_mode = len(sys.argv) >= 2 and sys.argv[1] == "--hook"
+    if hook_mode:
         # Hook mode: read JSON from stdin
         try:
             hook_input = sys.stdin.read()
@@ -366,7 +368,10 @@ def main():
 
     output = "\n".join(output_parts)
     if output:
-        print(output)
+        # Direct mode remains human-readable. Hook mode selects the stdout
+        # protocol using the harness environment without touching retrieval,
+        # telemetry, or session-dedup behavior.
+        print(format_user_prompt_submit_output(output) if hook_mode else output)
 
     sys.exit(0)
 

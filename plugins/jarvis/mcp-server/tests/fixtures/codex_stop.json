@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "codex-session-1",
+  "turn_id": "codex-turn-1",
+  "cwd": "/workspace/jarvis",
+  "last_assistant_message": "Implemented a normalized turn journal that pairs the submitted prompt with this final response.",
+  "usage": {
+    "input_tokens": 240,
+    "output_tokens": 90
+  }
+}

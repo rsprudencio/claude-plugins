@@ -16,7 +16,11 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Pipe stdin (hook JSON) directly to Python — single process handles everything
-python3 "$SCRIPT_DIR/context_enrichment.py" --hook 2>/dev/null || true
+# Persist the prompt for harness-neutral Stop extraction, then pass the exact
+# same hook payload to the retrieval handler. State capture is best-effort and
+# never changes the context-enrichment output.
+INPUT=$(cat)
+printf '%s' "$INPUT" | python3 "$SCRIPT_DIR/turn_state.py" capture 2>/dev/null || true
+printf '%s' "$INPUT" | python3 "$SCRIPT_DIR/context_enrichment.py" --hook 2>/dev/null || true
 
 exit 0

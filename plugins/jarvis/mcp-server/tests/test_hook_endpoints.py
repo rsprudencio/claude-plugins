@@ -48,6 +48,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
             "matches": [{"id": "notes/a.md", "relevance": 0.82}],
             "query_ms": 7.2,
             "total_searched": 4,
+            "semantic_duplicates_suppressed": 2,
             "budget_used": {"local": 200, "vault": 300, "remote": 0, "total": 1200},
         }
     )
@@ -67,6 +68,7 @@ def test_get_prompt_context_with_matches(monkeypatch):
     assert len(result["matches"]) == 1
     assert result["query_ms"] == 7.2
     assert result["total_searched"] == 4
+    assert result["semantic_duplicates_suppressed"] == 2
 
 
 def test_ingest_auto_extract_observation_dedup_threshold(monkeypatch):
