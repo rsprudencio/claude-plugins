@@ -173,6 +173,15 @@ async def telemetry_response(scope, receive, send):
         else:
             data["sync"] = {"enabled": False}
 
+        # --- Retrieval telemetry (best-effort; never degrades core health) ---
+        try:
+            from tools.retrieval_telemetry import get_summary
+
+            data["retrieval"] = get_summary(days=7)
+            data["retrieval"]["status"] = "ok"
+        except Exception as exc:
+            data["retrieval"] = {"status": "unavailable", "error": str(exc)}
+
         # --- Auth status ---
         auth_cfg = get_auth_config()
         if auth_cfg is not None:
@@ -216,6 +225,22 @@ async def hook_prompt_context_response(scope, receive, send):
         return
 
     await _json_response(send, response)
+
+
+async def retrieval_delivery_response(scope, receive, send, trace_id: str):
+    """PUT /telemetry/retrieval/{trace_id}/delivery."""
+    body, err = await _read_json_body(receive)
+    if err:
+        await _json_response(send, {"success": False, "error": err}, status=400)
+        return
+    try:
+        from tools.retrieval_telemetry import acknowledge_delivery
+
+        updated = acknowledge_delivery(trace_id, body)
+    except Exception as exc:
+        await _json_response(send, {"success": False, "error": str(exc)}, status=400)
+        return
+    await _json_response(send, {"success": bool(updated), "trace_id": trace_id})
 
 
 async def hook_auto_extract_context_response(scope, receive, send):
@@ -335,6 +360,9 @@ async def app(scope, receive, send):
     try:
         if path == "/telemetry" and method == "GET":
             await telemetry_response(scope, receive, send)
+        elif path.startswith("/telemetry/retrieval/") and path.endswith("/delivery") and method == "PUT":
+            trace_id = path[len("/telemetry/retrieval/"):-len("/delivery")].strip("/")
+            await retrieval_delivery_response(scope, receive, send, trace_id)
         elif path == "/hook/prompt-context" and method == "POST":
             await hook_prompt_context_response(scope, receive, send)
         elif path == "/hook/auto-extract/context" and method == "POST":
@@ -360,18 +388,26 @@ async def _handle_lifespan(scope, receive, send):
         message = await receive()
         if message["type"] == "lifespan.startup":
             # Initialize pgvector schema (idempotent)
+            from tools.schema import ensure_schema, check_model_consistency, ModelMismatchError
             try:
-                from tools.schema import ensure_schema, check_model_consistency, ModelMismatchError
                 ensure_schema()
+            except Exception as e:
+                logger.warning("Schema initialization deferred: %s", e)
+            else:
                 try:
                     check_model_consistency()
                 except ModelMismatchError as mme:
+                    # Raising alone (even SystemExit) from a lifespan handler
+                    # is swallowed by uvicorn's lifespan="auto" and leaves a
+                    # zombie server that answers /health but serves no MCP
+                    # traffic. Send startup.failed first — the only signal
+                    # that makes uvicorn abort and exit — then raise so test
+                    # harnesses see the original error.
                     logger.critical("FATAL: %s", mme)
-                    raise SystemExit(1) from mme
-            except SystemExit:
-                raise
-            except Exception as e:
-                logger.warning("Schema initialization deferred: %s", e)
+                    await send({"type": "lifespan.startup.failed", "message": str(mme)})
+                    raise
+                except Exception as e:
+                    logger.warning("Model consistency check deferred: %s", e)
 
             # D6: Rebuild schema registry, auto-discovering existing remote_* schemas
             try:
@@ -383,8 +419,19 @@ async def _handle_lifespan(scope, receive, send):
             # Complete local model initialization before Uvicorn marks startup
             # complete. This keeps the first UserPromptSubmit request inside its
             # 2.5s deadline instead of paying the ONNX cold-start cost.
+            # A failed warmup (e.g. host inference service not up yet after a
+            # reboot) must not take the whole server down: retrieval already
+            # fails open at runtime, so serve degraded and let embedding
+            # recover when the host service returns.
             from tools.embedding import warm_embedding_service
-            warm_embedding_service()
+            try:
+                warm_embedding_service()
+            except Exception as e:
+                logger.critical(
+                    "Embedding warmup failed: %s — serving in DEGRADED mode; "
+                    "embedding-dependent operations fail open until the model "
+                    "host is reachable again", e,
+                )
 
             _run_ctx = session_manager.run()
             await _run_ctx.__aenter__()

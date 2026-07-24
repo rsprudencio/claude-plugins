@@ -222,6 +222,44 @@ class TestBatchReembed:
         assert "::halfvec" in update_sql
 
     @patch("tools.schema.set_meta")
+    def test_host_backend_passes_connection_config(
+        self, mock_set_meta, mock_config
+    ):
+        """Re-embedding can use the host backend during an eventual cutover."""
+        mock_config.set(
+            memory={
+                "embedding_backend": "host",
+                "embedding_host_url": "http://models.internal:8751",
+                "embedding_host_token": "test-token",
+                "embedding_host_timeout_ms": 900,
+            }
+        )
+        select_cur = MagicMock()
+        select_cur.fetchall.side_effect = [[("id1", "hello")], []]
+        update_cur = MagicMock()
+        conn = MagicMock()
+        conn.cursor.side_effect = [select_cur, update_cur, select_cur]
+
+        with patch("tools.embedding.EmbeddingService") as MockSvc:
+            MockSvc.return_value.encode_batch.return_value = [[0.1] * 384]
+            batch_reembed(
+                conn,
+                model_name=DEFAULT_MODEL,
+                dimensions=384,
+                batch_size=100,
+            )
+
+        MockSvc.assert_called_once_with(
+            model_name=DEFAULT_MODEL,
+            dimensions=384,
+            device="cpu",
+            backend="host",
+            host_url="http://models.internal:8751",
+            host_token="test-token",
+            host_timeout_ms=900,
+        )
+
+    @patch("tools.schema.set_meta")
     def test_uses_explicit_inference_batch_size(self, mock_set_meta):
         """Re-embed uses explicit inference sub-batch while keeping DB batch size."""
         select_cur = MagicMock()

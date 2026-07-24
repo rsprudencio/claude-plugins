@@ -60,13 +60,17 @@ help: ## Show available targets
 version: ## Show current plugin version
 	@echo "$(CURRENT_VERSION)"
 
-test: ## Run unit tests (core + obsidian + memory-explorer)
+test: ## Run unit tests (core + todoist + obsidian + explorer + host inference)
 	@echo "$(CYAN)Running jarvis-core unit tests...$(NC)"
 	cd plugins/jarvis/mcp-server && uv run --extra dev python -m pytest tests/ --ignore=tests/e2e -x -q
+	@echo "$(CYAN)Running jarvis-todoist tests...$(NC)"
+	cd plugins/jarvis-todoist/mcp-server && uv run --extra dev python -m pytest tests/ -x -q
 	@echo "$(CYAN)Running jarvis-obsidian tests...$(NC)"
 	cd plugins/jarvis-obsidian/mcp-server && uv run --extra dev python -m pytest tests/ -x -q
 	@echo "$(CYAN)Running memory-explorer tests...$(NC)"
 	cd apps/memory-explorer && uv run python -m pytest tests/ -x -q
+	@echo "$(CYAN)Running native host-inference tests...$(NC)"
+	python3 -m unittest discover -s host-inference/tests -v
 	@echo "$(GREEN)✓ All unit tests passed$(NC)"
 
 validate-plugins: ## Check Claude/Codex manifest and marketplace parity
@@ -194,9 +198,21 @@ reinstall: ## Reinstall all 5 Claude plugins (CLAUDE_DIR= required)
 	@echo "$(GREEN)✓ All plugins reinstalled$(NC)"
 	@echo "$(YELLOW)⚠ RESTART CLAUDE CODE to apply changes$(NC)"
 
-reinstall-codex: ## Upgrade marketplace and install all supported Codex plugins
+reinstall-codex: ## Refresh marketplace and install all supported Codex plugins
 	@echo "$(CYAN)Installing supported Codex plugins...$(NC)"
-	codex plugin marketplace upgrade jarvis-plugins
+	@_source="$$(codex plugin marketplace list --json | \
+		jq -r '.marketplaces[] | select(.name == "jarvis-plugins") | .marketplaceSource.sourceType // empty')"; \
+	if [ -z "$$_source" ]; then \
+		echo "  Adding local marketplace: $(CURDIR)"; \
+		codex plugin marketplace add "$(CURDIR)"; \
+	elif [ "$$_source" = "git" ]; then \
+		codex plugin marketplace upgrade jarvis-plugins; \
+	elif [ "$$_source" = "local" ]; then \
+		echo "  Using local marketplace: $(CURDIR)"; \
+	else \
+		echo "$(RED)Unsupported jarvis-plugins marketplace source: $$_source$(NC)"; \
+		exit 1; \
+	fi
 	codex plugin add jarvis@jarvis-plugins
 	codex plugin add jarvis-todoist@jarvis-plugins
 	codex plugin add jarvis-strategic@jarvis-plugins

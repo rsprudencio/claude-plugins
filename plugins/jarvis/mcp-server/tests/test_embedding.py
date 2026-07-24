@@ -4,7 +4,7 @@ import io
 import json
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 
 class TestEmbeddingService:
@@ -121,6 +121,34 @@ class TestEmbeddingService:
         assert svc.model_name == "my-model"
         assert svc.dimensions == 768
         assert svc.backend == "torch"
+
+    def test_host_encode_delegates_without_loading_local_model(self):
+        """Host backend preserves the public API without local model state."""
+        svc = self._make_service(
+            backend="host",
+            host_url="http://host.docker.internal:8751",
+            host_token="secret",
+            host_timeout_ms=1500,
+        )
+        client = MagicMock()
+        client.embed.return_value = [[0.1] * 384]
+        svc._host_client = client
+
+        assert svc.encode("hello") == [0.1] * 384
+        client.embed.assert_called_once_with(["hello"])
+        assert svc._ort_session is None
+        assert svc._model is None
+
+    def test_host_encode_batch_honors_bounded_request_size(self):
+        svc = self._make_service(backend="host")
+        client = MagicMock()
+        client.embed.side_effect = [[[0.1] * 384], [[0.2] * 384]]
+        svc._host_client = client
+
+        result = svc.encode_batch(["one", "two"], batch_size=1)
+
+        assert result == [[0.1] * 384, [0.2] * 384]
+        assert client.embed.call_args_list == [call(["one"]), call(["two"])]
 
 
 class TestOnnxSessionReset:
@@ -734,6 +762,23 @@ class TestWarmEmbeddingService:
         assert embedding.warm_embedding_service() is None
         service.encode.assert_not_called()
 
+    def test_probes_host_backend_at_boot(self, monkeypatch):
+        """Host backends get a live probe at startup so cold-start latency and
+        connectivity problems surface immediately. Note: since the degraded-
+        startup change, a failed probe is logged loudly by the callers but no
+        longer blocks readiness — the server serves degraded and retrieval
+        fails open until the host returns."""
+        from tools import embedding
+
+        service = MagicMock()
+        service.backend = "host"
+        service.dimensions = 384
+        service.encode.return_value = [0.0] * 384
+        monkeypatch.setattr(embedding, "get_embedding_service", lambda: service)
+
+        assert embedding.warm_embedding_service() >= 0
+        service.encode.assert_called_once()
+
 
 class TestEmbeddingConfig:
     """Tests for get_embedding_config()."""
@@ -744,10 +789,15 @@ class TestEmbeddingConfig:
 
         cfg = get_embedding_config()
         assert cfg["model"] == "ibm-granite/granite-embedding-small-english-r2"
+        assert cfg["model_id"] == "ibm-granite/granite-embedding-small-english-r2"
         assert cfg["dimensions"] == 384
         assert cfg["device"] == "cpu"
         assert cfg["backend"] == "onnx"
         assert cfg["bedrock_region"] == "eu-central-1"
+        assert cfg["host_url"] == "http://host.docker.internal:8751"
+        assert cfg["host_model"] == "ibm-granite/granite-embedding-small-english-r2"
+        assert cfg["host_token"] == ""
+        assert cfg["host_timeout_ms"] == 2000
 
     def test_config_file_override(self, mock_config):
         """Config file values override defaults."""
@@ -763,6 +813,7 @@ class TestEmbeddingConfig:
 
         cfg = get_embedding_config()
         assert cfg["model"] == "custom-model"
+        assert cfg["model_id"] == "custom-model"
         assert cfg["dimensions"] == 768
         assert cfg["device"] == "cuda"
         assert cfg["backend"] == "torch"
@@ -773,11 +824,13 @@ class TestEmbeddingConfig:
         monkeypatch.setenv("EMBEDDING_DIMENSIONS", "512")
         monkeypatch.setenv("EMBEDDING_DEVICE", "cuda:1")
         monkeypatch.setenv("EMBEDDING_BACKEND", "torch")
+        monkeypatch.setenv("JARVIS_EMBEDDING_MODEL_ID", "canonical/env-model")
 
         from tools.config import get_embedding_config
 
         cfg = get_embedding_config()
         assert cfg["model"] == "env-model"
+        assert cfg["model_id"] == "canonical/env-model"
         assert cfg["dimensions"] == 512
         assert cfg["device"] == "cuda:1"
         assert cfg["backend"] == "torch"
@@ -818,6 +871,37 @@ class TestEmbeddingConfig:
 
         cfg = get_embedding_config()
         assert cfg["bedrock_region"] == "ap-northeast-1"
+
+    def test_host_config_env_overrides(self, mock_config, monkeypatch):
+        monkeypatch.setenv("JARVIS_MODEL_HOST_URL", "http://models.internal:9000")
+        monkeypatch.setenv("JARVIS_MODEL_HOST_MODEL", "host-model")
+        monkeypatch.setenv("JARVIS_MODEL_HOST_TOKEN", "test-token")
+        monkeypatch.setenv("JARVIS_MODEL_HOST_TIMEOUT_MS", "750")
+
+        from tools.config import get_embedding_config
+
+        cfg = get_embedding_config()
+        assert cfg["host_url"] == "http://models.internal:9000"
+        assert cfg["host_model"] == "host-model"
+        assert cfg["host_token"] == "test-token"
+        assert cfg["host_timeout_ms"] == 750
+
+    def test_host_backend_uses_host_alias_not_baked_onnx_path(self):
+        from tools.embedding import _effective_model_name, get_embedding_model_identity
+
+        config = {
+            "backend": "host",
+            "model": "/app/models/embedding",
+            "host_model": "ibm-granite/granite-embedding-small-english-r2",
+        }
+        assert (
+            _effective_model_name(config)
+            == "ibm-granite/granite-embedding-small-english-r2"
+        )
+        assert (
+            get_embedding_model_identity(config)
+            == "ibm-granite/granite-embedding-small-english-r2"
+        )
 
 
 class TestPostgresConfig:

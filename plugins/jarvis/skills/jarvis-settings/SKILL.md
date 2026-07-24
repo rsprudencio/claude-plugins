@@ -230,8 +230,8 @@ AskUserQuestion:
 > The stored model in jarvis_meta must match the active config.
 > After changing, run: `jarvis-init-db --force-model-record`
 
-Config keys: `memory.embedding_model`, `memory.embedding_dimensions`, `memory.embedding_device`, `memory.embedding_backend`
-Env overrides: `EMBEDDING_MODEL`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_DEVICE`, `EMBEDDING_BACKEND`
+Config keys: `memory.embedding_model`, `memory.embedding_model_id`, `memory.embedding_dimensions`, `memory.embedding_device`, `memory.embedding_backend`, `memory.embedding_host_model`, `memory.embedding_host_url`, `memory.embedding_host_timeout_ms`
+Env overrides: `EMBEDDING_MODEL`, `JARVIS_EMBEDDING_MODEL_ID`, `EMBEDDING_DIMENSIONS`, `EMBEDDING_DEVICE`, `EMBEDDING_BACKEND`, `JARVIS_MODEL_HOST_MODEL`, `JARVIS_MODEL_HOST_URL`, `JARVIS_MODEL_HOST_TIMEOUT_MS`
 
 ### 3f. Replication
 
@@ -316,22 +316,28 @@ Let user change specific paths. All paths are relative to vault root.
 | `embedding_model` | `ibm-granite/granite-embedding-small-english-r2` | Sentence-transformer model |
 | `embedding_dimensions` | `384` | Vector dimensions |
 | `embedding_device` | `cpu` | Compute device (cpu/cuda) |
-| `embedding_backend` | `onnx` | Inference backend (onnx/pytorch) |
+| `embedding_backend` | `onnx` | Inference backend (`onnx`, `torch`, `bedrock`, or native `host`); the Docker image supports `host` only |
+| `embedding_model_id` | Granite model ID | Stable embedding-space identity persisted with stored vectors |
+| `embedding_host_url` | `http://host.docker.internal:8751` | Native llama.cpp embedding endpoint |
 
 #### Cross-encoder reranking
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `enabled` | false | Enable cross-encoder reranking for `/jarvis-recall` results (disabled by default: ms-marco-MiniLM measured net-negative, −0.055 nDCG@10) |
-| `candidate_count` | 100 | How many results to over-fetch for reranking |
+| `enabled` | false | Enable cross-encoder reranking for explicit recall and context enrichment |
+| `backend` | `onnx` | Inference backend (`onnx` or native `host`); the Docker image supports `host` only |
+| `model` | `BAAI/bge-reranker-v2-m3` | Stable reranker model identity/API alias |
+| `candidate_count` | 20 | How many results to over-fetch for reranking |
 | `top_k` | 10 | Legacy reranking cap; the caller's `n_results` decides the final result count |
 | `alpha` | 0.7 | Blend weight (0.0=vector only, 1.0=reranker only) |
-| `max_latency_ms` | 1000 | Latency budget before fallback to vector scores |
+| `max_latency_ms` | 1500 | Latency budget before fallback to vector scores |
 | `batch_size` | 32 | Tokenization batch size for ONNX inference |
+| `host_url` | `http://host.docker.internal:8752` | Native llama.cpp reranker endpoint |
+| `host_timeout_ms` | 1500 | Per-request host timeout |
 
 Config key: `memory.reranking`
 
-Note: The ONNX model (~23MB) is downloaded automatically on first use to `~/.jarvis/models/cross-encoder/`. Not applied to context enrichment.
+The Docker image contains no ONNX runtime or model weights. Keep the configured host services running; reranking fails open to vector scores when BGE is unavailable, while embedding unavailability is a visible service error.
 
 #### Context enrichment
 
@@ -351,6 +357,24 @@ Offer presets:
 - "Custom" -> Ask for each setting individually
 
 Config key: `memory.context_enrichment`
+
+#### Retrieval telemetry
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | true | Persist semantic retrieval funnels and candidate scores |
+| `retention_days` | 30 | Delete traces and labels after this many days |
+| `store_user_prompts` | true | Store full user-facing search prompts; internal document-derived queries remain hash/reference only |
+| `candidate_detail_limit` | 100 | Maximum score-only candidate rows per trace |
+| `shadow.enabled` | true | Score pending top candidates with the configured host BGE reranker without changing live selection |
+| `shadow.candidate_count` | 20 | Maximum vector-ranked candidates scored per trace |
+| `shadow.max_attempts` | 3 | Durable retry limit before a shadow job is marked failed |
+
+Config key: `memory.retrieval_telemetry`
+
+Telemetry is diagnostic only: it does not change `context_enrichment.threshold`,
+the character budget, or result ordering. Policy simulation in Memory Explorer
+is read-only and only produces a copyable configuration snippet.
 
 ### 3h. View full config
 
@@ -377,6 +401,13 @@ enabled:              true
 threshold:            0.85
 budget:               8000
 max_results:          20
+
+=== Retrieval Telemetry ===
+enabled:              true
+retention_days:       30
+store_user_prompts:   true
+shadow.enabled:       true
+shadow.candidates:    20
 
 === Auto-Extract ===
 mode:                 background

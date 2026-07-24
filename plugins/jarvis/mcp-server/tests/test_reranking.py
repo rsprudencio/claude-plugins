@@ -9,6 +9,8 @@ import pytest
 
 from tools.reranking import (
     rerank,
+    rerank_multi,
+    rerank_raw,
     reset_model,
     _sigmoid,
     _get_model_dir,
@@ -133,6 +135,101 @@ class TestRerank:
             # First doc should have highest blended score
             assert result[0] > result[1]
             assert result[0] > result[2]
+
+    def test_host_backend_uses_llama_client(self):
+        scores = [0.8, 0.6, 0.4]
+        docs = ["first", "second", "third"]
+        client = MagicMock()
+        client.rerank.return_value = [-2.0, 4.0, 0.0]
+
+        with patch("tools.reranking._get_host_client", return_value=client), patch(
+            "tools.reranking._init_model"
+        ) as init_model:
+            result = rerank(
+                "query",
+                docs,
+                scores,
+                {"backend": "host", "alpha": 1.0, "max_latency_ms": 1000},
+            )
+
+        assert result is not scores
+        assert result[1] > result[2] > result[0]
+        client.rerank.assert_called_once_with("query", docs)
+        init_model.assert_not_called()
+
+    def test_host_backend_failure_returns_vector_scores(self):
+        scores = [0.8, 0.6]
+        client = MagicMock()
+        client.rerank.side_effect = RuntimeError("host unavailable")
+
+        with patch("tools.reranking._get_host_client", return_value=client):
+            result = rerank(
+                "query", ["one", "two"], scores, {"backend": "host"}
+            )
+
+        assert result is scores
+
+    def test_raw_host_diagnostics_preserve_absolute_logits(self):
+        client = MagicMock()
+        client.rerank.return_value = [-3.0, 4.0]
+
+        with patch("tools.reranking._get_host_client", return_value=client):
+            result = rerank_raw(
+                "query", ["one", "two"], {"backend": "host"}
+            )
+
+        assert result["logits"] == [-3.0, 4.0]
+        assert result["probabilities"][0] == pytest.approx(_sigmoid(-3.0))
+        assert result["probabilities"][1] == pytest.approx(_sigmoid(4.0))
+        assert result["latency_ms"] >= 0.0
+
+    def test_multi_window_reranking_groups_queries_and_compares_globally(self):
+        client = MagicMock()
+        client.rerank.side_effect = [[-4.0, 5.0], [1.0]]
+        scores = [0.9, 0.8, 0.7]
+
+        with patch("tools.reranking._get_host_client", return_value=client):
+            result = rerank_multi(
+                ["first", "first", "second"],
+                ["a", "b", "c"],
+                scores,
+                {"backend": "host", "alpha": 1.0},
+            )
+
+        assert result[1] > result[2] > result[0]
+        assert client.rerank.call_args_list[0].args == ("first", ["a", "b"])
+        assert client.rerank.call_args_list[1].args == ("second", ["c"])
+
+    def test_multi_window_latency_budget_falls_open(self):
+        """rerank_multi_detailed enforces max_latency_ms BETWEEN grouped host
+        calls: once the budget is exhausted it stops calling the host and falls
+        open to vector scores (finding 16)."""
+        import time as _time
+
+        from tools.reranking import rerank_multi_detailed
+
+        calls = []
+
+        class _SlowClient:
+            def rerank(self, query, documents):
+                calls.append(query)
+                _time.sleep(0.03)  # each call blows a 1ms budget
+                return [1.0] * len(documents)
+
+        scores = [0.9, 0.8, 0.7]
+        with patch("tools.reranking._get_host_client", return_value=_SlowClient()):
+            result = rerank_multi_detailed(
+                ["w1", "w2", "w3"],
+                ["a", "b", "c"],
+                scores,
+                {"backend": "host", "alpha": 1.0, "max_latency_ms": 1},
+            )
+
+        assert result.applied is False
+        assert result.fallback_reason == "latency_budget_exceeded"
+        assert result.blended_scores == scores
+        # First window ran; the budget check bailed before exhausting all three.
+        assert 0 < len(calls) < 3
 
     def test_alpha_zero_returns_normalized_vector_scores(self):
         """alpha=0 means 100% normalized vector scores (preserves order)."""
@@ -550,14 +647,16 @@ class TestRerankingConfig:
         from tools.config import get_reranking_config
 
         config = get_reranking_config()
-        # Disabled by default: ms-marco-MiniLM measured net-negative
-        # (−0.055 nDCG@10 on ArguAna vs the bi-encoder alone).
         assert config["enabled"] is False
-        assert config["candidate_count"] == 100
+        assert config["backend"] == "onnx"
+        assert config["model"] == "BAAI/bge-reranker-v2-m3"
+        assert config["candidate_count"] == 20
         assert config["top_k"] == 10
         assert config["alpha"] == 0.7
-        assert config["max_latency_ms"] == 1000
+        assert config["max_latency_ms"] == 1500
         assert config["batch_size"] == 32
+        assert config["host_url"] == "http://host.docker.internal:8752"
+        assert config["host_timeout_ms"] == 1500
 
     def test_overrides(self, mock_config):
         mock_config.set(memory={"reranking": {"enabled": False, "alpha": 0.5}})
@@ -567,7 +666,7 @@ class TestRerankingConfig:
         assert config["enabled"] is False
         assert config["alpha"] == 0.5
         # Non-overridden defaults preserved
-        assert config["candidate_count"] == 100
+        assert config["candidate_count"] == 20
 
     def test_partial_override(self, mock_config):
         mock_config.set(memory={"reranking": {"top_k": 5}})
@@ -576,6 +675,26 @@ class TestRerankingConfig:
         config = get_reranking_config()
         assert config["top_k"] == 5
         assert config["enabled"] is False  # default preserved
+
+    def test_host_environment_overrides(self, mock_config, monkeypatch):
+        monkeypatch.setenv("RERANKING_ENABLED", "true")
+        monkeypatch.setenv("RERANKING_BACKEND", "host")
+        monkeypatch.setenv("RERANKING_MODEL", "test-reranker")
+        monkeypatch.setenv("JARVIS_RERANK_HOST_URL", "http://models:9000")
+        monkeypatch.setenv("JARVIS_RERANK_HOST_TIMEOUT_MS", "900")
+        monkeypatch.setenv("RERANKING_CANDIDATE_COUNT", "12")
+        monkeypatch.setenv("RERANKING_MAX_LATENCY_MS", "1200")
+
+        from tools.config import get_reranking_config
+
+        config = get_reranking_config()
+        assert config["enabled"] is True
+        assert config["backend"] == "host"
+        assert config["model"] == "test-reranker"
+        assert config["host_url"] == "http://models:9000"
+        assert config["host_timeout_ms"] == 900
+        assert config["candidate_count"] == 12
+        assert config["max_latency_ms"] == 1200
 
 
 class TestQueryVaultReranking:
@@ -659,7 +778,8 @@ class TestQueryVaultReranking:
 
 
     def test_fetch_count_increased_with_reranking(self, mock_config):
-        """When reranking enabled, fetch_count should use candidate_count."""
+        """Reranking widens the ANN fetch window; results still flow when the
+        reranker itself fails to initialize."""
         self._reset_db(mock_config)
         self._index_test_files(mock_config)
         mock_config.set(
@@ -672,6 +792,35 @@ class TestQueryVaultReranking:
             # Even though reranking fails, we should still get results
             result = query_vault("test", n_results=5)
             assert result["success"] is True
+
+    def test_reranked_ann_window_not_shrunk_to_candidate_count(
+        self, mock_config, monkeypatch
+    ):
+        """candidate_count caps the POST-dedup rerank input, not the pre-dedup
+        ANN window. Fetching only candidate_count rows lets one chunk-heavy
+        document crowd out everything else, so enabling the reranker REDUCED
+        recall below the non-reranked path (which overfetches n_results*5)."""
+        import tools.query as query_module
+
+        mock_config.set(
+            memory={"reranking": {"enabled": True, "candidate_count": 20}}
+        )
+        monkeypatch.setattr(
+            query_module, "execute_query", lambda *a, **k: {"cnt": 500}
+        )
+
+        captured = {}
+
+        def fake_search(query, service, fetch_count, **kwargs):
+            captured["fetch_count"] = fetch_count
+            return [], {"terms_added": [], "intent": None}
+
+        monkeypatch.setattr(query_module, "_search_query_windows", fake_search)
+
+        result = query_module.query_vault("test", n_results=10)
+        assert result["success"] is True
+        # Wide window (mirrors semantic_context), NOT candidate_count=20.
+        assert captured["fetch_count"] == 100
 
 
     def test_reranking_honors_n_results_not_top_k(self, mock_config):
@@ -701,4 +850,3 @@ class TestQueryVaultReranking:
             # Must be unconditional — without it, the count assertion also
             # passes when reranking silently fails to apply (vacuous).
             assert result["reranking"]["applied"] is True
-

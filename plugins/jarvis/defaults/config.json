@@ -12,10 +12,14 @@
   "memory": {
     "postgres_url": "postgresql://jarvis:jarvis@localhost:5432/jarvis",
     "embedding_model": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_model_id": "ibm-granite/granite-embedding-small-english-r2",
     "embedding_dimensions": 384,
     "embedding_device": "cpu",
     "embedding_backend": "onnx",
     "embedding_bedrock_region": "eu-central-1",
+    "embedding_host_model": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_host_url": "http://host.docker.internal:8751",
+    "embedding_host_timeout_ms": 2000,
     "secret_detection": true,
     "importance_scoring": true,
     "recency_boost_days": 7,
@@ -31,6 +35,7 @@
     "context_enrichment": {
       "enabled": true,
       "threshold": 0.85,
+      "bge_logit_threshold": -4.0,
       "budget": 8000,
       "max_results": 20,
       "debug": false,
@@ -39,11 +44,33 @@
       "semantic_dedup_threshold": 0.86,
       "schemas": "all"
     },
+    "lexical": {
+      "enabled": true,
+      "max_df_ratio": 0.10,
+      "max_terms": 8,
+      "candidate_limit": 30,
+      "lexical_rerank_slots": 10
+    },
+    "retrieval_telemetry": {
+      "enabled": true,
+      "retention_days": 30,
+      "store_user_prompts": true,
+      "candidate_detail_limit": 100,
+      "shadow": {
+        "enabled": true,
+        "candidate_count": 20,
+        "delay_seconds": 2,
+        "poll_seconds": 2,
+        "max_attempts": 3,
+        "max_jobs_per_second": 1
+      }
+    },
     "chunking": {
       "enabled": true,
       "min_chunk_chars": 200,
       "max_chunk_chars": 1500,
-      "heading_levels": [2, 3]
+      "heading_levels": [2, 3],
+      "contextual_embeddings": true
     },
     "scoring": {
       "enabled": true,
@@ -59,11 +86,16 @@
     },
     "reranking": {
       "enabled": false,
-      "candidate_count": 100,
+      "backend": "onnx",
+      "model": "BAAI/bge-reranker-v2-m3",
+      "candidate_count": 20,
       "top_k": 10,
       "alpha": 0.7,
-      "max_latency_ms": 1000,
-      "batch_size": 32
+      "max_latency_ms": 1500,
+      "batch_size": 32,
+      "host_url": "http://host.docker.internal:8752",
+      "host_token": "",
+      "host_timeout_ms": 1500
     },
     "worklog": {
       "enabled": true,

@@ -221,7 +221,10 @@ def test_vault_halfvec_roundtrip(e2e_config):
 
 def test_ensure_schema_idempotent(e2e_config):
     """All CREATE IF NOT EXISTS DDL can be run twice without error."""
-    from tools.schema import CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL
+    from tools.schema import (
+        CORE_SCHEMA_SQL, VAULT_SCHEMA_SQL, CORE_META_SQL,
+        RETRIEVAL_TELEMETRY_SCHEMA_SQL,
+    )
 
     import psycopg
 
@@ -231,6 +234,7 @@ def test_ensure_schema_idempotent(e2e_config):
         conn.execute(CORE_SCHEMA_SQL.format(dimensions=384))
         conn.execute(VAULT_SCHEMA_SQL.format(dimensions=384))
         conn.execute(CORE_META_SQL)
+        conn.execute(RETRIEVAL_TELEMETRY_SCHEMA_SQL)
     finally:
         conn.close()
 

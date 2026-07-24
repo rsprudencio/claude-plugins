@@ -21,7 +21,8 @@ from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 from .expansion import expand_query as _expand_query
 from .config import (
-    get_context_enrichment_config, get_decay_config, get_expansion_config,
+    get_context_enrichment_config, get_contextual_embeddings_enabled,
+    get_decay_config, get_expansion_config, get_lexical_config,
     get_ranking_config, get_reranking_config, get_staleness_config,
 )
 from .format_support import detect_format
@@ -33,6 +34,352 @@ logger = logging.getLogger(__name__)
 
 _INJECTION_DEDUP_TYPES = {"memory", "observation", "worklog"}
 _INJECTION_TYPE_PRIORITY = {"memory": 3, "observation": 2, "worklog": 1}
+_QUERY_WINDOW_TOKENS = 2048
+_QUERY_WINDOW_OVERLAP = 128
+
+
+def _rerank_doc_text(entry: dict, enabled: bool) -> str:
+    """Return the text to hand the reranker for one candidate entry.
+
+    The cross-encoder must see exactly what the embedder saw, so vault (obsidian)
+    fragments are augmented with the same document-context prefix used at index
+    time (see tools/chunk_context.py). The entry's stored ``document`` is left
+    untouched — only this returned copy carries the prefix. Local memories are
+    never augmented (their embed path isn't either), so live and shadow scores
+    stay consistent per schema.
+    """
+    from .chunk_context import augment_chunk_for_model
+
+    document = entry.get("document") or ""
+    meta = entry.get("metadata", {}) or {}
+    is_vault = entry.get("_schema") == "obsidian"
+    try:
+        chunk_total = int(meta.get("chunk_total", 1) or 1)
+    except (ValueError, TypeError):
+        chunk_total = 1
+    return augment_chunk_for_model(
+        document,
+        path=entry.get("parent_file") or meta.get("parent_file", ""),
+        title=meta.get("title", ""),
+        heading_trail=meta.get("chunk_heading", ""),
+        is_chunk=is_vault and chunk_total > 1,
+        enabled=enabled,
+    )
+
+
+def _record_empty_trace(
+    purpose: str,
+    query: str,
+    *,
+    outcome: str = "empty",
+    error: str = "",
+    user_name: Optional[str] = None,
+    user_facing: bool = True,
+    query_ref: Optional[str] = None,
+) -> Optional[str]:
+    """Best-effort trace for exits that occur before candidates exist."""
+    try:
+        from .config import get_embedding_config
+        from .retrieval_telemetry import record_event
+
+        embedding = get_embedding_config()
+        return record_event(
+            purpose=purpose, query=query, candidates=[],
+            funnel={"ann_unique": 0, "returned": 0},
+            latency={"total_ms": 0}, outcome=outcome,
+            status="failed" if error else "complete", user_name=user_name,
+            user_facing=user_facing, query_ref=query_ref,
+            model_snapshot={
+                "embedding_model": embedding.get("model_id"),
+                "embedding_backend": embedding.get("backend"),
+            },
+            config_snapshot={"error": error[:500]} if error else {},
+            shadow_eligible=False,
+        )
+    except Exception:
+        return None
+
+
+def _prepare_query_windows(query: str, service) -> tuple[list[dict], dict]:
+    """Expand and bound every part of an arbitrarily large query."""
+    from .text_windows import split_text_windows
+
+    tokenizer = getattr(service, "tokenize", None)
+    base_windows = split_text_windows(
+        query,
+        max_tokens=_QUERY_WINDOW_TOKENS,
+        overlap_tokens=_QUERY_WINDOW_OVERLAP,
+        tokenize=tokenizer,
+    ) or [""]
+    expansion_config = get_expansion_config()
+    prepared = []
+    terms_added = []
+    intents = []
+    for base_index, base in enumerate(base_windows):
+        expansion = _expand_query(base, expansion_config)
+        terms_added.extend(expansion.get("terms_added", []))
+        if expansion.get("intent"):
+            intents.append(expansion["intent"])
+        expanded_windows = split_text_windows(
+            expansion["expanded"],
+            max_tokens=_QUERY_WINDOW_TOKENS,
+            overlap_tokens=_QUERY_WINDOW_OVERLAP,
+            tokenize=tokenizer,
+        ) or [base]
+        for search_text in expanded_windows:
+            prepared.append(
+                {
+                    "search_text": search_text,
+                    "rerank_text": base,
+                    "base_index": base_index,
+                }
+            )
+    # Expansion overlap can produce an identical inference window twice.
+    unique = []
+    seen = set()
+    for window in prepared:
+        key = (window["search_text"], window["rerank_text"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(window)
+    return unique, {
+        "terms_added": list(dict.fromkeys(terms_added)),
+        "intent": intents[0] if intents else None,
+        "base_window_count": len(base_windows),
+        "inference_window_count": len(unique),
+    }
+
+
+def _search_query_windows(
+    query: str,
+    service,
+    fetch_count: int,
+    *,
+    filter_dict: Optional[dict] = None,
+    user: Optional[str] = None,
+    schemas: Optional[list[str]] = None,
+) -> tuple[list[dict], dict]:
+    """Search every bounded query window and keep each row's best match."""
+    windows, expansion = _prepare_query_windows(query, service)
+    texts = [window["search_text"] for window in windows]
+    if len(texts) == 1:
+        embeddings = [service.encode(texts[0])]
+    else:
+        embeddings = service.encode_batch(texts, batch_size=8)
+    if len(embeddings) != len(windows):
+        raise ValueError(
+            f"embedding service returned {len(embeddings)} vectors "
+            f"for {len(windows)} query windows"
+        )
+
+    best: dict[tuple[str, str], dict] = {}
+    for window, embedding in zip(windows, embeddings):
+        rows = _cross_schema_search(
+            embedding,
+            fetch_count,
+            filter_dict=filter_dict,
+            user=user,
+            schemas=schemas,
+        )
+        for row in rows:
+            key = (str(row.get("_schema", "obsidian")), str(row.get("id", "")))
+            candidate = dict(row)
+            candidate["_query_window"] = window["rerank_text"]
+            candidate["_query_window_index"] = window["base_index"]
+            if key not in best or float(candidate["distance"]) < float(best[key]["distance"]):
+                best[key] = candidate
+    return sorted(best.values(), key=lambda row: float(row["distance"])), expansion
+
+
+def _lexical_base_window(query: str, service) -> str:
+    """Return base window 0 of the query — the lexical rows' rerank window.
+
+    Multi-window prompts extract lexical terms from the full prompt but score
+    every lexical row against base window 0 (matches the spec: lexical rows use
+    base window 0 as their rerank query window).
+    """
+    from .text_windows import split_text_windows
+
+    tokenizer = getattr(service, "tokenize", None)
+    windows = split_text_windows(
+        query,
+        max_tokens=_QUERY_WINDOW_TOKENS,
+        overlap_tokens=_QUERY_WINDOW_OVERLAP,
+        tokenize=tokenizer,
+    ) or [query]
+    return windows[0]
+
+
+def _augment_rows_with_lexical(
+    rows: list[dict],
+    query: str,
+    service,
+    *,
+    schemas: Optional[list[str]] = None,
+    user: Optional[str] = None,
+    filter_dict: Optional[dict] = None,
+) -> tuple[list[dict], dict]:
+    """Union a statistical (lexical) recall channel into the ANN ``rows``.
+
+    ANN rows are tagged ``_channel='semantic'`` (upgraded to ``'both'`` when
+    also surfaced lexically); lexical-only rows are appended with
+    ``_channel='lexical'`` carrying their true raw cosine (via ``distance``) so
+    they flow through the SAME downstream scoring/dedup/rerank/telemetry path.
+
+    Access control: ``user`` is threaded into the lexical SQL so it honors the
+    same per-user isolation the ANN path applies. When ``filter_dict`` is
+    non-empty the lexical union is SKIPPED entirely (the lexical SQL does not yet
+    honor metadata filters — Phase 2), so it never returns rows that violate the
+    caller's filter.
+
+    Fail-open: any error (or a disabled channel, no informative terms, an
+    incompatible schema filter) yields the ANN rows unchanged. Returns
+    ``(rows, stats)`` where stats has ``lexical_candidates`` (rows fetched),
+    ``lexical_added`` (rows appended post-dedup) and ``informative_terms``.
+    """
+    stats = {"lexical_candidates": 0, "lexical_added": 0, "informative_terms": []}
+
+    # Tag ANN rows before any early return so every row carries a channel.
+    for row in rows:
+        if "_channel" not in row:
+            row["_channel"] = "semantic"
+
+    lexical_config = get_lexical_config()
+    if not lexical_config.get("enabled", True):
+        return rows, stats
+
+    # Phase-1 limitation: the lexical SQL honors user scope but NOT arbitrary
+    # metadata filters. Skip the channel rather than silently return rows that
+    # violate the caller's filter (type/directory/project/etc.).
+    if filter_dict:
+        return rows, stats
+
+    if schemas is None:
+        target_schemas = list(_LEXICAL_SCHEMAS)
+    else:
+        target_schemas = [s for s in schemas if s in _LEXICAL_SCHEMAS]
+    if not target_schemas:
+        return rows, stats
+
+    try:
+        from . import lexical
+        from .schema import _get_pool
+
+        pool = _get_pool()
+        with pool.connection() as conn:
+            lexemes = lexical.extract_query_lexemes(conn, query)
+            terms = lexical.informative_terms(
+                conn,
+                lexemes,
+                max_df_ratio=float(lexical_config.get("max_df_ratio", 0.10)),
+                max_terms=int(lexical_config.get("max_terms", 8)),
+            )
+            stats["informative_terms"] = terms
+            if not terms:
+                return rows, stats
+
+            base0 = _lexical_base_window(query, service)
+            query_embedding = service.encode(base0)
+            candidate_limit = int(lexical_config.get("candidate_limit", 30))
+
+            # (schema, id) already present via ANN → dedup to 'both'.
+            ann_by_key: dict[tuple[str, str], dict] = {}
+            for row in rows:
+                ann_by_key[(str(row.get("_schema", "obsidian")), str(row.get("id", "")))] = row
+            seen_keys = set(ann_by_key)
+
+            appended: list[dict] = []
+            for schema in target_schemas:
+                lex_rows = lexical.lexical_candidates(
+                    conn,
+                    terms,
+                    schema=schema,
+                    limit=candidate_limit,
+                    query_embedding=query_embedding,
+                    user=user,
+                )
+                stats["lexical_candidates"] += len(lex_rows)
+                for lex in lex_rows:
+                    key = (str(lex.get("_schema", schema)), str(lex.get("id", "")))
+                    if key in ann_by_key:
+                        ann_by_key[key]["_channel"] = "both"
+                        continue
+                    if key in seen_keys:
+                        continue  # already appended (cross-schema dup guard)
+                    lex["_channel"] = "lexical"
+                    # The channel's native rank: lexical_candidates returns
+                    # rows rarest-term-first; the reserved rerank seats honor
+                    # this order (see _select_rerank_retained).
+                    lex["_lexical_rank"] = len(appended)
+                    lex.setdefault("_query_window", base0)
+                    lex.setdefault("_query_window_index", 0)
+                    appended.append(lex)
+                    seen_keys.add(key)
+
+            stats["lexical_added"] = len(appended)
+            rows.extend(appended)
+    except Exception as exc:
+        logger.debug("Lexical channel skipped: %s", exc)
+
+    return rows, stats
+
+
+def _select_rerank_retained(
+    best_per_file: dict,
+    candidate_count: int,
+    lexical_slots: int,
+    result_limit: int = 0,
+) -> set:
+    """Pick the pre-rerank candidate-cap survivors — passers exempt from failers.
+
+    STRICT RECALL-ADDITIVITY: a cosine-PASSING row (``_cosine_ok`` truthy —
+    always true in the gate-free ``query_vault`` path, which applies no cosine
+    threshold) is NEVER evicted by a cosine-failing row. The cap ranks passers
+    ONLY against each other, retaining the top ``max(candidate_count,
+    result_limit)`` of them by pre-score. Flooring at ``result_limit`` (the
+    caller's final result cap) guarantees the cap never drops a passer that the
+    reranking-disabled path would inject, so enabled-injected ⊇ disabled-injected.
+
+    Cosine-failing rows reach this point only via the LEXICAL recall channel
+    (semantic_context drops cosine-failing ANN rows at the threshold; Phase 1).
+    Up to ``lexical_slots`` such ``_channel == 'lexical'`` rows get reserved
+    seats IN ADDITION to the passer winners, so their low cosine cannot evict
+    them before the reranker can earn them a logit rescue. Everything else is
+    capped.
+    """
+    passer_keep = max(int(candidate_count), int(result_limit))
+    ranked = sorted(
+        best_per_file.items(),
+        key=lambda item: float(item[1].get("relevance", 0.0)),
+        reverse=True,
+    )
+    passers = [(key, entry) for key, entry in ranked if entry.get("_cosine_ok", True)]
+    retained = {key for key, _ in passers[:passer_keep]}
+    if lexical_slots > 0:
+        # Reserved seats go by the LEXICAL channel's own native rank (rarity
+        # order from informative_terms — stamped as _lexical_rank at union
+        # time), NOT by cosine pre-score. Ranking lexical rows by cosine here
+        # re-introduces the IDF-blind flooding one stage down: common-term
+        # matches carry higher cosine and would take every seat while the
+        # df=1 term's rows (the reason this channel exists) never reach BGE.
+        lexical_rows = sorted(
+            (
+                (key, entry) for key, entry in best_per_file.items()
+                if key not in retained and entry.get("_channel") == "lexical"
+            ),
+            key=lambda item: (
+                item[1].get("_lexical_rank")
+                if isinstance(item[1].get("_lexical_rank"), int)
+                else 1_000_000,
+                -float(item[1].get("relevance", 0.0)),
+            ),
+        )
+        for key, _entry in lexical_rows[:lexical_slots]:
+            retained.add(key)
+    return retained
+
+
+_LEXICAL_SCHEMAS = ("obsidian", "local")
 
 
 def _semantic_deduplicate_context(
@@ -71,9 +418,13 @@ def _semantic_deduplicate_context(
         return entries, 0
 
     threshold = min(max(float(similarity_threshold), -1.0), 1.0)
+    # Passer-priority: cosine-passing rows are processed (kept) strictly ahead
+    # of logit-rescued cosine-failers, so a rescued row can never suppress a
+    # near-duplicate passer that today's pipeline injects.
     ordered = sorted(
         range(len(eligible)),
         key=lambda pos: (
+            -int(bool(eligible[pos][1].get("_cosine_ok", True))),
             -_INJECTION_TYPE_PRIORITY[eligible[pos][2]],
             -float(eligible[pos][1].get("relevance", 0.0)),
         ),
@@ -361,6 +712,9 @@ def _format_core_result(row: dict) -> dict:
     meta["source"] = row.get("source", "auto-extract")
     meta["importance_score"] = str(row.get("importance_score", 0.5))
     meta["type"] = row.get("category", "observation")
+    if row.get("chunk_total") is not None:
+        meta["chunk_index"] = str(row.get("chunk_index", 0))
+        meta["chunk_total"] = str(row.get("chunk_total", 1))
     return meta
 
 
@@ -445,25 +799,53 @@ def _parse_schemas(schemas_str: Optional[str]) -> Optional[list[str]]:
 
 def _query_local_schema(pool, query_embedding, fetch_count: int,
                         filter_dict: Optional[dict], user: Optional[str]) -> list:
-    """Query local.memories with HNSW ordering."""
+    """Query canonical local rows plus search-only windows with HNSW ordering."""
     core_conditions, core_params = _build_core_filter(filter_dict, user)
-    core_where = " AND ".join(core_conditions)
+    core_where = " AND ".join(f"m.{condition}" for condition in core_conditions)
     with pool.connection() as conn:
         with conn.cursor() as cur:
+            # Canonical rows without search chunks retain the original direct
+            # HNSW path. Chunked parents are deliberately excluded so their
+            # mean compatibility vector cannot compete with precise windows.
             cur.execute(
                 f"""SELECT id, document, metadata,
                            category, scope, source, importance_score,
                            retrieval_count, created_at,
                            embedding <=> %s::halfvec AS distance,
                            'local' AS _schema
-                    FROM local.memories
+                    FROM local.memories AS m
                     WHERE {core_where}
+                      AND NOT EXISTS (
+                          SELECT 1 FROM local.memory_chunks AS mc
+                          WHERE mc.parent_id = m.id
+                      )
                     ORDER BY embedding <=> %s::halfvec ASC
                     LIMIT %s""",
                 tuple([query_embedding] + core_params + [query_embedding, fetch_count]),
             )
             columns = [desc.name for desc in cur.description]
-            return [dict(zip(columns, row)) for row in cur.fetchall()]
+            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+
+            # Search chunk embeddings while projecting canonical metadata and
+            # parent ID. Retrieval/reads therefore remain parent-addressed.
+            cur.execute(
+                f"""SELECT m.id, mc.document, m.metadata,
+                           m.category, m.scope, m.source, m.importance_score,
+                           m.retrieval_count, m.created_at,
+                           mc.chunk_index, mc.chunk_total,
+                           mc.embedding <=> %s::halfvec AS distance,
+                           'local' AS _schema
+                    FROM local.memory_chunks AS mc
+                    JOIN local.memories AS m ON m.id = mc.parent_id
+                    WHERE {core_where}
+                    ORDER BY mc.embedding <=> %s::halfvec ASC
+                    LIMIT %s""",
+                tuple([query_embedding] + core_params + [query_embedding, fetch_count]),
+            )
+            columns = [desc.name for desc in cur.description]
+            rows.extend(dict(zip(columns, row)) for row in cur.fetchall())
+            rows.sort(key=lambda row: float(row.get("distance", 999)))
+            return rows[:fetch_count]
 
 
 def _query_obsidian_schema(pool, query_embedding, fetch_count: int,
@@ -672,12 +1054,105 @@ def _cross_schema_search(query_embedding, fetch_count: int,
     return rows
 
 
+def semantic_candidate_search(
+    query: str,
+    *,
+    limit: int = 20,
+    offset: int = 0,
+    schemas: Optional[list[str]] = None,
+    user: Optional[str] = None,
+    purpose: str = "memory_explorer",
+) -> dict:
+    """Shared raw semantic recall for diagnostic/search UIs.
+
+    Unlike :func:`query_vault`, this preserves pagination and does not mutate
+    retrieval counts. It still uses the exact core query-window and cross-schema
+    ANN primitive, and emits one telemetry trace for the operation.
+    """
+    started = time.perf_counter()
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    fetch_count = min(offset + limit, 1000)
+    from .embedding import get_embedding_service
+
+    service = get_embedding_service()
+    rows, expansion = _search_query_windows(
+        query, service, fetch_count, user=user, schemas=schemas
+    )
+    page = rows[offset:offset + limit]
+    results = []
+    for row in page:
+        document = row.get("document") or ""
+        results.append({
+            "id": str(row.get("id", "")),
+            "document": document,
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+            "importance_score": float(row.get("importance_score", 0.5) or 0.5),
+            "retrieval_count": float(row.get("retrieval_count", 0) or 0),
+            "score": 1.0 - float(row.get("distance", 1.0)),
+            "schema": row.get("_schema", "obsidian"),
+            "query_window_index": int(row.get("_query_window_index", 0) or 0),
+        })
+    trace_id = None
+    try:
+        from .config import get_embedding_config
+        from .retrieval_telemetry import CandidateTrace, record_event
+
+        returned_ids = {item["id"] for item in results}
+        traces = [
+            CandidateTrace(
+                schema_name=str(row.get("_schema", "obsidian")),
+                doc_id=str(row.get("id", "")),
+                parent_id=str(row.get("parent_file") or row.get("id", "")),
+                parent_file=str(row.get("parent_file") or ""),
+                chunk_index=int(row.get("chunk_index", 0) or 0),
+                query_window_index=int(row.get("_query_window_index", 0) or 0),
+                vector_rank=index,
+                final_rank=(index - offset) if row.get("id") in returned_ids else None,
+                similarity=1.0 - float(row.get("distance", 1.0)),
+                pre_score=1.0 - float(row.get("distance", 1.0)),
+                terminal_reason="selected" if row.get("id") in returned_ids else "result_cap",
+                returned=row.get("id") in returned_ids,
+            )
+            for index, row in enumerate(rows, 1)
+        ]
+        emb_cfg = get_embedding_config()
+        trace_id = record_event(
+            purpose=purpose, query=query, candidates=traces,
+            funnel={
+                "query_windows": expansion.get("inference_window_count", 1),
+                "ann_unique": len(rows), "offset": offset,
+                "returned": len(results),
+            },
+            latency={"total_ms": round((time.perf_counter() - started) * 1000, 2)},
+            outcome="results" if results else "empty",
+            query_window_count=expansion.get("inference_window_count", 1),
+            model_snapshot={
+                "embedding_model": emb_cfg.get("model_id"),
+                "embedding_backend": emb_cfg.get("backend"),
+            },
+            config_snapshot={"limit": limit, "offset": offset, "schemas": schemas or ["all"]},
+        )
+    except Exception:
+        pass
+    return {
+        "results": results,
+        "total": len(rows) if len(rows) < fetch_count else None,
+        "trace_id": trace_id,
+        "query_windows": expansion,
+    }
+
+
 def query_vault(
     query: str,
     n_results: int = 5,
     filter: Optional[dict] = None,
     user: Optional[str] = None,
     schemas: Optional[list[str]] = None,
+    purpose: str = "explicit_recall",
+    telemetry_user_facing: bool = True,
+    telemetry_query_ref: Optional[str] = None,
 ) -> dict:
     """Semantic search across vault memory.
 
@@ -693,6 +1168,7 @@ def query_vault(
     Returns:
         Formatted results dict with titles, paths, excerpts, relevance scores
     """
+    retrieval_started = time.perf_counter()
     from .embedding import get_embedding_service
     from .schema import _get_pool
 
@@ -723,27 +1199,22 @@ def query_vault(
             pass
 
     if total == 0:
-        return {
+        response = {
             "success": True,
             "query": query,
             "results": [],
             "total_in_collection": 0,
             "message": "No documents indexed. Ask Jarvis to 'index my vault' or use jarvis_index_vault tool.",
         }
+        trace_id = _record_empty_trace(
+            purpose, query, user_name=user, user_facing=telemetry_user_facing,
+            query_ref=telemetry_query_ref,
+        )
+        if trace_id:
+            response["trace_id"] = trace_id
+        return response
 
     n_results = min(max(1, n_results), 20)
-
-    # Query expansion
-    expansion_config = get_expansion_config()
-    expansion = _expand_query(query, expansion_config)
-    search_text = expansion["expanded"]
-
-    # Embed the query
-    try:
-        service = get_embedding_service()
-        query_embedding = service.encode(search_text)
-    except Exception as e:
-        return {"success": False, "error": f"Embedding failed: {e}"}
 
     # Over-fetch to account for chunk deduplication (and reranking if enabled).
     # The window fills by raw vector distance BEFORE per-file chunk dedup, so
@@ -751,21 +1222,53 @@ def query_vault(
     # sizes the window to survive dedup.
     reranking_config = get_reranking_config()
     if reranking_config.get("enabled", False):
-        fetch_count = min(reranking_config.get("candidate_count", 100), total)
+        # candidate_count caps how many POST-dedup survivors reach the
+        # reranker (below); it must not shrink this pre-dedup ANN window or
+        # chunk-heavy documents crowd everything else out and enabling the
+        # reranker REDUCES recall. Mirror semantic_context's wide fetch.
+        fetch_count = min(100, total)
     else:
         overfetch = get_ranking_config().get("overfetch_factor", 5)
         fetch_count = min(n_results * max(int(overfetch), 1), 60, total)
 
+    search_started = time.perf_counter()
     try:
-        rows = _cross_schema_search(
-            query_embedding, fetch_count, filter_dict=filter, user=user,
+        service = get_embedding_service()
+        rows, expansion = _search_query_windows(
+            query,
+            service,
+            fetch_count,
+            filter_dict=filter,
+            user=user,
             schemas=schemas,
         )
     except ValueError as e:
         # D8: Unknown schema names in the filter
         return {"success": False, "error": str(e)}
     except Exception as e:
-        return {"success": False, "error": f"Query failed: {e}"}
+        trace_id = _record_empty_trace(
+            purpose, query, outcome="error", error=str(e), user_name=user,
+            user_facing=telemetry_user_facing, query_ref=telemetry_query_ref,
+        )
+        response = {"success": False, "error": f"Query failed: {e}"}
+        if trace_id:
+            response["trace_id"] = trace_id
+        return response
+    search_ms = (time.perf_counter() - search_started) * 1000
+
+    # Capture the true ANN-unique count BEFORE the lexical union mutates `rows`
+    # in place — otherwise funnel.ann_unique would double-count lexical rows.
+    ann_unique = len(rows)
+
+    # Union the lexical recall channel into the ANN pool. query_vault stays
+    # gate-free (Part D is injection-only) — lexical rows just join the ranking
+    # pool and compete by unified score. The lexical channel honors the same
+    # per-user scope as the ANN path; when a metadata `filter` is supplied it is
+    # skipped entirely (Phase-1 limitation) rather than returning rows that
+    # violate the filter.
+    rows, lexical_stats = _augment_rows_with_lexical(
+        rows, query, service, schemas=schemas, user=user, filter_dict=filter
+    )
 
     # Build raw result entries with relevance scores
     decay_config = get_decay_config()
@@ -841,6 +1344,12 @@ def query_vault(
                 "document": row["document"],
                 "metadata": meta,
                 "_schema": schema,
+                "_channel": row.get("_channel", "semantic"),
+                "_lexical_rank": row.get("_lexical_rank"),
+                "_query_window": row.get("_query_window", query),
+                "_query_window_index": row.get("_query_window_index", 0),
+                "_pre_score": relevance,
+                "_terminal_reason": None,
             }
         )
 
@@ -854,8 +1363,13 @@ def query_vault(
     best_per_file: dict = {}
     for entry in raw_entries:
         key = (entry["parent_file"], entry["_schema"])
-        if key not in best_per_file or entry["relevance"] > best_per_file[key]["relevance"]:
+        if key not in best_per_file:
             best_per_file[key] = entry
+        elif entry["relevance"] > best_per_file[key]["relevance"]:
+            best_per_file[key]["_terminal_reason"] = "parent_dedup"
+            best_per_file[key] = entry
+        else:
+            entry["_terminal_reason"] = "parent_dedup"
 
     # D9: Cross-schema dedup — if same doc_id appears in both local and a remote
     # mirror (echo dedup miss), prefer the local copy.
@@ -873,30 +1387,67 @@ def query_vault(
         else:
             id_to_key[doc_id] = key
     for k in keys_to_remove:
-        best_per_file.pop(k, None)
+        removed = best_per_file.pop(k, None)
+        if removed:
+            removed["_terminal_reason"] = "parent_dedup"
+
+    parent_dedup_count = len(best_per_file)
 
     # Cross-encoder reranking (applied only when enabled and >1 candidate)
     reranking_applied = False
+    rerank_detail = None
+    if reranking_config.get("enabled"):
+        candidate_count = max(1, int(reranking_config.get("candidate_count", 20)))
+        lexical_slots = max(
+            0, int(get_lexical_config().get("lexical_rerank_slots", 10))
+        )
+        retained_keys = _select_rerank_retained(
+            best_per_file, candidate_count, lexical_slots, result_limit=n_results
+        )
+        for key, entry in best_per_file.items():
+            if key not in retained_keys:
+                entry["_terminal_reason"] = "candidate_cap"
+        best_per_file = {
+            key: entry for key, entry in best_per_file.items() if key in retained_keys
+        }
     if reranking_config.get("enabled") and len(best_per_file) > 1:
-        from .reranking import rerank
+        from .reranking import (
+            clear_last_rerank_result, get_last_rerank_result, rerank, rerank_multi,
+        )
 
         deduped_list = sorted(
             best_per_file.values(), key=lambda e: e["relevance"], reverse=True
         )
-        docs = [e["document"] or "" for e in deduped_list]
+        contextual_enabled = get_contextual_embeddings_enabled()
+        docs = [_rerank_doc_text(e, contextual_enabled) for e in deduped_list]
         vscores = [e["relevance"] for e in deduped_list]
-        blended = rerank(query, docs, vscores, reranking_config)
+        query_texts = [e.get("_query_window", query) for e in deduped_list]
+        clear_last_rerank_result()
+        if len(set(query_texts)) == 1:
+            blended = rerank(query_texts[0], docs, vscores, reranking_config)
+        else:
+            blended = rerank_multi(query_texts, docs, vscores, reranking_config)
+        rerank_detail = get_last_rerank_result()
         if blended is not vscores:
-            for entry, score in zip(deduped_list, blended):
+            for index, (entry, score) in enumerate(zip(deduped_list, blended)):
                 entry["relevance"] = score
+                if rerank_detail and rerank_detail.applied:
+                    entry["_raw_bge_logit"] = rerank_detail.raw_logits[index]
+                    entry["_bge_probability"] = rerank_detail.sigmoid_scores[index]
+                entry["_blended_score"] = score
             reranking_applied = True
 
     # Sort by relevance descending and trim to the caller's n_results —
     # reranking rescores candidates but never expands the requested count.
     final_count = n_results
-    deduped = sorted(
+    ranked_all = sorted(
         best_per_file.values(), key=lambda e: e["relevance"], reverse=True
-    )[:final_count]
+    )
+    deduped = ranked_all[:final_count]
+    for entry in ranked_all[final_count:]:
+        entry["_terminal_reason"] = "result_cap"
+    for entry in deduped:
+        entry["_terminal_reason"] = "selected"
 
     results = []
     all_ids = []
@@ -965,6 +1516,12 @@ def query_vault(
             "intent": expansion["intent"],
         }
 
+    if expansion.get("base_window_count", 1) > 1:
+        response["query_windows"] = {
+            "input": expansion["base_window_count"],
+            "inference": expansion["inference_window_count"],
+        }
+
     # Include reranking metadata when applied
     if reranking_applied:
         response["reranking"] = {
@@ -973,6 +1530,79 @@ def query_vault(
             "candidates": len(best_per_file),
             "top_k": final_count,
         }
+
+    # One aggregate event per semantic operation. This deliberately happens
+    # after response construction and is fail-open inside record_event().
+    try:
+        from .config import get_embedding_config
+        from .retrieval_telemetry import CandidateTrace, record_event
+
+        candidate_traces = []
+        final_ranks = {
+            (entry.get("_schema"), entry["doc_id"]): rank
+            for rank, entry in enumerate(deduped, 1)
+        }
+        for vector_rank, entry in enumerate(raw_entries, 1):
+            identity = (entry.get("_schema"), entry["doc_id"])
+            is_returned = identity in final_ranks
+            candidate_traces.append(CandidateTrace(
+                schema_name=entry.get("_schema", "obsidian"),
+                doc_id=str(entry["doc_id"]),
+                parent_id=str(entry.get("parent_file") or ""),
+                parent_file=str(entry.get("parent_file") or ""),
+                chunk_index=int(entry.get("metadata", {}).get("chunk_index", 0) or 0),
+                query_window_index=int(entry.get("_query_window_index", 0) or 0),
+                vector_rank=vector_rank,
+                final_rank=final_ranks.get(identity),
+                similarity=float(entry.get("similarity", 0)),
+                pre_score=float(entry.get("_pre_score", entry.get("relevance", 0))),
+                raw_bge_logit=entry.get("_raw_bge_logit"),
+                bge_probability=entry.get("_bge_probability"),
+                blended_score=entry.get("_blended_score"),
+                terminal_reason=entry.get("_terminal_reason") or "result_cap",
+                returned=is_returned,
+                channel=entry.get("_channel", "semantic"),
+            ))
+        trace_id = record_event(
+            purpose=purpose, query=query, candidates=candidate_traces,
+            funnel={
+                "query_windows": expansion.get("inference_window_count", 1),
+                "ann_unique": ann_unique, "parent_dedup": parent_dedup_count,
+                "lexical_candidates": lexical_stats.get("lexical_candidates", 0),
+                "lexical_added": lexical_stats.get("lexical_added", 0),
+                "candidate_cap": len(best_per_file),
+                "live_reranker_input": len(best_per_file) if reranking_config.get("enabled") else 0,
+                "live_reranker_applied": bool(rerank_detail and rerank_detail.applied),
+                "live_reranker_fallback": rerank_detail.fallback_reason if rerank_detail and not rerank_detail.applied else None,
+                "returned": len(results),
+            },
+            latency={
+                "search_ms": round(search_ms, 2),
+                "rerank_ms": round(rerank_detail.latency_ms, 2) if rerank_detail else 0,
+                "total_ms": round((time.perf_counter() - retrieval_started) * 1000, 2),
+            },
+            outcome="results" if results else "empty", user_name=user,
+            user_facing=telemetry_user_facing, query_ref=telemetry_query_ref,
+            query_window_count=expansion.get("inference_window_count", 1),
+            model_snapshot={
+                "embedding_model": get_embedding_config().get("model_id"),
+                "embedding_backend": get_embedding_config().get("backend"),
+                "reranker_model": reranking_config.get("model"),
+                "reranker_backend": reranking_config.get("backend"),
+            },
+            config_snapshot={
+                "n_results": n_results,
+                "reranking_enabled": bool(reranking_config.get("enabled")),
+                "reranking_alpha": reranking_config.get("alpha"),
+                "contextual_embeddings": get_contextual_embeddings_enabled(),
+                "schemas": schemas or ["all"],
+            },
+            shadow_eligible=telemetry_user_facing,
+        )
+        if trace_id:
+            response["trace_id"] = trace_id
+    except Exception:
+        pass
 
     return response
 
@@ -1018,6 +1648,7 @@ def semantic_context(
         includes 'surfaced_ids' list for deferred bumping.
     """
     start = time.time()
+    retrieval_started = time.perf_counter()
     try:
         max_results = int(max_results)
     except (TypeError, ValueError):
@@ -1052,41 +1683,67 @@ def semantic_context(
             pass
 
     if total == 0:
-        return {"matches": [], "query_ms": 0, "total_searched": 0}
-
-    # Query expansion (reuse existing infrastructure)
-    expansion_config = get_expansion_config()
-    expansion = _expand_query(query, expansion_config)
-    search_text = expansion["expanded"]
-
-    # Embed the query
-    try:
-        service = get_embedding_service()
-        query_embedding = service.encode(search_text)
-    except Exception:
-        return {"matches": [], "query_ms": 0, "total_searched": total}
+        response = {"matches": [], "query_ms": 0, "total_searched": 0}
+        trace_id = _record_empty_trace("context_injection", query)
+        if trace_id:
+            response["trace_id"] = trace_id
+        return response
 
     # Over-fetch to account for chunk dedup + threshold filtering
     fetch_count = min(100, total)
 
+    search_started = time.perf_counter()
     try:
-        rows = _cross_schema_search(query_embedding, fetch_count, schemas=schemas)
-    except Exception:
-        return {"matches": [], "query_ms": 0, "total_searched": total}
+        service = get_embedding_service()
+        rows, expansion = _search_query_windows(
+            query, service, fetch_count, schemas=schemas
+        )
+    except Exception as exc:
+        response = {"matches": [], "query_ms": 0, "total_searched": total}
+        trace_id = _record_empty_trace(
+            "context_injection", query, outcome="error", error=str(exc)
+        )
+        if trace_id:
+            response["trace_id"] = trace_id
+        return response
+    search_ms = (time.perf_counter() - search_started) * 1000
+
+    # Capture the true ANN-unique count BEFORE the lexical union mutates `rows`
+    # in place — otherwise funnel.ann_unique would double-count lexical rows.
+    ann_unique = len(rows)
+
+    # Union the lexical recall channel into the ANN pool. Per-prompt injection is
+    # single-user (anonymous scope) with no metadata filter, so the lexical
+    # channel runs unrestricted here.
+    rows, lexical_stats = _augment_rows_with_lexical(
+        rows, query, service, schemas=schemas
+    )
 
     # Build raw entries with relevance scores
     decay_config = get_decay_config()
     ranking_cfg = get_ranking_config()
     use_decay = decay_config.get("enabled", True)
 
+    # Fetch reranking + enrichment config up front: the recall-additive logit
+    # gate (Part D) needs to know, inside the raw loop, whether a cosine-failing
+    # candidate can still be judged (reranking on) or must be dropped now
+    # (reranking off → degrade to exactly today's cosine-only behavior).
+    reranking_config = get_reranking_config()
+    reranking_enabled = bool(reranking_config.get("enabled"))
+    enrichment_config = get_context_enrichment_config()
+    bge_logit_threshold = float(enrichment_config.get("bge_logit_threshold", -4.0))
+
     # D12: Pre-compute core-like set for scoring gate (LOCAL + REMOTE schemas)
     from .schema_registry import _core_like_schemas as _get_core_like_sc
     core_like_sc = _get_core_like_sc()
 
     raw_entries = []
+    trace_candidates = []
+    trace_by_key = {}
     skipped_sensitive = 0
 
-    for row in rows:
+    from .retrieval_telemetry import CandidateTrace
+    for vector_rank, row in enumerate(rows, start=1):
         schema = row.get("_schema", "obsidian")
 
         # Remote mirrors share the local.memories structure; obsidian has its own
@@ -1099,15 +1756,34 @@ def semantic_context(
         # pgvector cosine distance is ``1 - cosine_similarity``.
         similarity = 1.0 - distance
 
+        parent_file_for_trace = meta.get("parent_file")
+        if not parent_file_for_trace:
+            parent_file_for_trace = parse_id(row["id"]).content_id
+        trace = CandidateTrace(
+            schema_name=schema,
+            doc_id=str(row["id"]),
+            parent_id=str(parent_file_for_trace or ""),
+            parent_file=str(parent_file_for_trace or ""),
+            chunk_index=int(meta.get("chunk_index", 0) or 0),
+            query_window_index=int(row.get("_query_window_index", 0) or 0),
+            vector_rank=vector_rank,
+            similarity=similarity,
+            channel=row.get("_channel", "semantic"),
+        )
+        trace_candidates.append(trace)
+        trace_by_key[trace.candidate_key] = trace
+
         # Filter sensitive directories
         directory = meta.get("directory", "")
         if directory in SENSITIVE_PATHS:
             skipped_sensitive += 1
+            trace.terminal_reason = "sensitive"
             continue
 
         # Filter superseded core entries (enforced by active_memories view,
         # but also check metadata for safety)
         if meta.get("status") == "superseded":
+            trace.terminal_reason = "superseded"
             continue
 
         # Use numeric importance_score
@@ -1119,10 +1795,21 @@ def semantic_context(
             except (ValueError, TypeError):
                 pass
 
-        # Threshold gates on RAW similarity, before any importance boost —
-        # relevance (gate) and ranking (boost) stay decoupled, so importance
-        # can never rescue an off-topic match past the gate.
-        if similarity < threshold:
+        # Recall-additive gate (Part D), Phase-1 scope: a candidate is injectable
+        # iff its RAW cosine clears the threshold OR (it came from the LEXICAL
+        # recall channel AND reranking applied AND its BGE logit clears
+        # bge_logit_threshold). A cosine-failing row survives past this point
+        # only when it is LEXICAL and reranking is enabled — it must reach the
+        # reranker to earn a logit, then face the OR-gate after rescoring.
+        # Cosine-failing SEMANTIC (ANN) rows are dropped here exactly as the
+        # pre-hybrid path did (their logit rescue is Phase 2); this keeps the
+        # BGE batch bounded and makes the lexical failer the only rescue path.
+        # The gate compares RAW similarity (not the importance-boosted
+        # relevance), keeping the gate and the ranking boost decoupled.
+        cosine_ok = similarity >= threshold
+        channel = row.get("_channel", "semantic")
+        if not cosine_ok and not (reranking_enabled and channel == "lexical"):
+            trace.terminal_reason = "cosine_rejected"
             continue
 
         # Unified scoring (Layer 4): one formula for every schema. Memories get
@@ -1164,29 +1851,58 @@ def semantic_context(
                 "document": row["document"],
                 "metadata": meta,
                 "_schema": schema,
+                "_channel": row.get("_channel", "semantic"),
+                "_lexical_rank": row.get("_lexical_rank"),
+                "_cosine_ok": cosine_ok,
+                "_query_window": row.get("_query_window", query),
+                "_query_window_index": row.get("_query_window_index", 0),
+                "_trace_key": trace.candidate_key,
             }
         )
+        trace.pre_score = relevance
 
     # Staleness annotation: penalize observations whose tracked files changed
     staleness_config = get_staleness_config()
     if staleness_config.get("enabled", True):
         _annotate_staleness(raw_entries, staleness_config)
 
-    # D9: Compound dedup key (parent_file, schema)
+    # D9: Compound dedup key (parent_file, schema). Passer-priority: a
+    # cosine-passing chunk must never lose its file's slot to a cosine-failing
+    # (lexical) chunk — if the failer later gets logit-rejected the whole file
+    # would vanish, removing content today's pipeline injects.
     best_per_file: dict = {}
     for entry in raw_entries:
         key = (entry["parent_file"], entry["_schema"])
-        if key not in best_per_file or entry["relevance"] > best_per_file[key]["relevance"]:
+        if key not in best_per_file:
             best_per_file[key] = entry
+            continue
+        incumbent = best_per_file[key]
+        challenger_wins = (
+            bool(entry.get("_cosine_ok", True)), entry["relevance"]
+        ) > (
+            bool(incumbent.get("_cosine_ok", True)), incumbent["relevance"]
+        )
+        if challenger_wins:
+            trace_by_key[incumbent["_trace_key"]].terminal_reason = "parent_dedup"
+            best_per_file[key] = entry
+        else:
+            trace_by_key[entry["_trace_key"]].terminal_reason = "parent_dedup"
 
-    # D9: Cross-schema dedup — local wins over remote for same doc_id
+    # D9: Cross-schema dedup for same doc_id. Passer-priority first (a local
+    # lexical failer must not evict a remote passer), then local-wins.
     id_to_key_sc: dict = {}
     keys_to_remove_sc: set = set()
     for key, entry in list(best_per_file.items()):
         doc_id = entry["doc_id"]
         if doc_id in id_to_key_sc:
             existing_key = id_to_key_sc[doc_id]
-            if entry["_schema"] == SCHEMA_LOCAL:
+            incumbent = best_per_file[existing_key]
+            challenger_wins = (
+                bool(entry.get("_cosine_ok", True)), entry["_schema"] == SCHEMA_LOCAL
+            ) > (
+                bool(incumbent.get("_cosine_ok", True)), incumbent["_schema"] == SCHEMA_LOCAL
+            )
+            if challenger_wins:
                 keys_to_remove_sc.add(existing_key)
                 id_to_key_sc[doc_id] = key
             else:
@@ -1194,41 +1910,134 @@ def semantic_context(
         else:
             id_to_key_sc[doc_id] = key
     for k in keys_to_remove_sc:
-        best_per_file.pop(k, None)
+        removed = best_per_file.pop(k, None)
+        if removed:
+            trace_by_key[removed["_trace_key"]].terminal_reason = "parent_dedup"
+
+    parent_dedup_count_sc = len(best_per_file)
 
     # Cross-encoder reranking: rescore all candidates regardless of schema.
-    # Runs after dedup (fewer candidates = faster inference).
-    reranking_config = get_reranking_config()
+    # Runs after dedup (fewer candidates = faster inference). reranking_config
+    # was fetched up front for the recall-additive gate.
+    if reranking_config.get("enabled"):
+        candidate_count = max(1, int(reranking_config.get("candidate_count", 20)))
+        lexical_slots = max(
+            0, int(get_lexical_config().get("lexical_rerank_slots", 10))
+        )
+        retained_keys = _select_rerank_retained(
+            best_per_file, candidate_count, lexical_slots, result_limit=max_results
+        )
+        for key, entry in best_per_file.items():
+            if key not in retained_keys:
+                trace_by_key[entry["_trace_key"]].terminal_reason = "candidate_cap"
+        best_per_file = {
+            key: entry for key, entry in best_per_file.items() if key in retained_keys
+        }
+    rerank_detail = None
     if reranking_config.get("enabled") and len(best_per_file) > 1:
-        from .reranking import rerank
+        from .reranking import (
+            clear_last_rerank_result, get_last_rerank_result, rerank, rerank_multi,
+        )
 
         candidates = sorted(
             best_per_file.values(), key=lambda e: e["relevance"], reverse=True
         )
-        docs = [e["document"] or "" for e in candidates]
+        contextual_enabled = get_contextual_embeddings_enabled()
+        docs = [_rerank_doc_text(e, contextual_enabled) for e in candidates]
         vscores = [e["relevance"] for e in candidates]
-        blended = rerank(query, docs, vscores, reranking_config)
+        query_texts = [e.get("_query_window", query) for e in candidates]
+        clear_last_rerank_result()
+        if len(set(query_texts)) == 1:
+            blended = rerank(query_texts[0], docs, vscores, reranking_config)
+        else:
+            blended = rerank_multi(query_texts, docs, vscores, reranking_config)
+        rerank_detail = get_last_rerank_result()
         if blended is not vscores:
-            for entry, score in zip(candidates, blended):
+            for index, (entry, score) in enumerate(zip(candidates, blended)):
                 entry["relevance"] = score
+                if rerank_detail and rerank_detail.applied:
+                    trace = trace_by_key[entry["_trace_key"]]
+                    trace.raw_bge_logit = rerank_detail.raw_logits[index]
+                    trace.bge_probability = rerank_detail.sigmoid_scores[index]
+                    trace.blended_score = score
+                    entry["_raw_bge_logit"] = rerank_detail.raw_logits[index]
+
+    # Recall-additive OR-gate (Part D). Cosine-passing rows are always kept and
+    # are given membership PRIORITY downstream (the max_results cut and the
+    # character budget serve them before any rescued row), so enabling the
+    # reranker can only ADD cosine-failing rescues, never displace a passer —
+    # enabled-injected ⊇ disabled-injected.
+    # A cosine-failing row (only ever LEXICAL here — semantic failers were
+    # dropped at the threshold) survives only if reranking APPLIED and produced a
+    # logit at or above bge_logit_threshold; otherwise it is dropped:
+    #   - logit present but below threshold → terminal_reason 'logit_rejected'
+    #   - no logit (reranker off / fell back / too few candidates / unscored)
+    #     → dropped as 'cosine_rejected' (degrades to exactly today's behavior),
+    #     counted separately in funnel.logit_unjudged_dropped.
+    # logit_rescued is counted HERE at the gate (not over the final selection),
+    # so rescues later suppressed by dedup / result_cap / budget stay visible in
+    # the funnel; their terminal_reason carries the later drop stage.
+    reranking_applied = bool(rerank_detail and rerank_detail.applied)
+    logit_rescued = 0
+    logit_rejected = 0
+    logit_unjudged_dropped = 0
+    gated_best_per_file: dict = {}
+    for key, entry in best_per_file.items():
+        if entry.get("_cosine_ok", True):
+            gated_best_per_file[key] = entry
+            continue
+        logit = entry.get("_raw_bge_logit")
+        if reranking_applied and logit is not None and float(logit) >= bge_logit_threshold:
+            entry["_logit_rescued"] = True
+            gated_best_per_file[key] = entry
+            logit_rescued += 1
+        elif reranking_applied and logit is not None:
+            trace_by_key[entry["_trace_key"]].terminal_reason = "logit_rejected"
+            logit_rejected += 1
+        else:
+            trace_by_key[entry["_trace_key"]].terminal_reason = "cosine_rejected"
+            logit_unjudged_dropped += 1
+    best_per_file = gated_best_per_file
 
     # Suppress semantically redundant local records before the final cap. This
     # targets auto-extraction overlap (memory + observation + worklog) without
     # collapsing distinct vault references or records from different projects.
-    enrichment_config = get_context_enrichment_config()
     semantic_duplicates_suppressed = 0
     candidates = list(best_per_file.values())
     if enrichment_config.get("semantic_dedup_enabled", True):
+        before_semantic_keys = {entry["_trace_key"] for entry in candidates}
         candidates, semantic_duplicates_suppressed = _semantic_deduplicate_context(
             candidates,
             service,
             enrichment_config.get("semantic_dedup_threshold", 0.86),
         )
+        after_semantic_keys = {entry["_trace_key"] for entry in candidates}
+        for key in before_semantic_keys - after_semantic_keys:
+            trace_by_key[key].terminal_reason = "semantic_duplicate"
 
-    # Sort by relevance descending
-    deduped = sorted(
-        candidates, key=lambda e: e["relevance"], reverse=True
-    )[:max_results]
+    # Passers-first membership priority (recall-additivity, fix for finding 1):
+    # cosine-passing rows claim the max_results seats (and, below, the character
+    # budget) before any logit-rescued cosine-failing row. Within each group,
+    # rank by relevance. A rescued row can therefore only take a seat/budget a
+    # passer left free — it can never displace one. The enforced invariant is
+    # HYBRID additivity: with reranking on, enabling the lexical channel +
+    # logit gate never removes an injection the non-hybrid reranked path makes.
+    # (Reranking itself reorders passers by blended score — pre-existing, by
+    # design — so a binding max_results can select a different passer subset
+    # than the reranking-DISABLED path; that is the reranker's job, not a
+    # hybrid regression.)
+    passers = sorted(
+        (e for e in candidates if e.get("_cosine_ok", True)),
+        key=lambda e: e["relevance"], reverse=True,
+    )
+    rescued = sorted(
+        (e for e in candidates if not e.get("_cosine_ok", True)),
+        key=lambda e: e["relevance"], reverse=True,
+    )
+    prioritized = passers + rescued
+    deduped = prioritized[:max_results]
+    for entry in prioritized[max_results:]:
+        trace_by_key[entry["_trace_key"]].terminal_reason = "result_cap"
 
     # Budget-based selection: 3-way split (local / obsidian / remote).
     # Each bucket gets a guaranteed share; unused budget overflows to others.
@@ -1299,27 +2108,40 @@ def semantic_context(
 
         if is_vault:
             cost = VAULT_REF_COST
+            trace_by_key[entry["_trace_key"]].display_cost = cost
             if _try_spend(cost, "vault"):
                 entry["display_mode"] = "reference"
                 selected.append(entry)
+            else:
+                trace_by_key[entry["_trace_key"]].terminal_reason = "budget_rejected"
         else:
             content_len = len(entry["document"] or "")
             cost = max(content_len, 50)  # minimum 50 chars cost
+            trace_by_key[entry["_trace_key"]].display_cost = cost
             bucket = "remote" if is_remote else "local"
             if _try_spend(cost, bucket):
                 entry["display_mode"] = "full"
                 selected.append(entry)
+            else:
+                trace_by_key[entry["_trace_key"]].terminal_reason = "budget_rejected"
+
+    # Membership was decided passers-first (above); re-sort the survivors by
+    # relevance for display so the injected order still reads best-first.
+    selected.sort(key=lambda e: e["relevance"], reverse=True)
 
     # Fractional retrieval bump for passively surfaced results
     surfaced_ids = [entry["doc_id"] for entry in selected] if selected else []
     if selected and not skip_retrieval_increment:
-        enrichment_config = get_context_enrichment_config()
         passive_increment = enrichment_config.get("passive_retrieval_increment", 0.01)
         if passive_increment > 0:
             _increment_retrieval_counts(surfaced_ids, increment=passive_increment)
 
     matches = []
-    for entry in selected:
+    for final_rank, entry in enumerate(selected, start=1):
+        selected_trace = trace_by_key[entry["_trace_key"]]
+        selected_trace.final_rank = final_rank
+        selected_trace.returned = True
+        selected_trace.terminal_reason = "selected"
         meta = entry["metadata"]
         doc_type = meta.get("vault_type") or meta.get("type", "unknown")
         chunk_heading = meta.get("chunk_heading", "")
@@ -1347,6 +2169,7 @@ def semantic_context(
             "content": content,
             "display_mode": entry["display_mode"],
             "schema": entry.get("_schema", "local"),
+            "candidate_key": selected_trace.candidate_key,
         }
         if chunk_heading:
             match["heading"] = chunk_heading
@@ -1385,6 +2208,82 @@ def semantic_context(
             "total": budget,
         },
     }
+
+    try:
+        from .config import get_embedding_config
+        from .retrieval_telemetry import record_event
+
+        emb_cfg = get_embedding_config()
+        terminal_counts = {}
+        for candidate in trace_candidates:
+            reason = candidate.terminal_reason or "candidate_cap"
+            candidate.terminal_reason = reason
+            terminal_counts[reason] = terminal_counts.get(reason, 0) + 1
+        trace_id = record_event(
+            purpose="context_injection", query=query, candidates=trace_candidates,
+            funnel={
+                "query_windows": expansion.get("inference_window_count", 1),
+                "ann_unique": ann_unique, "sensitive_rejected": skipped_sensitive,
+                "cosine_passed": sum(
+                    1 for c in trace_candidates
+                    if c.similarity is not None and c.similarity >= threshold
+                    and c.terminal_reason not in {"sensitive", "superseded"}
+                ),
+                "cosine_rejected": sum(
+                    1 for c in trace_candidates if c.terminal_reason == "cosine_rejected"
+                ),
+                "lexical_candidates": lexical_stats.get("lexical_candidates", 0),
+                "lexical_added": lexical_stats.get("lexical_added", 0),
+                # logit_rescued counts gate-stage rescues (visible even when a
+                # rescue is later dropped by dedup / result_cap / budget);
+                # logit_rescued_injected counts those that reached the output.
+                "logit_rescued": logit_rescued,
+                "logit_rescued_injected": sum(1 for e in selected if e.get("_logit_rescued")),
+                "logit_rejected": logit_rejected,
+                "logit_unjudged_dropped": logit_unjudged_dropped,
+                "parent_dedup": parent_dedup_count_sc,
+                "candidate_cap": len(best_per_file),
+                "live_reranker_input": len(best_per_file) if reranking_config.get("enabled") else 0,
+                "live_reranker_applied": bool(rerank_detail and rerank_detail.applied),
+                "live_reranker_fallback": rerank_detail.fallback_reason if rerank_detail and not rerank_detail.applied else None,
+                "semantic_duplicates_suppressed": semantic_duplicates_suppressed,
+                "result_cap": len(deduped), "budget_selected": len(selected),
+                "terminal_reasons": terminal_counts,
+            },
+            latency={
+                "search_ms": round(search_ms, 2),
+                "rerank_ms": round(rerank_detail.latency_ms, 2) if rerank_detail else 0,
+                "total_ms": round((time.perf_counter() - retrieval_started) * 1000, 2),
+            },
+            outcome="results" if matches else "empty",
+            query_window_count=expansion.get("inference_window_count", 1),
+            model_snapshot={
+                "embedding_model": emb_cfg.get("model_id"),
+                "embedding_backend": emb_cfg.get("backend"),
+                "reranker_model": reranking_config.get("model"),
+                "reranker_backend": reranking_config.get("backend"),
+            },
+            config_snapshot={
+                "cosine_threshold": threshold,
+                "bge_logit_threshold": bge_logit_threshold,
+                "budget": budget,
+                "max_results": max_results,
+                "reranking_enabled": bool(reranking_config.get("enabled")),
+                "reranking_alpha": reranking_config.get("alpha"),
+                "contextual_embeddings": get_contextual_embeddings_enabled(),
+                "schemas": schemas or ["all"],
+            },
+        )
+        if trace_id:
+            result["trace_id"] = trace_id
+    except Exception:
+        pass
+
+    if expansion.get("base_window_count", 1) > 1:
+        result["query_windows"] = {
+            "input": expansion["base_window_count"],
+            "inference": expansion["inference_window_count"],
+        }
 
     # Include surfaced IDs when caller needs to bump externally
     if skip_retrieval_increment and surfaced_ids:

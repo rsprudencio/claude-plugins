@@ -67,14 +67,24 @@ def main():
     logger.info("Schema created successfully.")
 
     if args.force_model_record:
+        from tools.config import get_contextual_embeddings_enabled
+        from tools.embedding import get_embedding_model_identity
+
         emb = get_embedding_config()
+        # Record the same identity check_model_consistency() compares
+        # (model_id alias, not the runtime locator) — recording emb["model"]
+        # re-trips the mismatch on the very next startup whenever the two
+        # differ (host backend, legacy '/app/models/embedding' locator).
+        model_identity = get_embedding_model_identity(emb)
         set_meta("embedding_config", {
-            "model": emb["model"],
+            "model": model_identity,
             "dimensions": emb["dimensions"],
+            "vector_type": "halfvec",
+            "contextual_chunks": bool(get_contextual_embeddings_enabled()),
         })
         logger.info(
             "Forced embedding config record: %s (%dd)",
-            emb["model"], emb["dimensions"],
+            model_identity, emb["dimensions"],
         )
     else:
         # Normal consistency check (records on first run, validates on subsequent)

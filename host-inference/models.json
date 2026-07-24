@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "models": {
+    "granite_embedding": {
+      "role": "embedding",
+      "model_id": "ibm-granite/granite-embedding-small-english-r2",
+      "source_repo": "mradermacher/granite-embedding-small-english-r2-GGUF",
+      "source_revision": "2b2ad9b58f3e382821e007f4c924101d6bd4a5e2",
+      "filename": "granite-embedding-small-english-r2.f16.gguf",
+      "quantization": "F16",
+      "sha256": "6f5f7c70199658f54547b35174b50eef635ccc6d5b8e171dc635c201af4b2806",
+      "size": 97120192,
+      "dimensions": 384,
+      "port": 8751
+    },
+    "bge_reranker": {
+      "role": "reranker",
+      "model_id": "BAAI/bge-reranker-v2-m3",
+      "source_repo": "gpustack/bge-reranker-v2-m3-GGUF",
+      "source_revision": "3093af03b1a635e67b084b1d8c03c5f5e020fd05",
+      "filename": "bge-reranker-v2-m3-Q8_0.gguf",
+      "quantization": "Q8_0",
+      "sha256": "a43c7c9b11a4c1517e5bf95151960e1621d1b72f7a493364b01e386cf1aaa1d3",
+      "size": 635676416,
+      "port": 8752
+    }
+  }
+}

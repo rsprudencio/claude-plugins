@@ -345,6 +345,7 @@ uvicorn app:app \
 EXPLORER_PID=$!
 
 wait_for_health "${HEALTH_SCHEME}://localhost:${OBSIDIAN_PORT}/health" "jarvis-obsidian" 30
+wait_for_health "${HEALTH_SCHEME}://localhost:${EXPLORER_PORT}/health" "memory-explorer" 30
 
 if [ -n "$TODOIST_PID" ]; then
     wait_for_health "${HEALTH_SCHEME}://localhost:${TODOIST_PORT}/health" "jarvis-todoist" 30

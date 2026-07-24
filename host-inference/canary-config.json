@@ -1,0 +1,20 @@
+{
+  "vault_path": "/vault",
+  "vault_confirmed": true,
+  "file_format": "md",
+  "memory": {
+    "postgres_url": "postgresql://jarvis:jarvis@localhost:5432/jarvis",
+    "embedding_model": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_dimensions": 384,
+    "embedding_backend": "host",
+    "embedding_model_id": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_host_model": "ibm-granite/granite-embedding-small-english-r2",
+    "embedding_host_url": "http://host.docker.internal:8751",
+    "reranking": {
+      "enabled": true,
+      "backend": "host",
+      "model": "BAAI/bge-reranker-v2-m3",
+      "host_url": "http://host.docker.internal:8752"
+    }
+  }
+}

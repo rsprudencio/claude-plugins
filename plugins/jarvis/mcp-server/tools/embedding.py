@@ -1,13 +1,15 @@
 """Embedding service for Jarvis v3.0 — explicit vector generation.
 
-Supports three backends:
+Supports four backends:
   - onnx: Local ONNX Runtime (default, ~400MB RAM, no API calls)
   - torch: Local PyTorch via sentence-transformers (fallback)
   - bedrock: Amazon Bedrock API (zero local model, requires AWS credentials)
+  - host: A host-native Jarvis model service (zero model memory in container)
 
 When backend is "onnx" or "torch", uses a local model (e.g. Granite 384d).
 When backend is "bedrock", calls the Bedrock InvokeModel API (e.g. Titan
 Embed v2) — no local model is loaded, saving ~550MB RAM.
+When backend is "host", calls a trusted service running on the Docker host.
 """
 
 from __future__ import annotations
@@ -44,8 +46,11 @@ class EmbeddingService:
         model_name: HuggingFace model ID, local path, or Bedrock model ID.
         dimensions: Expected embedding dimensions (validated on encode).
         device: Torch device string ("cpu", "cuda", etc.). Ignored for bedrock.
-        backend: "onnx" (preferred), "torch", or "bedrock".
+        backend: "onnx" (preferred), "torch", "bedrock", or "host".
         bedrock_region: AWS region for Bedrock API. Ignored for local backends.
+        host_url: Base URL for the host model service.
+        host_token: Optional bearer token for the host model service.
+        host_timeout_ms: Per-request timeout for host inference.
     """
 
     # Reset the ONNX session every N encode calls to prevent C++ heap
@@ -61,12 +66,18 @@ class EmbeddingService:
         device: str = "cpu",
         backend: str = "onnx",
         bedrock_region: str = "eu-central-1",
+        host_url: str = "http://host.docker.internal:8751",
+        host_token: str = "",
+        host_timeout_ms: int = 2000,
     ) -> None:
         self._model_name = model_name
         self._dimensions = dimensions
         self._device = device
         self._backend = backend
         self._bedrock_region = bedrock_region
+        self._host_url = host_url
+        self._host_token = host_token
+        self._host_timeout_ms = host_timeout_ms
         # Raw ONNX mode
         self._ort_session = None
         self._tokenizer = None
@@ -75,6 +86,33 @@ class EmbeddingService:
         self._model: SentenceTransformer | None = None
         # Bedrock client (lazy-initialized)
         self._bedrock_client = None
+        self._host_client = None
+
+    # ── Host service backend ───────────────────────────────────────
+
+    def _init_host(self):
+        """Lazy-initialize the host model service client."""
+        if self._host_client is not None:
+            return
+        from .model_host_client import ModelHostClient
+        self._host_client = ModelHostClient(
+            base_url=self._host_url,
+            model_name=self._model_name,
+            dimensions=self._dimensions,
+            token=self._host_token,
+            timeout_ms=self._host_timeout_ms,
+        )
+
+    def _host_encode(self, texts: list[str]) -> list[list[float]]:
+        self._init_host()
+        return self._host_client.embed(texts)
+
+    def tokenize(self, text: str, *, with_pieces: bool = False) -> list:
+        """Return host tokenizer IDs/pieces for exact bounded windowing."""
+        if self._backend != "host":
+            raise RuntimeError("Tokenizer pieces are only available for host inference")
+        self._init_host()
+        return self._host_client.tokenize(text, with_pieces=with_pieces)
 
     # ── Bedrock backend ─────────────────────────────────────────────
 
@@ -257,6 +295,9 @@ class EmbeddingService:
 
     def encode(self, text: str) -> list[float]:
         """Encode a single text into a vector. Used for queries."""
+        if self._backend == "host":
+            return self._host_encode([text])[0]
+
         if self._backend == "bedrock":
             return self._bedrock_encode([text])[0]
 
@@ -299,6 +340,14 @@ class EmbeddingService:
         """
         if not texts:
             return []
+
+        if self._backend == "host":
+            # Keep every HTTP payload bounded even when an arbitrarily large
+            # canonical document expands into many inference windows.
+            result = []
+            for index in range(0, len(texts), batch_size):
+                result.extend(self._host_encode(texts[index : index + batch_size]))
+            return result
 
         if self._backend == "bedrock":
             return self._bedrock_encode(texts)
@@ -370,7 +419,28 @@ class EmbeddingService:
             self._ort_session is not None
             or self._model is not None
             or self._bedrock_client is not None
+            or self._host_client is not None
         )
+
+
+def _effective_model_name(config: dict) -> str:
+    """Resolve the runtime model without leaking baked paths to host APIs."""
+    if config["backend"] == "host":
+        return config.get("host_model", config["model"])
+    return config["model"]
+
+
+def get_embedding_model_identity(config: dict | None = None) -> str:
+    """Return the stable model identity stored alongside database vectors.
+
+    Runtime locators are backend-specific: ONNX commonly receives a baked
+    filesystem path while host inference receives an API alias.  Consistency
+    checks must compare the underlying model identity, not those locators.
+    """
+    if config is None:
+        from .config import get_embedding_config
+        config = get_embedding_config()
+    return config.get("model_id") or _effective_model_name(config)
 
 
 def get_embedding_service() -> EmbeddingService:
@@ -383,19 +453,29 @@ def get_embedding_service() -> EmbeddingService:
     from .config import get_embedding_config
 
     cfg = get_embedding_config()
-    key = (cfg["model"], cfg["dimensions"], cfg["device"], cfg["backend"])
+    effective_model = _effective_model_name(cfg)
+    key = (
+        effective_model, cfg["dimensions"], cfg["device"], cfg["backend"],
+        cfg.get("host_url"), cfg.get("host_token"), cfg.get("host_timeout_ms"),
+    )
 
     if _service is not None and _service_cache_key == key:
         return _service
 
     kwargs = {
-        "model_name": cfg["model"],
+        "model_name": effective_model,
         "dimensions": cfg["dimensions"],
         "device": cfg["device"],
         "backend": cfg["backend"],
     }
     if cfg["backend"] == "bedrock":
         kwargs["bedrock_region"] = cfg.get("bedrock_region", "eu-central-1")
+    if cfg["backend"] == "host":
+        kwargs.update(
+            host_url=cfg["host_url"],
+            host_token=cfg.get("host_token", ""),
+            host_timeout_ms=cfg.get("host_timeout_ms", 2000),
+        )
 
     _service = EmbeddingService(**kwargs)
     _service_cache_key = key
@@ -405,7 +485,7 @@ def get_embedding_service() -> EmbeddingService:
 def warm_embedding_service() -> float | None:
     """Load and probe the local embedding backend before serving hook traffic.
 
-    Returns elapsed milliseconds for local backends. Bedrock is deliberately
+    Returns elapsed milliseconds for local and host backends. Bedrock is deliberately
     skipped: warming a remote backend would add a billable network request and
     cannot eliminate network cold starts.
     """

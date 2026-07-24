@@ -1,6 +1,6 @@
 [project]
 name = "jarvis-core"
-version = "3.4.1"
+version = "3.5.0"
 description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS protocol"
 requires-python = ">=3.11"
 dependencies = [
@@ -39,6 +39,7 @@ bench = [
 [project.scripts]
 jarvis-core = "server:main_sync"
 jarvis-init-db = "bin.init_db:main"
+jarvis-reindex-embeddings = "bin.reindex_embeddings:main"
 jarvis-setup-replication = "bin.setup_replication:main"
 jarvis-upgrade-embedding = "bin.upgrade_embedding_model:main"
 

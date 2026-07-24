@@ -13,62 +13,20 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /build
 
-# Install PyTorch CPU-only first (default amd64 wheel bundles CUDA/nvidia ~4GB)
-RUN uv pip install --system --no-cache \
-    torch --index-url https://download.pytorch.org/whl/cpu
-
 # Install all dependencies via uv (single layer for caching)
-# Core: mcp, psycopg, pgvector, sentence-transformers, onnxruntime
+# Retrieval inference is host-only. Keep the image free of model runtimes and weights.
+# Core: mcp, numpy, psycopg, pgvector
 # Todoist: todoist-api-python
 RUN uv pip install --system --no-cache \
     "mcp>=1.0.0" \
-    "tokenizers>=0.13.0" \
-    "sentence-transformers[onnx]>=3.0.0" \
-    "onnxruntime>=1.17.0" \
+    "numpy>=1.26.0" \
     "psycopg[pool]>=3.1.0" \
     "pgvector>=0.3.0" \
     "todoist-api-python>=3.0.0" \
+    "requests>=2.31.0" \
     "boto3>=1.34.0" \
     "fastapi>=0.110.0" \
     uvicorn
-
-# ---- Model fetch stage: download and verify cross-encoder ONNX model ----
-FROM alpine:3.20 AS model-fetch
-
-RUN apk add --no-cache wget
-
-# HuggingFace commit c5ee24cb — ms-marco-MiniLM-L-6-v2
-ARG HF_BASE=https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2/resolve/main
-ARG MODEL_HASH=5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a
-ARG TOKENIZER_HASH=d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66
-
-WORKDIR /models/cross-encoder
-RUN wget -q "${HF_BASE}/onnx/model.onnx" -O model.onnx && \
-    echo "${MODEL_HASH}  model.onnx" | sha256sum -c && \
-    wget -q "${HF_BASE}/tokenizer.json" -O tokenizer.json && \
-    echo "${TOKENIZER_HASH}  tokenizer.json" | sha256sum -c
-
-# ---- Embedding model fetch: granite-embedding-small-english-r2 INT8 quantized ----
-FROM alpine:3.20 AS embedding-fetch
-
-RUN apk add --no-cache wget
-
-# onnx-community/granite-embedding-small-english-r2-ONNX (384d, ModernBERT, INT8)
-# ~52MB on disk. model_quantized.onnx renamed to model.onnx for runtime compat.
-ARG EMB_BASE=https://huggingface.co/onnx-community/granite-embedding-small-english-r2-ONNX/resolve/main
-WORKDIR /models/embedding/onnx
-RUN wget -q "${EMB_BASE}/onnx/model_quantized.onnx" -O model.onnx && \
-    echo "a3fad524afc3f060216a8ddbb1ac89c9b6498fba8995b5718bde879076a2e9ba  model.onnx" | sha256sum -c && \
-    wget -q "${EMB_BASE}/onnx/model_quantized.onnx_data" && \
-    echo "1f4cf47e4adec7f7ae09db03d071ba8667e07f9a4203142c7efa8d37fe453597  model_quantized.onnx_data" | sha256sum -c
-
-WORKDIR /models/embedding
-RUN wget -q "${EMB_BASE}/tokenizer.json" -O tokenizer.json && \
-    echo "feeb83348dcb033bc6b9d2e1f7906ca9eb2d122845000c9416d894d7c2927149  tokenizer.json" | sha256sum -c && \
-    wget -q "${EMB_BASE}/config.json" -O config.json && \
-    echo "1a1710c20911da8c96179716bf44058e54cca6fa7952cce77be83ef05edae3ee  config.json" | sha256sum -c && \
-    wget -q "${EMB_BASE}/tokenizer_config.json" -O tokenizer_config.json && \
-    wget -q "${EMB_BASE}/special_tokens_map.json" -O special_tokens_map.json
 
 # ---- Runtime stage ----
 FROM python:3.12-slim
@@ -93,15 +51,17 @@ ENV PATH="/usr/lib/postgresql/17/bin:${PATH}"
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy pre-verified cross-encoder ONNX model
-COPY --from=model-fetch /models /app/models
-ENV JARVIS_MODEL_DIR=/app/models/cross-encoder
-
-# Copy pre-fetched embedding model (onnx-community INT8 quantized, ~52MB)
-COPY --from=embedding-fetch /models/embedding /app/models/embedding
-ARG EMBEDDING_DIMS=384
-ENV EMBEDDING_MODEL=/app/models/embedding
-ENV EMBEDDING_DIMENSIONS=${EMBEDDING_DIMS}
+# Native host inference is the only inference path shipped in this image.
+# The services run outside Docker (for example through launchd + llama.cpp/Metal).
+ENV EMBEDDING_BACKEND=host
+ENV EMBEDDING_DIMENSIONS=384
+ENV JARVIS_EMBEDDING_MODEL_ID=ibm-granite/granite-embedding-small-english-r2
+ENV JARVIS_MODEL_HOST_MODEL=ibm-granite/granite-embedding-small-english-r2
+ENV JARVIS_MODEL_HOST_URL=http://host.docker.internal:8751
+ENV RERANKING_ENABLED=true
+ENV RERANKING_BACKEND=host
+ENV RERANKING_MODEL=BAAI/bge-reranker-v2-m3
+ENV JARVIS_RERANK_HOST_URL=http://host.docker.internal:8752
 
 # ---- Copy jarvis-common shared package ----
 WORKDIR /app/jarvis-common

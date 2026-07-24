@@ -81,6 +81,24 @@ CREATE INDEX IF NOT EXISTS idx_local_category ON local.memories (category);
 CREATE INDEX IF NOT EXISTS idx_local_active ON local.memories (status) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_local_importance ON local.memories (importance_score DESC);
 
+-- Search-only windows for canonical memories that exceed an inference context.
+-- The full document remains in local.memories and ID reads always return it.
+CREATE TABLE IF NOT EXISTS local.memory_chunks (
+    parent_id TEXT NOT NULL REFERENCES local.memories(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    chunk_total INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    embedding halfvec({dimensions}) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (parent_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_local_memory_chunks_embedding
+    ON local.memory_chunks
+    USING hnsw (embedding halfvec_cosine_ops) WITH (m = 16, ef_construction = 200);
+CREATE INDEX IF NOT EXISTS idx_local_memory_chunks_parent
+    ON local.memory_chunks (parent_id);
+
 -- Active view (query default — excludes superseded + deleted)
 CREATE OR REPLACE VIEW local.active_memories AS
     SELECT * FROM local.memories WHERE status = 'active';
@@ -109,6 +127,101 @@ $$;
 
 # Deprecated alias
 CORE_SCHEMA_SQL = LOCAL_SCHEMA_SQL
+
+
+# Retrieval observability is intentionally kept in its own tables. Candidate
+# text never belongs here: locators and scores are enough to replay a trace and
+# prevent the telemetry store from becoming a second copy of the vault.
+RETRIEVAL_TELEMETRY_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS local.retrieval_events (
+    id UUID PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    user_name TEXT,
+    purpose TEXT NOT NULL,
+    pipeline TEXT NOT NULL DEFAULT 'semantic',
+    status TEXT NOT NULL DEFAULT 'complete',
+    outcome TEXT NOT NULL DEFAULT 'unknown',
+    query_text TEXT,
+    query_sha256 TEXT NOT NULL,
+    query_ref TEXT,
+    query_length INTEGER NOT NULL DEFAULT 0,
+    query_window_count INTEGER NOT NULL DEFAULT 1,
+    model_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    funnel JSONB NOT NULL DEFAULT '{}'::jsonb,
+    latency JSONB NOT NULL DEFAULT '{}'::jsonb,
+    delivery JSONB NOT NULL DEFAULT '{}'::jsonb,
+    shadow_status TEXT NOT NULL DEFAULT 'disabled'
+        CHECK (shadow_status IN ('disabled', 'pending', 'running', 'complete',
+                                 'partial', 'failed', 'skipped')),
+    shadow_attempts INTEGER NOT NULL DEFAULT 0,
+    shadow_started_at TIMESTAMPTZ,
+    shadow_finished_at TIMESTAMPTZ,
+    shadow_error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS local.retrieval_candidates (
+    event_id UUID NOT NULL REFERENCES local.retrieval_events(id) ON DELETE CASCADE,
+    candidate_key TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    doc_id TEXT NOT NULL,
+    parent_id TEXT,
+    parent_file TEXT,
+    chunk_index INTEGER,
+    query_window_index INTEGER NOT NULL DEFAULT 0,
+    vector_rank INTEGER,
+    final_rank INTEGER,
+    similarity DOUBLE PRECISION,
+    pre_score DOUBLE PRECISION,
+    raw_bge_logit DOUBLE PRECISION,
+    bge_probability DOUBLE PRECISION,
+    blended_score DOUBLE PRECISION,
+    display_cost INTEGER,
+    terminal_reason TEXT,
+    returned BOOLEAN NOT NULL DEFAULT false,
+    delivered BOOLEAN NOT NULL DEFAULT false,
+    PRIMARY KEY (event_id, candidate_key)
+);
+
+CREATE TABLE IF NOT EXISTS local.retrieval_feedback (
+    event_id UUID PRIMARY KEY REFERENCES local.retrieval_events(id) ON DELETE CASCADE,
+    verdict TEXT NOT NULL CHECK (verdict IN ('useful', 'mixed', 'noisy', 'missed', 'unsure')),
+    expected_missing_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    note TEXT,
+    user_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS local.retrieval_candidate_feedback (
+    event_id UUID NOT NULL,
+    candidate_key TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('relevant', 'irrelevant', 'unsure')),
+    note TEXT,
+    user_name TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (event_id, candidate_key),
+    FOREIGN KEY (event_id, candidate_key)
+        REFERENCES local.retrieval_candidates(event_id, candidate_key)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_created
+    ON local.retrieval_events (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_expires
+    ON local.retrieval_events (expires_at);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_purpose
+    ON local.retrieval_events (purpose, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_shadow
+    ON local.retrieval_events (shadow_status, created_at)
+    WHERE shadow_status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_retrieval_candidates_event
+    ON local.retrieval_candidates (event_id, vector_rank);
+CREATE INDEX IF NOT EXISTS idx_retrieval_candidate_doc
+    ON local.retrieval_candidates (schema_name, doc_id);
+"""
 
 
 OBSIDIAN_SCHEMA_SQL = """\
@@ -159,6 +272,52 @@ $$;
 
 # Deprecated alias
 VAULT_SCHEMA_SQL = OBSIDIAN_SCHEMA_SQL
+
+
+# Phase 1 hybrid retrieval — statistical (lexical) recall channel.
+# Generated STORED tsvector columns + GIN indexes give a full-text recall
+# channel alongside the bi-encoder ANN channel. `to_tsvector('english', …)`
+# (explicit regconfig) is IMMUTABLE — required for a GENERATED column; the
+# one-argument form is only STABLE and would be rejected here.
+#
+# NOTE: to_tsvector emits a harmless NOTICE ("word is too long to be indexed")
+# for any single token longer than 2047 bytes; the token is skipped, not an
+# error, and the DDL still succeeds.
+#
+# BODY CAP: a single tsvector may hold at most 1MB of lexeme data. A stored,
+# indexed memory can legitimately hold a whole pasted transcript/log (many
+# unique tokens — hashes, ids, code), whose to_tsvector would exceed that limit
+# and make BOTH the generated-column ALTER (rewritten for every existing row)
+# and every future INSERT of such a row FAIL. The body input is therefore capped
+# with ``left(document, 200000)`` (~200KB → well under 1MB even for all-unique
+# tokens) inside the generated expression; title/heading are short and left
+# uncapped. Lexical recall reads the head of the document, which is where the
+# informative material lives.
+#
+# All statements are additive and idempotent (ADD COLUMN IF NOT EXISTS /
+# CREATE INDEX IF NOT EXISTS), so ensure_schema can run this on every startup.
+LEXICAL_SCHEMA_SQL = """\
+-- obsidian.documents: title (A) + chunk_heading (B) + body (D), weighted.
+ALTER TABLE obsidian.documents ADD COLUMN IF NOT EXISTS tsv tsvector
+    GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(chunk_heading, '')), 'B') ||
+        setweight(to_tsvector('english', left(document, 200000)), 'D')
+    ) STORED;
+CREATE INDEX IF NOT EXISTS idx_obsidian_tsv
+    ON obsidian.documents USING gin (tsv);
+
+-- local.memories: body only (D).
+ALTER TABLE local.memories ADD COLUMN IF NOT EXISTS tsv tsvector
+    GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', left(document, 200000)), 'D')
+    ) STORED;
+CREATE INDEX IF NOT EXISTS idx_local_tsv
+    ON local.memories USING gin (tsv);
+
+-- Retrieval channel provenance: 'semantic' | 'lexical' | 'both'.
+ALTER TABLE local.retrieval_candidates ADD COLUMN IF NOT EXISTS channel TEXT;
+"""
 
 
 LOCAL_META_SQL = """\
@@ -586,6 +745,12 @@ def ensure_schema() -> None:
             conn.execute(LOCAL_SCHEMA_SQL.format(dimensions=dims))
             conn.execute(OBSIDIAN_SCHEMA_SQL.format(dimensions=dims))
             conn.execute(LOCAL_META_SQL)
+            conn.execute(RETRIEVAL_TELEMETRY_SCHEMA_SQL)
+
+            # Phase 1 hybrid retrieval: lexical tsvector columns + channel
+            # column (idempotent, additive). Runs after obsidian.documents,
+            # local.memories, and local.retrieval_candidates exist.
+            conn.execute(LEXICAL_SCHEMA_SQL)
 
             # Phase 7: sync columns + queue table (idempotent)
             conn.execute(SYNC_SCHEMA_SQL)
@@ -781,9 +946,25 @@ class ModelMismatchError(Exception):
 
     Mixed embedding spaces produce garbage search results silently.
     This error forces the operator to either align the config or
-    explicitly re-embed (--force-model-record).
+    re-embed (bin/reindex_embeddings.py).
     """
     pass
+
+
+# Identities recorded by retired deployments. Pre-3.5 Docker images embedded
+# in-container (ONNX INT8 weights at a fixed path); those vectors measurably
+# differ from the host llama.cpp space (host-inference/PROOF.md: 0.99 cosine
+# agreement), so upgrades must re-embed rather than relabel.
+_LEGACY_MODEL_IDENTITIES = {"/app/models/embedding"}
+
+_REINDEX_REMEDY = (
+    "Re-embed with bin/reindex_embeddings.py (Docker: docker exec --user postgres "
+    "--env 'POSTGRES_URL=postgresql:///jarvis?host=/var/run/postgresql' "
+    "-w /app/jarvis-core <container> python bin/reindex_embeddings.py). "
+    "bin/init_db.py --force-model-record keeps the EXISTING vectors under the new "
+    "identity without re-embedding (mixes embedding spaces; degrades ranking), and "
+    "JARVIS_SKIP_MODEL_CHECK=1 only silences this check."
+)
 
 
 def check_model_consistency() -> None:
@@ -797,17 +978,21 @@ def check_model_consistency() -> None:
         logger.info("Model consistency check skipped (JARVIS_SKIP_MODEL_CHECK=1)")
         return
 
-    from .config import get_embedding_config
+    from .config import get_contextual_embeddings_enabled, get_embedding_config
+    from .embedding import get_embedding_model_identity
 
     emb = get_embedding_config()
+    model_identity = get_embedding_model_identity(emb)
+    contextual = bool(get_contextual_embeddings_enabled())
     stored = get_meta("embedding_config")
 
     if stored is None:
         # First run — record current config
         set_meta("embedding_config", {
-            "model": emb["model"],
+            "model": model_identity,
             "dimensions": emb["dimensions"],
             "vector_type": "halfvec",
+            "contextual_chunks": contextual,
         })
         set_meta("schema_version", {"version": 6})
         logger.info("Recorded embedding config in local.meta: %s (%dd)",
@@ -815,17 +1000,39 @@ def check_model_consistency() -> None:
         return
 
     # Compare model and dimensions
-    if stored.get("model") != emb["model"]:
+    if stored.get("model") != model_identity:
+        if stored.get("model") in _LEGACY_MODEL_IDENTITIES:
+            raise ModelMismatchError(
+                f"Database vectors were built by the retired in-container model "
+                f"'{stored.get('model')}' (pre-3.5 image); config now specifies "
+                f"'{model_identity}'. The two embedding spaces are close but not "
+                f"identical, so search quality silently degrades without a "
+                f"re-embed. {_REINDEX_REMEDY}"
+            )
         raise ModelMismatchError(
             f"Embedding model mismatch: database has '{stored.get('model')}' "
-            f"but config specifies '{emb['model']}'. "
-            f"Re-embed with --force-model-record or set JARVIS_SKIP_MODEL_CHECK=1."
+            f"but config specifies '{model_identity}'. {_REINDEX_REMEDY}"
         )
 
     stored_dims = int(stored.get("dimensions", 0))
     if stored_dims != emb["dimensions"]:
         raise ModelMismatchError(
             f"Embedding dimensions mismatch: database has {stored_dims} "
-            f"but config specifies {emb['dimensions']}. "
-            f"Re-embed with --force-model-record or set JARVIS_SKIP_MODEL_CHECK=1."
+            f"but config specifies {emb['dimensions']}. {_REINDEX_REMEDY}"
+        )
+
+    # Chunk-context augmentation is part of the embedding-space identity for
+    # vault chunks: flipping the flag (or upgrading) without re-embedding
+    # leaves a mixed space. WARN rather than refuse — the degradation is
+    # gradual ranking skew, not garbage, and refusing would take the embedded
+    # PostgreSQL down with the server, leaving no way to run the reindex.
+    stored_contextual = bool(stored.get("contextual_chunks", False))
+    if stored_contextual != contextual:
+        logger.critical(
+            "Chunk-context augmentation mismatch: vault vectors were indexed "
+            "with contextual_chunks=%s but config now says %s. Vault ranking "
+            "is skewed until re-embedded — run jarvis_index_vault(force=true) "
+            "or bin/reindex_embeddings.py --store obsidian (or restore "
+            "memory.chunking.contextual_embeddings).",
+            stored_contextual, contextual,
         )

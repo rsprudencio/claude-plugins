@@ -95,6 +95,30 @@ class TestModelConsistency:
         # Second run validates — should pass
         check_model_consistency()
 
+    def test_host_and_onnx_locators_share_explicit_model_identity(
+        self, mock_config
+    ):
+        """Backend swaps do not look like embedding-space migrations."""
+        from tools.schema import check_model_consistency, get_meta
+
+        mock_config.set(memory={
+            "embedding_backend": "host",
+            "embedding_model": "/app/models/embedding",
+            "embedding_model_id": "ibm-granite/granite-embedding-small-english-r2",
+            "embedding_host_model": "ibm-granite/granite-embedding-small-english-r2",
+        })
+        check_model_consistency()
+        assert get_meta("embedding_config")["model"] == (
+            "ibm-granite/granite-embedding-small-english-r2"
+        )
+
+        mock_config.set(memory={
+            "embedding_backend": "onnx",
+            "embedding_model": "/app/models/embedding",
+            "embedding_model_id": "ibm-granite/granite-embedding-small-english-r2",
+        })
+        check_model_consistency()
+
     def test_model_mismatch_raises(self, mock_config):
         """Mismatched model name raises ModelMismatchError."""
         from tools.schema import check_model_consistency, set_meta, ModelMismatchError
@@ -107,6 +131,33 @@ class TestModelConsistency:
 
         with pytest.raises(ModelMismatchError, match="model mismatch"):
             check_model_consistency()
+
+    def test_mismatch_remediation_names_reindex_script(self, mock_config):
+        """--force-model-record does not re-embed; the message must say so."""
+        from tools.schema import check_model_consistency, set_meta, ModelMismatchError
+
+        set_meta("embedding_config", {"model": "old-model/v1", "dimensions": 384})
+
+        with pytest.raises(ModelMismatchError) as exc:
+            check_model_consistency()
+        message = str(exc.value)
+        assert "reindex_embeddings.py" in message
+        assert "without re-embedding" in message
+
+    def test_legacy_container_identity_gets_reindex_remediation(self, mock_config):
+        """Pre-3.5 images recorded '/app/models/embedding' — upgrades must re-embed."""
+        from tools.schema import check_model_consistency, set_meta, ModelMismatchError
+
+        set_meta("embedding_config", {
+            "model": "/app/models/embedding",
+            "dimensions": 384,
+        })
+
+        with pytest.raises(ModelMismatchError) as exc:
+            check_model_consistency()
+        message = str(exc.value)
+        assert "retired in-container model" in message
+        assert "reindex_embeddings.py" in message
 
     def test_dimensions_mismatch_raises(self, mock_config):
         """Mismatched dimensions raises ModelMismatchError."""
@@ -151,3 +202,45 @@ class TestModelConsistency:
         check_model_consistency()
         stored = get_meta("embedding_config")
         assert stored["vector_type"] == "halfvec"
+
+
+class TestContextualChunksIdentity:
+    """Augmentation mode is part of the embedding-space identity."""
+
+    def test_first_run_records_contextual_flag(self, mock_config):
+        from tools.schema import check_model_consistency, get_meta
+
+        check_model_consistency()
+        assert get_meta("embedding_config")["contextual_chunks"] is True
+
+    def test_mismatch_warns_loudly_but_does_not_refuse(self, mock_config, caplog):
+        """Mixed augmentation space is gradual skew, not garbage — and a fatal
+        error would take embedded PG down with the server, leaving no way to
+        run the reindex. Warn at CRITICAL instead."""
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": False,
+        })
+
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()  # must not raise
+        assert any("augmentation mismatch" in r.message.lower() for r in caplog.records)
+
+    def test_matching_flag_stays_silent(self, mock_config, caplog):
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": True,
+        })
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()
+        assert not caplog.records

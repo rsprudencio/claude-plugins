@@ -4,7 +4,11 @@ on:
   pull_request:
     paths:
       - 'docker/**'
+      - 'host-inference/**'
       - 'plugins/*/mcp-server/**'
+      - 'apps/memory-explorer/**'
+      - 'lib/jarvis-common/**'
+      - 'Makefile'
       - '.github/workflows/docker-*.yml'
 
 jobs:
@@ -15,70 +19,76 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Run unit and host-inference tests
+        run: make test
+
+      - name: Build Docker image with unconstrained dependency resolution
         run: docker build -f docker/Dockerfile -t jarvis-test .
+
+      - name: Verify resolved image dependency and import contracts
+        run: |
+          docker run --rm \
+            --entrypoint python3 \
+            -v "$PWD/docker/tests/verify_runtime_contract.py:/tmp/verify_runtime_contract.py:ro" \
+            jarvis-test \
+            /tmp/verify_runtime_contract.py
+
+      - name: Start host-model contract stubs
+        run: |
+          python3 docker/tests/model_host_stub.py > /tmp/jarvis-model-stub.log 2>&1 &
+          echo $! > /tmp/jarvis-model-stub.pid
+          for port in 8751 8752; do
+            for i in $(seq 1 10); do
+              curl -sf "http://127.0.0.1:${port}/health" && break
+              sleep 1
+            done
+            curl -sf "http://127.0.0.1:${port}/health"
+          done
 
       - name: Create test fixtures
         run: |
           mkdir -p /tmp/test-vault /tmp/test-config
           echo '{"vault_path":"/vault","vault_confirmed":true}' > /tmp/test-config/config.json
 
-      - name: Start container
+      - name: Start complete Jarvis container
         run: |
           docker run -d --name jarvis-test \
+            --add-host host.docker.internal:host-gateway \
             -p 8741:8741 \
+            -p 8742:8742 \
+            -p 8744:8744 \
+            -p 127.0.0.1:8750:8750 \
             -v /tmp/test-vault:/vault \
             -v /tmp/test-config:/config \
             -e JARVIS_HOME=/config \
             -e JARVIS_VAULT_PATH=/vault \
+            -e TODOIST_API_TOKEN=docker-smoke-no-network \
             jarvis-test
 
-      - name: Wait for health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8741/health; then
-              echo ""
-              echo "Health check passed"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Health check failed"
-          docker logs jarvis-test
-          exit 1
+      - name: Run black-box service and retrieval smoke
+        run: python3 docker/tests/smoke_client.py
 
-      - name: Verify MCP initialize
+      - name: Verify container remains stable
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8741/mcp \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1"}}}')
-          echo "$RESPONSE"
-          echo "$RESPONSE" | grep -q '"serverInfo"' || { echo "MCP initialize failed"; exit 1; }
+          test "$(docker inspect -f '{{.State.Running}}' jarvis-test)" = "true"
+          test "$(docker inspect -f '{{.RestartCount}}' jarvis-test)" = "0"
 
-      - name: Verify tools list
+      - name: Diagnostics
+        if: failure()
         run: |
-          # First initialize, then list tools
-          curl -sf -X POST http://localhost:8741/mcp \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ci","version":"0.1"}}}' > /dev/null
-
-          TOOLS=$(curl -sf -X POST http://localhost:8741/mcp \
-            -H "Content-Type: application/json" \
-            -H "Accept: application/json, text/event-stream" \
-            -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')
-          echo "$TOOLS" | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          tools = data.get('result', {}).get('tools', [])
-          print(f'Found {len(tools)} tools')
-          assert len(tools) >= 20, f'Expected >= 20 tools, got {len(tools)}'
-          print('Tools list check passed')
-          "
+          docker logs jarvis-test 2>&1 || true
+          cat /tmp/jarvis-model-stub.log 2>/dev/null || true
+          docker inspect jarvis-test 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
-          docker stop jarvis-test 2>/dev/null || true
-          docker rm jarvis-test 2>/dev/null || true
+          docker rm -f jarvis-test 2>/dev/null || true
+          if [ -f /tmp/jarvis-model-stub.pid ]; then
+            kill "$(cat /tmp/jarvis-model-stub.pid)" 2>/dev/null || true
+          fi

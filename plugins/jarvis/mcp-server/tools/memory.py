@@ -19,8 +19,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .config import get_verified_vault_path, get_chunking_config, get_scoring_config, get_memory_config
+from .config import (
+    get_verified_vault_path,
+    get_chunking_config,
+    get_scoring_config,
+    get_memory_config,
+    get_contextual_embeddings_enabled,
+)
 from .chunking import chunk_document
+from .chunk_context import augment_chunk_for_model
 from .scoring import compute_importance
 from .secret_scan import scan_for_secrets
 from .namespaces import vault_id
@@ -343,7 +350,30 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> list:
     from .schema import _get_pool
 
     service = get_embedding_service()
-    embeddings = service.encode_batch(docs)
+
+    # Contextual augmentation: embed a compact document-context prefix ALONGSIDE
+    # each fragment so the bi-encoder sees the chunk's document identity, while
+    # the stored `document` column (inserted below) stays byte-identical. Only
+    # genuine chunks (chunk_total > 1) get a prefix; whole-document rows already
+    # begin with their own title. See tools/chunk_context.py.
+    contextual_enabled = get_contextual_embeddings_enabled()
+    embed_inputs = []
+    for doc, meta in zip(docs, metas):
+        try:
+            chunk_total = int(meta.get("chunk_total", 1) or 1)
+        except (ValueError, TypeError):
+            chunk_total = 1
+        embed_inputs.append(
+            augment_chunk_for_model(
+                doc,
+                path=meta.get("parent_file", ""),
+                title=meta.get("title", ""),
+                heading_trail=meta.get("chunk_heading", ""),
+                is_chunk=chunk_total > 1,
+                enabled=contextual_enabled,
+            )
+        )
+    embeddings = service.encode_batch(embed_inputs)
 
     failures: list = []
     pool = _get_pool()
@@ -471,6 +501,24 @@ def _flush_batch(
         1 for meta in batch_meta if meta.get("parent_file", "") in failed_files
     )
     return len(failed_files), chunks_failed
+
+
+def _record_contextual_meta() -> None:
+    """Stamp the current augmentation flag into the embedding-space identity.
+
+    Best-effort: only updates an existing local.meta record (first-run
+    recording belongs to check_model_consistency).
+    """
+    try:
+        from .schema import get_meta, set_meta
+
+        stored = get_meta("embedding_config")
+        if stored is None:
+            return
+        stored["contextual_chunks"] = bool(get_contextual_embeddings_enabled())
+        set_meta("embedding_config", stored)
+    except Exception as exc:
+        logger.warning("Could not record contextual_chunks in local.meta: %s", exc)
 
 
 def index_vault(
@@ -632,6 +680,13 @@ def index_vault(
     total = count_result["cnt"] if count_result else 0
 
     duration = round(time.time() - start, 2)
+
+    # A clean FULL force run re-embedded every vault chunk under the current
+    # augmentation flag — record that in the embedding-space identity so the
+    # startup consistency check stops warning about a mixed space.
+    if force and not directory and not errors:
+        _record_contextual_meta()
+
     result = {
         "success": True,
         "files_indexed": files_indexed,

@@ -119,14 +119,25 @@ def batch_reembed(
 
     Returns total number of documents re-embedded.
     """
+    from tools.config import get_embedding_config
     from tools.embedding import EmbeddingService
 
-    svc = EmbeddingService(
-        model_name=model_name,
-        dimensions=dimensions,
-        device=os.environ.get("EMBEDDING_DEVICE", "cpu"),
-        backend=os.environ.get("EMBEDDING_BACKEND", "onnx"),
-    )
+    embedding_config = get_embedding_config()
+    service_kwargs = {
+        "model_name": model_name,
+        "dimensions": dimensions,
+        "device": embedding_config["device"],
+        "backend": embedding_config["backend"],
+    }
+    if embedding_config["backend"] == "bedrock":
+        service_kwargs["bedrock_region"] = embedding_config["bedrock_region"]
+    if embedding_config["backend"] == "host":
+        service_kwargs.update(
+            host_url=embedding_config["host_url"],
+            host_token=embedding_config["host_token"],
+            host_timeout_ms=embedding_config["host_timeout_ms"],
+        )
+    svc = EmbeddingService(**service_kwargs)
 
     effective_inference_batch_size = resolve_inference_batch_size(
         db_batch_size=batch_size,

@@ -57,7 +57,8 @@ def get_embedding_config() -> dict:
     Resolution order: env vars > config file > defaults.
 
     Supported backends: "onnx" (local ONNX Runtime), "torch" (PyTorch),
-    "bedrock" (Amazon Bedrock API — no local model needed).
+    "bedrock" (Amazon Bedrock API), and "host" (host-native Jarvis model
+    service — no model loaded in the container).
     """
     defaults = {
         "model": "ibm-granite/granite-embedding-small-english-r2",
@@ -65,6 +66,10 @@ def get_embedding_config() -> dict:
         "device": "cpu",
         "backend": "onnx",
         "bedrock_region": "eu-central-1",
+        "host_url": "http://host.docker.internal:8751",
+        "host_model": "ibm-granite/granite-embedding-small-english-r2",
+        "host_token": "",
+        "host_timeout_ms": 2000,
     }
     mem = _get_memory_section()
     config = {
@@ -88,7 +93,32 @@ def get_embedding_config() -> dict:
             os.environ.get("BEDROCK_REGION")
             or mem.get("embedding_bedrock_region", defaults["bedrock_region"])
         ),
+        "host_url": (
+            os.environ.get("JARVIS_MODEL_HOST_URL")
+            or mem.get("embedding_host_url", defaults["host_url"])
+        ),
+        "host_model": (
+            os.environ.get("JARVIS_MODEL_HOST_MODEL")
+            or mem.get("embedding_host_model", defaults["host_model"])
+        ),
+        "host_token": (
+            os.environ.get("JARVIS_MODEL_HOST_TOKEN")
+            or mem.get("embedding_host_token", defaults["host_token"])
+        ),
+        "host_timeout_ms": int(
+            os.environ.get("JARVIS_MODEL_HOST_TIMEOUT_MS")
+            or mem.get("embedding_host_timeout_ms", defaults["host_timeout_ms"])
+        ),
     }
+    # Stable identity for database consistency checks. ``model`` may be a
+    # container-local filesystem path while host inference uses an API alias;
+    # both can still represent the exact same embedding space. Custom models
+    # retain their runtime name unless an explicit identity is configured.
+    config["model_id"] = (
+        os.environ.get("JARVIS_EMBEDDING_MODEL_ID")
+        or mem.get("embedding_model_id")
+        or (config["host_model"] if config["backend"] == "host" else config["model"])
+    )
     return config
 
 
@@ -171,8 +201,22 @@ def get_chunking_config() -> dict:
         "min_chunk_chars": 200,
         "max_chunk_chars": 1500,
         "heading_levels": [2, 3],
+        "contextual_embeddings": True,
     }
     return _merge_with_defaults(defaults, _get_memory_section("chunking"))
+
+
+def get_contextual_embeddings_enabled() -> bool:
+    """Whether chunk embeddings and reranker inputs carry a document-context prefix.
+
+    Rollback switch for contextual chunk augmentation. Lives in the chunking
+    section (``memory.chunking.contextual_embeddings``); default True. When True,
+    every place a *fragment* is embedded or reranked prepends a compact
+    ``Document: …`` prefix (see tools/chunk_context.py); the stored canonical
+    text is unaffected. Flip to False to fall back to bare-fragment embeddings
+    (requires a force-reindex to take effect on already-stored embeddings).
+    """
+    return bool(get_chunking_config().get("contextual_embeddings", True))
 
 
 def get_scoring_config() -> dict:
@@ -191,6 +235,7 @@ def get_context_enrichment_config() -> dict:
     defaults = {
         "enabled": True,
         "threshold": 0.85,
+        "bge_logit_threshold": -4.0,
         "budget": 8000,
         "max_results": 20,
         "debug": False,
@@ -199,6 +244,31 @@ def get_context_enrichment_config() -> dict:
         "semantic_dedup_threshold": 0.86,
     }
     return _merge_with_defaults(defaults, _get_memory_section("context_enrichment"))
+
+
+def get_retrieval_telemetry_config() -> dict:
+    """Get durable semantic-retrieval telemetry configuration."""
+    defaults = {
+        "enabled": True,
+        "retention_days": 30,
+        "store_user_prompts": True,
+        "candidate_detail_limit": 100,
+        "shadow": {
+            "enabled": True,
+            "candidate_count": 20,
+            "delay_seconds": 2,
+            "poll_seconds": 2,
+            "max_attempts": 3,
+            "max_jobs_per_second": 1,
+        },
+    }
+    config = _merge_with_defaults(
+        defaults, _get_memory_section("retrieval_telemetry")
+    )
+    env_enabled = os.environ.get("JARVIS_RETRIEVAL_TELEMETRY_ENABLED")
+    if env_enabled is not None:
+        config["enabled"] = env_enabled.lower() in ("1", "true", "yes")
+    return config
 
 
 def get_expansion_config() -> dict:
@@ -215,19 +285,75 @@ def get_expansion_config() -> dict:
 def get_reranking_config() -> dict:
     """Get cross-encoder reranking configuration with defaults.
 
-    Disabled by default: the ms-marco-MiniLM cross-encoder measured net-negative
-    on retrieval quality (−0.055 nDCG@10 on ArguAna vs the bi-encoder alone).
-    Re-enable only with a reranker that measurably improves labeled nDCG.
+    The legacy ONNX backend remains the inactive default. The selected BGE
+    reranker is enabled explicitly through config or environment after its host
+    service is healthy.
     """
     defaults = {
         "enabled": False,
-        "candidate_count": 100,
+        "backend": "onnx",
+        "model": "BAAI/bge-reranker-v2-m3",
+        "candidate_count": 20,
         "top_k": 10,
         "alpha": 0.7,
-        "max_latency_ms": 1000,
+        "max_latency_ms": 1500,
         "batch_size": 32,
+        "host_url": "http://host.docker.internal:8752",
+        "host_token": "",
+        "host_timeout_ms": 1500,
     }
-    return _merge_with_defaults(defaults, _get_memory_section("reranking"))
+    config = _merge_with_defaults(defaults, _get_memory_section("reranking"))
+
+    env_enabled = os.environ.get("RERANKING_ENABLED")
+    if env_enabled is not None:
+        config["enabled"] = env_enabled.lower() in ("1", "true", "yes")
+    string_overrides = {
+        "backend": "RERANKING_BACKEND",
+        "model": "RERANKING_MODEL",
+        "host_url": "JARVIS_RERANK_HOST_URL",
+        "host_token": "JARVIS_RERANK_HOST_TOKEN",
+    }
+    for key, env_name in string_overrides.items():
+        if value := os.environ.get(env_name):
+            config[key] = value
+    integer_overrides = {
+        "candidate_count": "RERANKING_CANDIDATE_COUNT",
+        "max_latency_ms": "RERANKING_MAX_LATENCY_MS",
+        "host_timeout_ms": "JARVIS_RERANK_HOST_TIMEOUT_MS",
+    }
+    for key, env_name in integer_overrides.items():
+        if value := os.environ.get(env_name):
+            config[key] = int(value)
+    return config
+
+
+def get_lexical_config() -> dict:
+    """Get statistical (lexical) recall channel configuration with defaults.
+
+    Phase 1 hybrid retrieval. The lexical channel is recall-only: rare prompt
+    terms (high IDF) OR-query the generated tsvector columns to surface
+    documents the bi-encoder misses. Lexical scores are never blended with
+    cosines — every lexical row carries its true raw cosine for downstream
+    scoring, and all rejection belongs to the final judge.
+
+    Keys:
+        enabled: master switch for the lexical channel.
+        max_df_ratio: keep only lexemes whose document-frequency ratio is at or
+            below this (rarity self-selects the informative term).
+        max_terms: cap on informative terms per query (rarest first).
+        candidate_limit: max lexical rows fetched per schema.
+        lexical_rerank_slots: reserved seats in the rerank batch for
+            lexical-only rows, IN ADDITION to the candidate-cap winners (low
+            cosine would otherwise evict them and defeat the recall channel).
+    """
+    defaults = {
+        "enabled": True,
+        "max_df_ratio": 0.10,
+        "max_terms": 8,
+        "candidate_limit": 30,
+        "lexical_rerank_slots": 10,
+    }
+    return _merge_with_defaults(defaults, _get_memory_section("lexical"))
 
 
 def get_conflict_detection_config() -> dict:

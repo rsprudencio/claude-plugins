@@ -10,7 +10,9 @@ The tests manage their own container lifecycle (start/stop per session).
 
 import json
 import os
+from pathlib import Path
 import subprocess
+import sys
 import time
 
 import pytest
@@ -20,8 +22,13 @@ DOCKER_IMAGE = os.environ.get("JARVIS_DOCKER_IMAGE", "jarvis-local")
 CONTAINER_NAME = "jarvis-integration-test"
 CORE_PORT = 18741  # Use non-default ports to avoid conflicts
 TODOIST_PORT = 18742
+OBSIDIAN_PORT = 18744
+EXPLORER_PORT = 18750
+EMBEDDING_STUB_PORT = 28751
+RERANKING_STUB_PORT = 28752
 CORE_URL = f"http://localhost:{CORE_PORT}"
 MCP_URL = f"{CORE_URL}/mcp"
+TESTS_DIR = Path(__file__).resolve().parent
 
 
 def _docker_available():
@@ -57,7 +64,45 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="session")
-def docker_container(tmp_path_factory):
+def model_host_stub():
+    """Run a host-only llama.cpp contract stub for the container."""
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(TESTS_DIR / "model_host_stub.py"),
+            "--host",
+            "0.0.0.0",
+            "--embedding-port",
+            str(EMBEDDING_STUB_PORT),
+            "--reranking-port",
+            str(RERANKING_STUB_PORT),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        for port in (EMBEDDING_STUB_PORT, RERANKING_STUB_PORT):
+            for _ in range(20):
+                try:
+                    if requests.get(f"http://127.0.0.1:{port}/health", timeout=1).ok:
+                        break
+                except requests.ConnectionError:
+                    time.sleep(0.25)
+            else:
+                output = process.stdout.read() if process.stdout else ""
+                pytest.fail(f"Model host stub did not start on {port}: {output}")
+        yield
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+@pytest.fixture(scope="session")
+def docker_container(tmp_path_factory, model_host_stub):
     """Start a Docker container for the test session."""
     vault_dir = tmp_path_factory.mktemp("vault")
     config_dir = tmp_path_factory.mktemp("config")
@@ -81,10 +126,16 @@ def docker_container(tmp_path_factory):
             "-d",
             "--name",
             CONTAINER_NAME,
+            "--add-host",
+            "host.docker.internal:host-gateway",
             "-p",
             f"{CORE_PORT}:8741",
             "-p",
             f"{TODOIST_PORT}:8742",
+            "-p",
+            f"{OBSIDIAN_PORT}:8744",
+            "-p",
+            f"127.0.0.1:{EXPLORER_PORT}:8750",
             "-v",
             f"{vault_dir}:/vault",
             "-v",
@@ -93,6 +144,12 @@ def docker_container(tmp_path_factory):
             "JARVIS_HOME=/config",
             "-e",
             "JARVIS_VAULT_PATH=/vault",
+            "-e",
+            "TODOIST_API_TOKEN=docker-smoke-no-network",
+            "-e",
+            f"JARVIS_MODEL_HOST_URL=http://host.docker.internal:{EMBEDDING_STUB_PORT}",
+            "-e",
+            f"JARVIS_RERANK_HOST_URL=http://host.docker.internal:{RERANKING_STUB_PORT}",
             DOCKER_IMAGE,
         ],
         check=True,
@@ -120,7 +177,37 @@ def docker_container(tmp_path_factory):
             f"Container health check timed out.\nLogs:\n{logs.stdout}\n{logs.stderr}"
         )
 
-    yield {"core_url": CORE_URL, "mcp_url": MCP_URL}
+    # Entrypoint starts explorer after core schema initialization, so core
+    # liveness alone is not readiness for the complete image contract.
+    service_urls = [
+        f"http://localhost:{TODOIST_PORT}/health",
+        f"http://localhost:{OBSIDIAN_PORT}/health",
+        f"http://localhost:{EXPLORER_PORT}/health",
+    ]
+    for url in service_urls:
+        for _ in range(30):
+            try:
+                if requests.get(url, timeout=2).status_code == 200:
+                    break
+            except requests.RequestException:
+                pass
+            time.sleep(1)
+        else:
+            logs = subprocess.run(
+                ["docker", "logs", CONTAINER_NAME],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            pytest.fail(f"Service health timed out at {url}.\n{logs.stdout}\n{logs.stderr}")
+
+    yield {
+        "core_url": CORE_URL,
+        "mcp_url": MCP_URL,
+        "todoist_url": f"http://localhost:{TODOIST_PORT}",
+        "obsidian_url": f"http://localhost:{OBSIDIAN_PORT}",
+        "explorer_url": f"http://localhost:{EXPLORER_PORT}",
+    }
 
     # Cleanup
     subprocess.run(
@@ -159,6 +246,12 @@ class TestHealthEndpoint:
     def test_health_json_content_type(self, docker_container):
         r = requests.get(f"{docker_container['core_url']}/health", timeout=5)
         assert "application/json" in r.headers.get("content-type", "")
+
+    @pytest.mark.parametrize("service", ["todoist", "obsidian", "explorer"])
+    def test_all_shipped_services_are_healthy(self, docker_container, service):
+        r = requests.get(f"{docker_container[f'{service}_url']}/health", timeout=5)
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
 
 
 class TestMCPInitialize:
@@ -297,3 +390,143 @@ class TestVaultOps:
         assert (
             "Docker Integration Test" in all_text
         ), f"Expected content not found in: {all_text[:500]}"
+
+
+class TestCompleteImageSmoke:
+    def test_store_retrieve_uses_host_embedding_and_reranking(self, docker_container):
+        subprocess.run(
+            [
+                sys.executable,
+                str(TESTS_DIR / "smoke_client.py"),
+                "--core-port",
+                str(CORE_PORT),
+                "--todoist-port",
+                str(TODOIST_PORT),
+                "--obsidian-port",
+                str(OBSIDIAN_PORT),
+                "--explorer-port",
+                str(EXPLORER_PORT),
+                "--embedding-stub-port",
+                str(EMBEDDING_STUB_PORT),
+                "--reranking-stub-port",
+                str(RERANKING_STUB_PORT),
+            ],
+            check=True,
+            timeout=30,
+        )
+
+
+class TestRetrievalTelemetryRuntime:
+    def test_trace_delivery_shadow_and_explorer_api(self, docker_container):
+        marker = "telemetry runtime acceptance memory"
+        stored = _mcp_request(
+            docker_container["mcp_url"], "tools/call",
+            {"name": "jarvis_store", "arguments": {
+                "type": "observation", "content": marker,
+                "source": "docker-telemetry", "importance": 0.7,
+            }}, request_id=40,
+        )
+        assert stored.status_code == 200
+
+        response = requests.post(
+            f"{docker_container['core_url']}/hook/prompt-context",
+            json={"prompt": "telemetry runtime acceptance"}, timeout=10,
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["trace_id"]
+        assert payload["matches"]
+        keys = [match["candidate_key"] for match in payload["matches"]]
+
+        ack = requests.put(
+            f"{docker_container['core_url']}/telemetry/retrieval/{payload['trace_id']}/delivery",
+            json={
+                "status": "complete", "returned_count": len(keys),
+                "delivered_count": len(keys), "suppressed_count": 0,
+                "output_chars": 42, "delivered_candidate_keys": keys,
+            }, timeout=5,
+        )
+        assert ack.status_code == 200 and ack.json()["success"] is True
+
+        detail_url = f"{docker_container['explorer_url']}/api/retrieval/events/{payload['trace_id']}"
+        deadline = time.monotonic() + 10
+        detail = None
+        while time.monotonic() < deadline:
+            current = requests.get(detail_url, timeout=5)
+            if current.status_code == 200:
+                detail = current.json()
+                if detail["shadow_status"] in ("complete", "partial", "failed"):
+                    break
+            time.sleep(0.25)
+        assert detail is not None
+        assert detail["purpose"] == "context_injection"
+        assert detail["delivery"]["delivered_count"] == len(keys)
+        assert detail["shadow_status"] == "complete"
+        assert any(candidate["delivered"] for candidate in detail["candidates"])
+        assert all("document" not in candidate and "content" not in candidate for candidate in detail["candidates"])
+
+        summary = requests.get(
+            f"{docker_container['explorer_url']}/api/retrieval/summary", timeout=5
+        )
+        assert summary.status_code == 200
+        assert summary.json()["requests"] >= 1
+        core_telemetry = requests.get(
+            f"{docker_container['core_url']}/telemetry", timeout=5
+        ).json()
+        assert core_telemetry["retrieval"]["status"] == "ok"
+        assert core_telemetry["retrieval"]["requests"] >= 1
+
+        html = requests.get(docker_container["explorer_url"], timeout=5).text
+        assert 'data-tab="retrieval"' in html
+        assert "Policy simulator (read-only)" in html
+
+    def test_explorer_is_published_on_loopback(self, docker_container):
+        inspect = subprocess.run(
+            ["docker", "port", CONTAINER_NAME, "8750/tcp"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        assert inspect.stdout.strip().startswith("127.0.0.1:")
+
+    def test_z_empty_retrieval_is_traced(self, docker_container):
+        subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "psql", "-U", "postgres", "-d", "jarvis",
+             "-c", "TRUNCATE local.memories, obsidian.documents CASCADE"],
+            check=True, capture_output=True, timeout=10,
+        )
+        response = requests.post(
+            f"{docker_container['core_url']}/hook/prompt-context",
+            json={"prompt": "substantive empty retrieval telemetry probe"}, timeout=10,
+        )
+        payload = response.json()
+        assert payload["matches"] == []
+        assert payload["trace_id"]
+        detail = requests.get(
+            f"{docker_container['explorer_url']}/api/retrieval/events/{payload['trace_id']}",
+            timeout=5,
+        ).json()
+        assert detail["outcome"] == "empty"
+        assert detail["candidates"] == []
+
+    def test_resolved_dependency_contract(self, docker_container):
+        contract = TESTS_DIR / "verify_runtime_contract.py"
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                str(contract),
+                f"{CONTAINER_NAME}:/tmp/verify_runtime_contract.py",
+            ],
+            check=True,
+            timeout=10,
+        )
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                CONTAINER_NAME,
+                "python3",
+                "/tmp/verify_runtime_contract.py",
+            ],
+            check=True,
+            timeout=30,
+        )

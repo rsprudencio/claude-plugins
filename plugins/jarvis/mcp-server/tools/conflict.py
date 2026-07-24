@@ -151,8 +151,14 @@ def find_conflict_candidates(
 
     new_words = _tokenize(content)
     candidates = []
+    telemetry_candidates = []
 
-    for row in rows:
+    try:
+        from .retrieval_telemetry import CandidateTrace
+    except Exception:
+        CandidateTrace = None
+
+    for vector_rank, row in enumerate(rows, 1):
         cid = row["id"]
         if cid == doc_id:
             continue
@@ -164,7 +170,16 @@ def find_conflict_candidates(
 
         distance = float(row["distance"])
         similarity = 1 - distance
+        trace = CandidateTrace(
+            schema_name="local", doc_id=str(cid), parent_id=str(cid),
+            vector_rank=vector_rank, similarity=similarity,
+            pre_score=similarity,
+        ) if CandidateTrace else None
+        if trace:
+            telemetry_candidates.append(trace)
         if similarity < config["similarity_threshold"]:
+            if trace:
+                trace.terminal_reason = "cosine_rejected"
             continue
 
         doc_content = row["document"] or ""
@@ -173,6 +188,10 @@ def find_conflict_candidates(
         jaccard = len(new_words & old_words) / max(len(union), 1)
 
         if jaccard < config["divergence_threshold"]:
+            if trace:
+                trace.terminal_reason = "selected"
+                trace.returned = True
+                trace.final_rank = len(candidates) + 1
             candidates.append(
                 {
                     "id": cid,
@@ -181,6 +200,26 @@ def find_conflict_candidates(
                     "jaccard": jaccard,
                 }
             )
+        elif trace:
+            trace.terminal_reason = "semantic_duplicate"
+
+    try:
+        from .retrieval_telemetry import record_event
+
+        record_event(
+            purpose="conflict_detection", query=content,
+            candidates=telemetry_candidates,
+            funnel={"ann_unique": len(rows), "returned": len(candidates)},
+            latency={}, outcome="results" if candidates else "empty",
+            pipeline="conflict-ann", user_facing=False, query_ref=doc_id,
+            config_snapshot={
+                "similarity_threshold": config.get("similarity_threshold"),
+                "divergence_threshold": config.get("divergence_threshold"),
+                "max_candidates": config.get("max_candidates"),
+            }, shadow_eligible=False,
+        )
+    except Exception:
+        pass
 
     return candidates
 

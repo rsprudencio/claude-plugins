@@ -71,6 +71,9 @@ def _is_duplicate_observation(content: str, threshold: float) -> bool:
         query=content,
         n_results=5,
         filter={"type": "observation"},
+        purpose="duplicate_detection",
+        telemetry_user_facing=False,
+        telemetry_query_ref="auto_extract_candidate",
     )
     if not result.get("success") or not result.get("results"):
         return False
@@ -224,6 +227,7 @@ def get_prompt_context(prompt: str) -> dict:
                 "budget_used",
                 {"core": 0, "vault": 0, "total": budget},
             ),
+            "trace_id": search.get("trace_id"),
         }
     )
     return result

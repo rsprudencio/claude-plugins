@@ -208,6 +208,15 @@ _CSP = (
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "server": "memory-explorer",
+        "sources": sorted(_sources),
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 async def spa():
     return HTMLResponse(content=_HTML, headers={"Content-Security-Policy": _CSP})
@@ -271,6 +280,23 @@ class SearchRequest(BaseModel):
     page: int = 0
     page_size: int = 20
     sort_by: str = "date_desc"
+
+
+class RetrievalFeedbackRequest(BaseModel):
+    verdict: str
+    expected_missing_ids: list[str] = []
+    note: str = ""
+
+
+class CandidateFeedbackRequest(BaseModel):
+    verdict: str
+    note: str = ""
+
+
+class SimulationRequest(BaseModel):
+    policy: str = "cosine-only"
+    cosine_threshold: float = 0.85
+    bge_logit_threshold: float = -2.5
 
 
 # Sort definitions per context: local (single table) vs remote (r/c JOIN aliases)
@@ -340,7 +366,22 @@ async def search(req: SearchRequest):
 
     loop = asyncio.get_event_loop()
     try:
-        result = await loop.run_in_executor(None, _search_sync, src, req)
+        # Production host inference uses the shared core primitive. Local
+        # development with the legacy in-process backend keeps the direct SQL
+        # path, avoiding a second implicit model lifecycle in this UI process.
+        shared_semantic = (
+            req.mode == "semantic"
+            and src["type"] == "local"
+            and get_embedding_config().get("backend") == "host"
+        )
+        if shared_semantic:
+            result = await loop.run_in_executor(None, _semantic_search_sync, src, req)
+        else:
+            result = await loop.run_in_executor(None, _search_sync, src, req)
+            if req.mode == "semantic":
+                result["trace_id"] = await loop.run_in_executor(
+                    None, _trace_remote_explorer_search, src, req, result
+                )
     except Exception as e:
         logger.exception("Search error")
         raise HTTPException(500, _safe_err(e))
@@ -351,7 +392,179 @@ async def search(req: SearchRequest):
         "source": req.source,
         "allowed_filters": src.get("metadata_filters", []),
         "sort_options": _sort_options_for(src),
+        "trace_id": result.get("trace_id"),
     }
+
+
+def _semantic_search_sync(src: dict, req: SearchRequest) -> dict:
+    """Route Explorer semantic mode through Jarvis core's shared recall."""
+    from tools.query import semantic_candidate_search
+
+    schema_name = src["schema"]
+    result = semantic_candidate_search(
+        req.query,
+        limit=req.page_size,
+        offset=req.page * req.page_size,
+        schemas=[schema_name],
+        purpose="memory_explorer",
+    )
+    rows = []
+    for item in result["results"]:
+        document = item.pop("document", "")
+        rows.append({
+            "id": item["id"],
+            "snippet": document[:_SNIPPET_LEN] + ("…" if len(document) > _SNIPPET_LEN else ""),
+            "created_at": item["created_at"].isoformat() if hasattr(item["created_at"], "isoformat") else item["created_at"],
+            "updated_at": item["updated_at"].isoformat() if hasattr(item["updated_at"], "isoformat") else item["updated_at"],
+            "importance_score": item["importance_score"],
+            "retrieval_count": item["retrieval_count"],
+            "doc_size": len(document),
+            "score": round(float(item["score"]), 4),
+        })
+    return {"rows": rows, "total": _count_sync(src), "trace_id": result.get("trace_id")}
+
+
+def _trace_remote_explorer_search(src: dict, req: SearchRequest, result: dict) -> Optional[str]:
+    """Trace remote Explorer search without persisting returned content."""
+    try:
+        # Direct Explorer searches use their own pool; establish the shared
+        # repository pool only when the real app pool is healthy (test mocks
+        # must never trigger an external connection).
+        if isinstance(_local_pool, psycopg_pool.ConnectionPool):
+            from tools.schema import _get_pool
+
+            _get_pool()
+        from tools.retrieval_telemetry import CandidateTrace, record_event
+
+        candidates = [
+            CandidateTrace(
+                schema_name=str(src.get("schema", "remote")),
+                doc_id=str(row.get("id", "")), vector_rank=index,
+                final_rank=index, similarity=row.get("score"),
+                pre_score=row.get("score"), terminal_reason="selected", returned=True,
+            )
+            for index, row in enumerate(result.get("rows", []), 1)
+        ]
+        return record_event(
+            purpose="memory_explorer", query=req.query, candidates=candidates,
+            funnel={"ann_unique": len(candidates), "returned": len(candidates)},
+            latency={}, outcome="results" if candidates else "empty",
+            pipeline="explorer-remote-semantic",
+            config_snapshot={"source": src.get("id"), "page": req.page, "page_size": req.page_size},
+        )
+    except Exception:
+        return None
+
+
+@app.get("/api/retrieval/summary")
+async def retrieval_summary(days: int = Query(default=7, ge=1, le=90)):
+    from tools.retrieval_telemetry import get_summary
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: get_summary(days))
+
+
+@app.get("/api/retrieval/events")
+async def retrieval_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    purpose: str = Query(default=""),
+    outcome: str = Query(default=""),
+):
+    from tools.retrieval_telemetry import list_events
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: list_events(limit=limit, offset=offset, purpose=purpose, outcome=outcome),
+    )
+
+
+@app.get("/api/retrieval/events/{event_id}")
+async def retrieval_event(event_id: str):
+    from tools.retrieval_telemetry import get_event
+
+    loop = asyncio.get_running_loop()
+    event = await loop.run_in_executor(None, lambda: get_event(event_id))
+    if not event:
+        raise HTTPException(404, "Retrieval event not found")
+    return event
+
+
+@app.get("/api/retrieval/events/{event_id}/documents")
+async def retrieval_event_documents(
+    event_id: str,
+    preview_chars: int = Query(default=240, ge=0, le=4000),
+    candidate_key: str = Query(default=""),
+):
+    """Resolve candidate bodies on demand — telemetry stores only locators."""
+    from tools.retrieval_telemetry import get_event_documents
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None,
+        lambda: get_event_documents(
+            event_id, preview_chars=preview_chars, candidate_key=candidate_key or None
+        ),
+    )
+
+
+@app.put("/api/retrieval/events/{event_id}/feedback")
+async def retrieval_event_feedback(
+    event_id: str,
+    req: RetrievalFeedbackRequest,
+    user: str = Depends(require_auth),
+):
+    from tools.retrieval_telemetry import put_event_feedback
+
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None, lambda: put_event_feedback(event_id, req.model_dump(), user)
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
+@app.put("/api/retrieval/events/{event_id}/candidates/{candidate_key}/feedback")
+async def retrieval_candidate_feedback(
+    event_id: str,
+    candidate_key: str,
+    req: CandidateFeedbackRequest,
+    user: str = Depends(require_auth),
+):
+    from tools.retrieval_telemetry import put_candidate_feedback
+
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: put_candidate_feedback(event_id, candidate_key, req.model_dump(), user),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/retrieval/simulate")
+async def retrieval_simulate(req: SimulationRequest):
+    from tools.retrieval_telemetry import simulate_policy
+
+    loop = asyncio.get_running_loop()
+    try:
+        return await loop.run_in_executor(None, lambda: simulate_policy(req.model_dump()))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/retrieval/export")
+async def retrieval_export():
+    from tools.retrieval_telemetry import export_labeled_events
+
+    loop = asyncio.get_running_loop()
+    rows = await loop.run_in_executor(None, export_labeled_events)
+    return {"schema_version": 1, "exported_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc), "events": rows}
 
 
 def _count_where(conn, schema: str, table: str, where_sql, params: list) -> int:
@@ -995,6 +1208,29 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 #tab-memories { display: flex; flex: 1; overflow: hidden; }
 #tab-admin { display: none; flex: 1; overflow-y: auto; padding: 20px 24px; }
 #tab-admin.active { display: block; }
+#tab-retrieval { display: none; flex: 1; overflow-y: auto; padding: 20px 24px; }
+#tab-retrieval.active { display: block; }
+.rt-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+.rt-card,.rt-panel { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px; }
+.rt-value { font-size:22px; color:var(--accent); font-weight:700; }
+.rt-label { color:var(--muted); font-size:10px; text-transform:uppercase; }
+.rt-controls { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center; }
+.rt-controls input,.rt-controls select,.rt-controls textarea { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:5px; padding:6px; font:inherit; }
+.rt-table { width:100%; border-collapse:collapse; font-size:11px; }
+.rt-table th,.rt-table td { padding:6px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+.rt-table tr[data-id] { cursor:pointer; }
+.rt-table tr[data-id]:hover { background:var(--surface2); }
+.rt-split { display:grid; grid-template-columns:minmax(420px,1fr) minmax(420px,1fr); gap:12px; }
+.rt-panel { overflow-x:auto; }
+.rt-overlay-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:49; }
+.rt-overlay { position:fixed; inset:2.5vh 2.5vw; z-index:50; background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 20px; overflow:auto; }
+.rt-close { float:right; }
+.rt-doc { white-space:pre-wrap; background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:8px; font-size:11px; max-height:340px; overflow:auto; }
+.rt-preview { color:var(--muted); font-size:10.5px; max-width:460px; }
+.rt-row-main { cursor:pointer; }
+.rt-row-main:hover { background:var(--surface2); }
+.rt-bar { height:7px; background:var(--badge); border-radius:4px; min-width:2px; }
+@media(max-width:1000px){.rt-split{grid-template-columns:1fr}}
 
 /* Left sidebar */
 #sidebar { width: 210px; min-width: 210px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
@@ -1133,6 +1369,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 <div id="tabbar">
   <div class="tab-brand">JARVIS</div>
   <div class="tab active" data-tab="memories" onclick="switchTab('memories')">Memories</div>
+  <div class="tab" data-tab="retrieval" onclick="switchTab('retrieval')">Retrieval</div>
   <div class="tab" data-tab="admin" onclick="switchTab('admin')">Admin</div>
 </div>
 <div id="main">
@@ -1182,6 +1419,7 @@ body { background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, "
 </div>
 </div><!-- /tab-memories -->
 <div id="tab-admin"></div>
+<div id="tab-retrieval"></div>
 </div><!-- /main -->
 
 <script>
@@ -1535,16 +1773,19 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
   var mem = document.getElementById('tab-memories');
   var adm = document.getElementById('tab-admin');
+  var ret = document.getElementById('tab-retrieval');
+  mem.style.display = 'none'; adm.style.display = 'none'; ret.style.display = 'none';
+  adm.classList.remove('active'); ret.classList.remove('active');
   if (tab === 'admin') {
-    mem.style.display = 'none';
     adm.style.display = 'block';
     adm.classList.add('active');
     loadAdmin();
     if (memAutoRefresh) { clearInterval(memAutoRefresh); memAutoRefresh = null; var mb = document.getElementById('mem-auto-refresh'); if (mb) { mb.style.background = 'var(--bg2)'; mb.style.color = 'var(--fg)'; } }
+  } else if (tab === 'retrieval') {
+    ret.style.display = 'block'; ret.classList.add('active'); loadRetrieval();
+    if (adminAutoRefresh) { clearInterval(adminAutoRefresh); adminAutoRefresh = null; }
   } else {
     mem.style.display = 'flex';
-    adm.style.display = 'none';
-    adm.classList.remove('active');
     if (adminAutoRefresh) { clearInterval(adminAutoRefresh); adminAutoRefresh = null; }
   }
   // Persist tab in URL hash so page refresh stays on the same tab
@@ -1554,8 +1795,226 @@ function switchTab(tab) {
 // On page load, restore tab from hash
 (function() {
   var hash = location.hash.replace('#', '');
-  if (hash === 'admin') switchTab('admin');
+  if (hash === 'admin' || hash === 'retrieval') switchTab(hash);
 })();
+
+var retrievalLoaded = false;
+function loadRetrieval() {
+  var el = document.getElementById('tab-retrieval');
+  if (!retrievalLoaded) el.innerHTML = '<div class="empty">Loading retrieval telemetry...</div>';
+  var purpose = document.getElementById('rt-purpose');
+  var outcome = document.getElementById('rt-outcome');
+  var filters = { purpose: purpose ? purpose.value : '', outcome: outcome ? outcome.value : '' };
+  var query = '?limit=100' + (filters.purpose ? '&purpose='+encodeURIComponent(filters.purpose) : '') + (filters.outcome ? '&outcome='+encodeURIComponent(filters.outcome) : '');
+  Promise.all([fetch('/api/retrieval/summary').then(r=>r.json()), fetch('/api/retrieval/events'+query).then(r=>r.json())])
+    .then(parts => { retrievalLoaded=true; renderRetrieval(parts[0], parts[1], filters); })
+    .catch(err => { el.innerHTML='<div class="empty" style="color:var(--red)">'+esc(String(err))+'</div>'; });
+}
+
+function escA(s) { return esc(String(s)).replace(/"/g,'&quot;'); }
+function rtOpt(value, label, current) { return '<option value="'+escA(value)+'"'+(current===value?' selected':'')+'>'+esc(label)+'</option>'; }
+
+function renderRetrieval(s, events, filters) {
+  filters = filters || {purpose:'', outcome:''};
+  var el=document.getElementById('tab-retrieval');
+  var zero=s.requests ? Math.round(100*s.zero_results/s.requests) : 0;
+  var h='<div class="rt-grid">'+rtCard('Requests (7d)',s.requests||0)+rtCard('Zero result',zero+'%')+rtCard('p50 latency',(s.p50_ms==null?'—':Math.round(s.p50_ms)+' ms'))+rtCard('p95 latency',(s.p95_ms==null?'—':Math.round(s.p95_ms)+' ms'))+rtCard('Returned',(s.funnel||{}).returned||0)+rtCard('Delivered',(s.delivery||{}).delivered||0)+rtCard('Shadow pending',s.shadow_pending||0)+rtCard('Shadow failed',s.shadow_failed||0)+'</div>';
+  h+='<div class="rt-split" style="margin-bottom:12px"><div class="rt-panel"><div class="detail-section-title">Aggregate funnel</div>'+rtFunnel(s.funnel||{})+'</div><div class="rt-panel"><div class="detail-section-title">Score distributions</div><div class="rt-split">'+rtHistogram('cosine',(s.histograms||{}).cosine||[])+rtHistogram('raw BGE logit',(s.histograms||{}).raw_bge_logit||[])+'</div></div></div>';
+  h+='<div class="rt-controls"><select id="rt-purpose" onchange="loadRetrieval()">'+rtOpt('','All purposes',filters.purpose);
+  (s.purposes||[]).forEach(p=>{h+=rtOpt(p.purpose,p.purpose+' ('+(p.requests||0)+')',filters.purpose);});
+  h+='</select><select id="rt-outcome" onchange="loadRetrieval()">'+rtOpt('','All outcomes',filters.outcome)+rtOpt('results','results',filters.outcome)+rtOpt('empty','empty',filters.outcome)+rtOpt('error','error',filters.outcome)+'</select><button class="mbtn" onclick="loadRetrieval()">Refresh</button><a class="mbtn" href="/api/retrieval/export" target="_blank">Export labels</a></div>';
+  h+='<div class="rt-split"><div class="rt-panel"><div class="detail-section-title">Events</div><table class="rt-table"><tr><th>Time</th><th>Purpose</th><th>Outcome</th><th>ANN → returned</th><th>Shadow</th></tr>';
+  (events||[]).forEach(e=>{var f=e.funnel||{}; h+='<tr data-id="'+escA(e.id)+'" onclick="loadRetrievalEvent(this.dataset.id)"><td>'+esc(fmtTime(e.created_at))+'</td><td>'+esc(e.purpose)+'</td><td>'+esc(e.outcome)+'</td><td>'+esc(String(f.ann_unique||0))+' → '+esc(String(f.budget_selected!=null?f.budget_selected:(f.returned||0)))+'</td><td>'+esc(e.shadow_status||'')+'</td></tr>';});
+  h+='</table></div><div id="rt-detail" class="rt-panel"><div class="empty">Select an event to inspect its funnel and candidates.</div></div></div>';
+  h+='<div class="rt-panel" style="margin-top:12px"><div class="detail-section-title">Policy simulator (read-only)</div><div class="rt-controls"><select id="sim-policy"><option>cosine-only</option><option>bge-only</option><option>coarse+bge</option><option>cosine-or-bge</option></select><label>cosine <input id="sim-cos" type="number" step="0.01" value="0.85" style="width:75px"></label><label>BGE logit <input id="sim-bge" type="number" step="0.1" value="-2.5" style="width:75px"></label><button class="mbtn" onclick="runSimulation()">Simulate</button></div><pre id="sim-result" class="detail-content">No live configuration is changed.</pre></div>';
+  el.innerHTML=h;
+  if (rtEvent) renderRetrievalEvent();
+}
+function rtCard(label,value){return '<div class="rt-card"><div class="rt-value">'+esc(String(value))+'</div><div class="rt-label">'+esc(label)+'</div></div>';}
+function rtFunnel(f){var keys=['candidates','cosine_rejected','logit_rejected','sensitive_rejected','parent_dedup','semantic_duplicates','candidate_cap','result_cap','budget_rejected','returned','delivered'];var max=Math.max(1,...keys.map(k=>Number(f[k]||0)));return keys.map(k=>'<div>'+esc(k)+' '+Number(f[k]||0)+'<div class="rt-bar" style="width:'+Math.round(100*Number(f[k]||0)/max)+'%"></div></div>').join('');}
+function rtHistogram(label,rows){var max=Math.max(1,...rows.map(r=>Number(r.count||0)));return '<div><div class="rt-label">'+esc(label)+'</div>'+rows.map(r=>'<div>'+esc(String(r.bucket))+' <span class="rt-bar" style="display:inline-block;width:'+Math.round(100*Number(r.count||0)/max)+'px"></span> '+r.count+'</div>').join('')+'</div>';}
+function fmtTime(v){try{return new Date(v).toLocaleString();}catch(e){return String(v||'');}}
+
+var rtEvent = null;
+var rtCandFilter = '';
+var rtDocs = null;
+var rtOverlayOpen = false;
+var rtSortKey = '__ranked__';
+var rtSortDir = -1;
+function loadRetrievalEvent(id){
+ fetch('/api/retrieval/events/'+encodeURIComponent(id)).then(r=>r.json()).then(e=>{
+  if (!rtEvent || rtEvent.id !== e.id) { rtCandFilter = ''; rtDocs = null; rtSortKey = '__ranked__'; rtSortDir = -1; }
+  rtEvent = e;
+  renderRetrievalEvent();
+  if (rtOverlayOpen) openRtOverlay();
+ });
+}
+function rtDescNullsLast(a, b){
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return b - a;
+}
+function rtRankedCmp(a, b){
+  return rtDescNullsLast(a.blended_score, b.blended_score)
+      || rtDescNullsLast(a.raw_bge_logit, b.raw_bge_logit)
+      || rtDescNullsLast(a.similarity, b.similarity);
+}
+function rtSortRows(rows){
+  var sorted = rows.slice();
+  if (rtSortKey === '__ranked__') { sorted.sort(rtRankedCmp); return sorted; }
+  var dir = rtSortDir;
+  function val(c){
+    if (rtSortKey === 'candidate') return c.schema_name + ':' + c.doc_id;
+    if (rtSortKey === 'returned' || rtSortKey === 'delivered') return c[rtSortKey] ? 1 : 0;
+    if (rtSortKey === 'terminal_reason') return c.terminal_reason || '';
+    return c[rtSortKey];
+  }
+  sorted.sort(function(a, b){
+    var x = val(a), y = val(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    if (x < y) return -1 * dir;
+    if (x > y) return 1 * dir;
+    return 0;
+  });
+  return sorted;
+}
+function rtSetSort(key){
+  if (rtSortKey === key) { rtSortDir = -rtSortDir; }
+  else { rtSortKey = key; rtSortDir = (key === 'vector_rank' || key === 'candidate' || key === 'terminal_reason') ? 1 : -1; }
+  renderRtOverlay();
+}
+function rtResetSort(){
+  rtSortKey = '__ranked__';
+  rtSortDir = -1;
+  renderRtOverlay();
+}
+function rtTh(key, label){
+  var arrow = rtSortKey === key ? (rtSortDir === 1 ? ' ▲' : ' ▼') : '';
+  return '<th data-key="'+escA(key)+'" onclick="rtSetSort(this.dataset.key)" style="cursor:pointer" title="Sort by '+escA(label)+'">'+esc(label)+arrow+'</th>';
+}
+function rtCandVisible(c){
+  if (rtCandFilter === '') return true;
+  if (rtCandFilter === '__accepted__') return !!c.returned;
+  if (rtCandFilter === '__labeled__') return !!(c.feedback && c.feedback.verdict);
+  return (c.terminal_reason || 'unknown') === rtCandFilter;
+}
+function renderRetrievalEvent(){
+  var e = rtEvent, target = document.getElementById('rt-detail');
+  if (!e || !target) return;
+  var f=e.funnel||{}, reasons=f.terminal_reasons||{}, max=Math.max(1,...Object.values(reasons),1);
+  var h='<div class="detail-section-title">'+esc(e.purpose)+' · '+esc(e.outcome)+'</div><div class="cid">'+esc(e.id)+'</div><div class="detail-content">'+esc(e.query_text||('[private query '+e.query_sha256+']'))+'</div><div style="margin:10px 0">';
+  Object.keys(reasons).forEach(k=>{h+='<div>'+esc(k)+' '+reasons[k]+'<div class="rt-bar" style="width:'+Math.round(100*reasons[k]/max)+'%"></div></div>';}); h+='</div>';
+  var fb=e.feedback||{};
+  h+='<div class="rt-controls"><select id="rt-verdict">'+['useful','mixed','noisy','missed','unsure'].map(v=>rtOpt(v,v,fb.verdict||'useful')).join('')+'</select>';
+  h+='<input id="rt-missing" placeholder="expected missing IDs (comma-separated)" style="flex:1" value="'+escA((fb.expected_missing_ids||[]).join(', '))+'">';
+  h+='<input id="rt-note" placeholder="note" value="'+escA(fb.note||'')+'">';
+  h+='<button class="mbtn" onclick="saveRetrievalFeedback()">Save label</button>';
+  if (fb.updated_at) h+='<span class="rt-label">labeled '+esc(fmtTime(fb.updated_at))+'</span>';
+  h+='</div>';
+  var cands=e.candidates||[];
+  var accepted=cands.filter(c=>c.returned);
+  var labeled=cands.filter(c=>c.feedback&&c.feedback.verdict).length;
+  var scored=cands.filter(c=>c.raw_bge_logit!=null).length;
+  h+='<div class="rt-controls"><button class="mbtn" onclick="openRtOverlay()">⤢ Full candidate view</button><span class="rt-label">'+cands.length+' stored · '+accepted.length+' returned · '+scored+' BGE-scored · '+labeled+' labeled</span></div>';
+  h+='<div class="detail-section-title">Returned candidates (final rank order)</div>';
+  h+='<table class="rt-table"><tr><th>Rank</th><th>Candidate</th><th>cosine</th><th>raw logit</th><th>blend</th></tr>';
+  accepted.slice().sort(rtRankedCmp).forEach(c=>{h+='<tr><td>'+esc(String(c.vector_rank||''))+'</td><td>'+esc(c.schema_name+':'+c.doc_id)+'</td><td>'+score(c.similarity)+'</td><td>'+score(c.raw_bge_logit)+'</td><td>'+score(c.blended_score)+'</td></tr>';});
+  h+='</table>';
+  target.innerHTML=h;
+}
+
+function openRtOverlay(){
+  if(!rtEvent) return;
+  rtOverlayOpen = true;
+  if(!document.getElementById('rt-overlay')){
+    var bd=document.createElement('div'); bd.id='rt-overlay-backdrop'; bd.className='rt-overlay-backdrop'; bd.onclick=closeRtOverlay; document.body.appendChild(bd);
+    var ov=document.createElement('div'); ov.id='rt-overlay'; ov.className='rt-overlay'; document.body.appendChild(ov);
+  }
+  if(rtDocs===null){
+    document.getElementById('rt-overlay').innerHTML='<div class="empty">Loading candidate contents...</div>';
+    fetch('/api/retrieval/events/'+encodeURIComponent(rtEvent.id)+'/documents?preview_chars=240')
+      .then(r=>r.json()).then(d=>{rtDocs=d;renderRtOverlay();})
+      .catch(()=>{rtDocs={};renderRtOverlay();});
+  } else renderRtOverlay();
+}
+function closeRtOverlay(){
+  rtOverlayOpen=false;
+  var ov=document.getElementById('rt-overlay'); if(ov)ov.remove();
+  var bd=document.getElementById('rt-overlay-backdrop'); if(bd)bd.remove();
+}
+document.addEventListener('keydown', function(ev){ if(ev.key==='Escape') closeRtOverlay(); });
+function renderRtOverlay(){
+  var ov=document.getElementById('rt-overlay'); var e=rtEvent;
+  if(!ov||!e) return;
+  var cands=e.candidates||[];
+  var byReason={}; cands.forEach(c=>{var k=c.terminal_reason||'unknown';byReason[k]=(byReason[k]||0)+1;});
+  var accepted=cands.filter(c=>c.returned).length;
+  var labeled=cands.filter(c=>c.feedback&&c.feedback.verdict).length;
+  var rows=cands.filter(rtCandVisible);
+  var h='<button class="mbtn rt-close" onclick="closeRtOverlay()">✕ Close (Esc)</button>';
+  h+='<div class="detail-section-title">'+esc(e.purpose)+' · '+esc(e.outcome)+' · '+esc(fmtTime(e.created_at))+'</div>';
+  h+='<div class="detail-content" style="margin-bottom:10px">'+esc(e.query_text||('[private query '+e.query_sha256+']'))+'</div>';
+  h+='<div class="rt-controls"><select onchange="rtCandFilter=this.value;renderRtOverlay()">';
+  h+=rtOpt('','All candidates ('+cands.length+')',rtCandFilter);
+  h+=rtOpt('__accepted__','Accepted / returned ('+accepted+')',rtCandFilter);
+  h+=rtOpt('__labeled__','Labeled ('+labeled+')',rtCandFilter);
+  Object.keys(byReason).sort().forEach(k=>{h+=rtOpt(k,k+' ('+byReason[k]+')',rtCandFilter);});
+  h+='</select><button class="mbtn" onclick="rtResetSort()"'+(rtSortKey==='__ranked__'?' style="background:var(--badge)"':'')+'>Ranked order</button><span class="rt-label">showing '+rows.length+' of '+cands.length+' · click a row for full content · click headers to sort</span></div>';
+  h+='<table class="rt-table"><tr>'+rtTh('vector_rank','Rank')+rtTh('candidate','Candidate')+'<th>Content</th>'+rtTh('similarity','cosine')+rtTh('raw_bge_logit','raw logit')+rtTh('blended_score','blend')+rtTh('terminal_reason','Reason')+rtTh('returned','Ret')+rtTh('delivered','Del')+'<th>Label</th></tr>';
+  rtSortRows(rows).forEach(c=>{
+    var lab=(c.feedback&&c.feedback.verdict)||'';
+    var d=(rtDocs||{})[c.candidate_key];
+    var prev = !d ? '…' : (d.found ? esc(d.text||'')+(d.truncated?'…':'') : '<i>body not mirrored locally</i>');
+    h+='<tr class="rt-row-main" data-key="'+escA(c.candidate_key)+'" onclick="rtToggleDoc(event,this)"'+(c.returned?' style="background:var(--surface2)"':'')+'>';
+    h+='<td>'+esc(String(c.vector_rank||''))+'</td><td>'+esc(c.schema_name+':'+c.doc_id)+'</td>';
+    h+='<td class="rt-preview">'+prev+'</td>';
+    h+='<td>'+score(c.similarity)+'</td><td>'+score(c.raw_bge_logit)+'</td><td>'+score(c.blended_score)+'</td><td>'+esc(c.terminal_reason||'')+'</td><td>'+(c.returned?'✓':'·')+'</td><td>'+(c.delivered?'✓':'·')+'</td>';
+    h+='<td><select data-key="'+escA(c.candidate_key)+'" onchange="saveCandidateFeedback(this)"><option value="">—</option>'+['relevant','irrelevant','unsure'].map(v=>rtOpt(v,v,lab)).join('')+'</select></td></tr>';
+    h+='<tr id="rt-doc-'+escA(c.candidate_key)+'" style="display:none"><td colspan="10"><div class="rt-doc"></div></td></tr>';
+  });
+  h+='</table>';
+  ov.innerHTML=h;
+}
+function rtToggleDoc(ev, tr){
+  if (ev.target.closest('select,option,button,input,a')) return;
+  var key=tr.dataset.key;
+  var docRow=document.getElementById('rt-doc-'+key);
+  if(!docRow) return;
+  if(docRow.style.display!=='none'){ docRow.style.display='none'; return; }
+  docRow.style.display='';
+  var box=docRow.querySelector('.rt-doc');
+  var cached=(rtDocs||{})[key];
+  if(cached && cached.full!=null){ box.textContent=cached.full; return; }
+  if(cached && cached.found===false){ box.textContent='Body not mirrored locally (remote schema).'; return; }
+  box.textContent='Loading full content...';
+  fetch('/api/retrieval/events/'+encodeURIComponent(rtEvent.id)+'/documents?candidate_key='+encodeURIComponent(key))
+    .then(r=>r.json())
+    .then(d=>{ var item=d[key]||{}; if(rtDocs&&rtDocs[key])rtDocs[key].full=item.text; box.textContent=item.found?(item.text||''):'Body not mirrored locally (remote schema).'; })
+    .catch(err=>{ box.textContent='Failed to load: '+err; });
+}
+function score(v){return v==null?'—':Number(v).toFixed(3);}
+function saveRetrievalFeedback(){
+  if(!rtEvent)return;
+  var payload={verdict:document.getElementById('rt-verdict').value,expected_missing_ids:document.getElementById('rt-missing').value.split(',').map(x=>x.trim()).filter(Boolean),note:document.getElementById('rt-note').value};
+  fetch('/api/retrieval/events/'+encodeURIComponent(rtEvent.id)+'/feedback',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>{if(!r.ok)throw Error('HTTP '+r.status);loadRetrievalEvent(rtEvent.id);})
+    .catch(err=>alert('Label save failed: '+err));
+}
+function saveCandidateFeedback(sel){
+  if(!sel.value||!rtEvent)return;
+  var key=sel.dataset.key;
+  fetch('/api/retrieval/events/'+encodeURIComponent(rtEvent.id)+'/candidates/'+encodeURIComponent(key)+'/feedback',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({verdict:sel.value})})
+    .then(r=>{
+      if(!r.ok)throw Error('HTTP '+r.status);
+      sel.style.borderColor='var(--green)';
+      (rtEvent.candidates||[]).forEach(c=>{if(c.candidate_key===key)c.feedback={verdict:sel.value};});
+    })
+    .catch(err=>{sel.style.borderColor='var(--red)';alert('Label save failed: '+err);});
+}
+function runSimulation(){var payload={policy:document.getElementById('sim-policy').value,cosine_threshold:Number(document.getElementById('sim-cos').value),bge_logit_threshold:Number(document.getElementById('sim-bge').value)};fetch('/api/retrieval/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json()).then(x=>{document.getElementById('sim-result').textContent=JSON.stringify(x,null,2)+'\\n\\nCopy config snippet: '+JSON.stringify(x.config_snippet);});}
 
 var adminLoaded = false;
 var adminAutoRefresh = null;

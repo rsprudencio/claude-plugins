@@ -1070,6 +1070,30 @@ class TestDedupIntegration:
         call_args = self.mock_filter.call_args
         assert call_args[0][1] == ""  # No session_id in direct mode
 
+    def test_trace_ack_replaces_legacy_jsonl(self, monkeypatch, capsys):
+        """New servers receive delivery ack; legacy telemetry remains fallback."""
+        matches = [{
+            "content": "memory one", "id": "a.md", "relevance": 0.9,
+            "type": "note", "candidate_key": "candidate-a",
+        }]
+        response = self._make_success_response(matches)
+        response["data"]["trace_id"] = "11111111-1111-1111-1111-111111111111"
+        acks = []
+        monkeypatch.setattr(context_enrichment_module, "post_json", lambda *a, **kw: response)
+        monkeypatch.setattr(
+            context_enrichment_module, "put_json",
+            lambda path, payload, **kw: acks.append((path, payload, kw)) or {"success": True},
+        )
+        monkeypatch.setattr(sys, "argv", ["context_enrichment.py", "What are my goals?"])
+
+        with pytest.raises(SystemExit):
+            context_enrichment_module.main()
+
+        self.mock_telemetry.assert_not_called()
+        assert acks[0][0].endswith("/delivery")
+        assert acks[0][1]["delivered_candidate_keys"] == ["candidate-a"]
+        assert acks[0][1]["delivered_count"] == 1
+
 
 class TestDecayDisabledScoring:
     """When memory.decay.enabled is False, core-like rows route through the

@@ -31,6 +31,11 @@ def _load_json(relative_path: str) -> dict:
     return payload
 
 
+def _base_version(version: str) -> str:
+    """Ignore the Codex-only local-development cachebuster metadata."""
+    return version.split("+codex.", 1)[0]
+
+
 def test_codex_manifests_match_claude_identity_and_mcp_definitions() -> None:
     for plugin_name in CODEX_PLUGIN_NAMES:
         plugin_root = REPO_ROOT / "plugins" / plugin_name
@@ -38,7 +43,7 @@ def test_codex_manifests_match_claude_identity_and_mcp_definitions() -> None:
         codex = _load_json(f"plugins/{plugin_name}/.codex-plugin/plugin.json")
 
         assert codex["name"] == claude["name"] == plugin_root.name
-        assert codex["version"] == claude["version"]
+        assert _base_version(codex["version"]) == claude["version"]
         assert "hooks" not in codex
 
         mcp_path = plugin_root / ".mcp.json"
@@ -66,7 +71,7 @@ def test_marketplaces_contain_every_plugin_without_version_drift() -> None:
 
     for plugin_name in CODEX_PLUGIN_NAMES:
         manifest = _load_json(f"plugins/{plugin_name}/.codex-plugin/plugin.json")
-        assert claude_entries[plugin_name]["version"] == manifest["version"]
+        assert claude_entries[plugin_name]["version"] == _base_version(manifest["version"])
         assert claude_entries[plugin_name]["source"] == f"./plugins/{plugin_name}"
 
         codex_entry = codex_entries[plugin_name]

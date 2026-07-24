@@ -492,6 +492,78 @@ else
 fi
 echo ""
 
+# ═══════════════════════════════════════════════
+# 🧠 Native Host Inference (required)
+# ═══════════════════════════════════════════════
+# The Jarvis image contains no model runtime or weights. Embedding and
+# reranking are served natively on this machine by llama.cpp LaunchAgents
+# (ports 8751/8752); the container reaches them via host.docker.internal.
+
+echo -e "  ${BOLD}Native Host Inference${NC}"
+if curl -sf http://127.0.0.1:8751/health >/dev/null 2>&1 \
+    && curl -sf http://127.0.0.1:8752/health >/dev/null 2>&1; then
+    ok "Host inference services already running (8751 embedding, 8752 reranker)"
+else
+    if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+        fail "This release requires Apple Silicon macOS for native host inference"
+        echo -e "  The Docker image runs no models itself; it depends on host services"
+        echo -e "  (llama.cpp + Metal via launchd) that are only supported on arm64 macOS."
+        echo -e "  Linux/Intel hosts are not supported by this release."
+        echo ""
+        exit 1
+    fi
+    if ! command -v llama-server >/dev/null 2>&1; then
+        fail "llama-server not found"
+        echo -e "  Install llama.cpp first: ${BLUE}brew install llama.cpp${NC}, then re-run this installer."
+        echo ""
+        exit 1
+    fi
+    ok "llama-server: $(command -v llama-server)"
+
+    HOST_INF_DIR="$JARVIS_HOME/host-inference"
+    # JARVIS_REF pins the tooling to a branch/tag/SHA matching a pinned image.
+    HOST_INF_RAW="https://raw.githubusercontent.com/rsprudencio/jarvis/${JARVIS_REF:-master}/host-inference"
+    mkdir -p "$HOST_INF_DIR"
+    for HOST_INF_FILE in host_models.py launchd.py configure.py models.json; do
+        if ! curl -fsSL "$HOST_INF_RAW/$HOST_INF_FILE" -o "$HOST_INF_DIR/$HOST_INF_FILE"; then
+            fail "Could not download host-inference tooling ($HOST_INF_FILE)"
+            exit 1
+        fi
+    done
+    ok "Host inference tooling: $HOST_INF_DIR"
+
+    info "Fetching pinned model weights (first run downloads ~1 GB)..."
+    if ! $PYTHON_CMD "$HOST_INF_DIR/host_models.py" fetch; then
+        fail "Model download failed — see output above"
+        exit 1
+    fi
+
+    info "Installing launchd services (embedding :8751, reranker :8752)..."
+    if ! $PYTHON_CMD "$HOST_INF_DIR/launchd.py" install; then
+        fail "launchd install failed — see output above"
+        exit 1
+    fi
+
+    HOST_INF_OK=false
+    for i in $(seq 1 60); do
+        if curl -sf http://127.0.0.1:8751/health >/dev/null 2>&1 \
+            && curl -sf http://127.0.0.1:8752/health >/dev/null 2>&1; then
+            HOST_INF_OK=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$HOST_INF_OK" = true ]; then
+        ok "Host inference services healthy"
+    else
+        fail "Host inference services did not become healthy"
+        echo -e "  Logs: ${CYAN}$JARVIS_HOME/logs/model-host${NC}"
+        echo -e "  Status: ${BLUE}$PYTHON_CMD $HOST_INF_DIR/launchd.py status${NC}"
+        exit 1
+    fi
+fi
+echo ""
+
 # Pull Docker image
 info "Pulling Docker image: $DOCKER_IMAGE"
 if docker pull "$DOCKER_IMAGE" 2>&1 | tail -2; then
@@ -520,11 +592,15 @@ services:
       - "8741:8741"
       - "8742:8742"
       - "8744:8744"
-      - "8750:8750"
+      - "127.0.0.1:\${JARVIS_EXPLORER_PORT:-8750}:8750"
     volumes:
       - "$VAULT_PATH:/vault"
       - "$JARVIS_HOME:/config"
       - pgdata:/var/lib/postgresql/data
+    extra_hosts:
+      # No-op on Docker Desktop (macOS); required for host.docker.internal
+      # to resolve on Linux engines.
+      - "host.docker.internal:host-gateway"
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault

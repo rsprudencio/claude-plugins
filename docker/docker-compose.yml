@@ -13,10 +13,14 @@ services:
       - "${JARVIS_CORE_PORT:-8741}:8741"
       - "${JARVIS_TODOIST_PORT:-8742}:8742"
       - "${JARVIS_OBSIDIAN_PORT:-8744}:8744"
-      - "${JARVIS_EXPLORER_PORT:-8750}:8750"
+      - "127.0.0.1:${JARVIS_EXPLORER_PORT:-8750}:8750"
     volumes:
       - "${JARVIS_VAULT_PATH:?Set JARVIS_VAULT_PATH to your Obsidian vault}:/vault"
       - "${JARVIS_HOME:-~/.jarvis}:/config"
+    extra_hosts:
+      # No-op on Docker Desktop (macOS); required for host.docker.internal
+      # to resolve on Linux engines.
+      - "host.docker.internal:host-gateway"
     environment:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
@@ -26,6 +30,19 @@ services:
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
       - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
+      # Native inference runs on the host; the image contains no model runtime or weights.
+      - EMBEDDING_BACKEND=${EMBEDDING_BACKEND:-host}
+      - JARVIS_EMBEDDING_MODEL_ID=${JARVIS_EMBEDDING_MODEL_ID:-ibm-granite/granite-embedding-small-english-r2}
+      - JARVIS_MODEL_HOST_URL=${JARVIS_MODEL_HOST_URL:-http://host.docker.internal:8751}
+      - JARVIS_MODEL_HOST_MODEL=${JARVIS_MODEL_HOST_MODEL:-ibm-granite/granite-embedding-small-english-r2}
+      - JARVIS_MODEL_HOST_TIMEOUT_MS=${JARVIS_MODEL_HOST_TIMEOUT_MS:-2000}
+      - RERANKING_ENABLED=${RERANKING_ENABLED:-true}
+      - RERANKING_BACKEND=${RERANKING_BACKEND:-host}
+      - RERANKING_MODEL=${RERANKING_MODEL:-BAAI/bge-reranker-v2-m3}
+      - JARVIS_RERANK_HOST_URL=${JARVIS_RERANK_HOST_URL:-http://host.docker.internal:8752}
+      - JARVIS_RERANK_HOST_TIMEOUT_MS=${JARVIS_RERANK_HOST_TIMEOUT_MS:-1500}
+      - RERANKING_CANDIDATE_COUNT=${RERANKING_CANDIDATE_COUNT:-20}
+      - RERANKING_MAX_LATENCY_MS=${RERANKING_MAX_LATENCY_MS:-1500}
       # AWS IAM database auth (pass from host SSO session)
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}

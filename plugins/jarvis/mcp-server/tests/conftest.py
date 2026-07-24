@@ -376,18 +376,23 @@ def _detect_table(sql):
     """Detect which table a SQL statement targets.
 
     Dual-compatible: matches both old (core/vault) and new (local/obsidian) schema names.
-    Returns: 'core', 'core_active', 'vault', 'meta', 'sync_queue', or 'unknown'
+    Returns: 'core', 'core_active', 'memory_chunks', 'vault', 'meta',
+    'sync_queue', or 'unknown'
     """
     sql_upper = sql.upper()
     if "LOCAL.ACTIVE_MEMORIES" in sql_upper or "CORE.ACTIVE_MEMORIES" in sql_upper:
         return "core_active"
     if "LOCAL.SYNC_QUEUE" in sql_upper or "CORE.SYNC_QUEUE" in sql_upper:
         return "sync_queue"
-    if "LOCAL.MEMORIES" in sql_upper or "CORE.MEMORIES" in sql_upper:
+    primary = re.search(r"\b(?:FROM|INTO|UPDATE)\s+([A-Z0-9_.]+)", sql_upper)
+    primary_table = primary.group(1) if primary else ""
+    if primary_table == "LOCAL.MEMORY_CHUNKS":
+        return "memory_chunks"
+    if primary_table in ("LOCAL.MEMORIES", "CORE.MEMORIES"):
         return "core"
-    if "OBSIDIAN.DOCUMENTS" in sql_upper or "VAULT.DOCUMENTS" in sql_upper:
+    if primary_table in ("OBSIDIAN.DOCUMENTS", "VAULT.DOCUMENTS"):
         return "vault"
-    if "LOCAL.META" in sql_upper or "CORE.META" in sql_upper:
+    if primary_table in ("LOCAL.META", "CORE.META"):
         return "meta"
     # Legacy fallback
     if "JARVIS_META" in sql_upper:
@@ -449,6 +454,10 @@ class MockCursor:
                 self._handle_meta_insert(sql_norm, params)
             elif table == "vault":
                 self._handle_vault_insert(sql_norm, params)
+            elif table == "memory_chunks":
+                self.rowcount = 1
+                self._description = None
+                self._rows = []
             else:
                 self._handle_core_insert(sql_norm, params)
             return
@@ -462,6 +471,10 @@ class MockCursor:
         if sql_upper.lstrip().startswith("DELETE"):
             if table == "vault":
                 self._handle_vault_delete(sql_norm, params)
+            elif table == "memory_chunks":
+                self.rowcount = 0
+                self._description = None
+                self._rows = []
             else:
                 self._handle_core_delete(sql_norm, params)
             return
@@ -475,6 +488,10 @@ class MockCursor:
             elif table in ("core", "core_active"):
                 active_only = table == "core_active"
                 self._handle_core_select(sql_norm, params, active_only)
+            elif table == "memory_chunks":
+                columns = self._extract_select_columns(sql_norm)
+                self._description = [_Col(column) for column in columns]
+                self._rows = []
             else:
                 # Try to route by context
                 if "PG_TOTAL_RELATION_SIZE" in sql_upper:

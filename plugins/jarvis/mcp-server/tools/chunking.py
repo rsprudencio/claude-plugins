@@ -227,6 +227,16 @@ def _split_by_paragraphs(content: str, max_chars: int) -> List[str]:
     paragraphs = re.split(r"\n\n+", content)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
 
+    # A single paragraph (commonly a large fenced block or minified line)
+    # can exceed the requested ceiling by orders of magnitude. Subdivide it
+    # before greedy paragraph merging so every downstream embedding request is
+    # bounded. Prefer line boundaries; hard-slice only when no useful newline
+    # exists within the window.
+    bounded_paragraphs = []
+    for paragraph in paragraphs:
+        bounded_paragraphs.extend(_split_oversized_text(paragraph, max_chars))
+    paragraphs = bounded_paragraphs
+
     if not paragraphs:
         return [content] if content.strip() else []
 
@@ -246,6 +256,27 @@ def _split_by_paragraphs(content: str, max_chars: int) -> List[str]:
         chunks.append(current)
 
     return chunks
+
+
+def _split_oversized_text(content: str, max_chars: int) -> List[str]:
+    """Split one paragraph/block into pieces no larger than ``max_chars``."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be >= 1")
+    remaining = content.strip()
+    pieces = []
+    while len(remaining) > max_chars:
+        split_at = remaining.rfind("\n", 0, max_chars + 1)
+        # Avoid producing a tiny prefix merely because a newline happens near
+        # the beginning of an otherwise large block.
+        if split_at < max_chars // 2:
+            split_at = max_chars
+        piece = remaining[:split_at].strip()
+        if piece:
+            pieces.append(piece)
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        pieces.append(remaining)
+    return pieces
 
 
 def _merge_small_chunks(

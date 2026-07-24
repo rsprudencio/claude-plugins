@@ -17,7 +17,7 @@ import xml.sax.saxutils as saxutils
 from pathlib import Path
 from typing import Tuple
 
-from hook_http_client import post_json
+from hook_http_client import post_json, put_json
 from harness import format_user_prompt_submit_output
 from precompact_dedup import compute_content_hash, filter_already_injected, write_injection_state
 
@@ -312,10 +312,36 @@ def main():
             _debug_log("SKIP", "disabled")
         sys.exit(0)
 
-    matches = result.get("matches", [])
+    returned_matches = result.get("matches", [])
+    matches = returned_matches
 
     # Filter out memories already injected in this compaction window
     matches = filter_already_injected(matches, session_id)
+
+    # The server trace captures budget-selected candidates; this acknowledgement
+    # closes the loop after session-level dedup so the UI shows what the model
+    # actually received. It is deliberately best-effort and short-timeout.
+    trace_id = result.get("trace_id")
+    if trace_id:
+        delivered_keys = [
+            str(match.get("candidate_key")) for match in matches
+            if match.get("candidate_key")
+        ]
+        try:
+            put_json(
+                f"/telemetry/retrieval/{trace_id}/delivery",
+                {
+                    "status": "complete",
+                    "returned_count": len(returned_matches),
+                    "delivered_count": len(matches),
+                    "suppressed_count": len(returned_matches) - len(matches),
+                    "output_chars": sum(len(str(m.get("content", ""))) for m in matches),
+                    "delivered_candidate_keys": delivered_keys,
+                },
+                timeout_seconds=0.5,
+            )
+        except Exception:
+            pass
 
     if matches:
         # Format vault/core memories
@@ -327,7 +353,8 @@ def main():
         write_injection_state(session_id, content_hashes, sources)
 
         # JSONL telemetry (always on, lightweight)
-        _write_telemetry(prompt_text, query_ms, matches, result)
+        if not trace_id:
+            _write_telemetry(prompt_text, query_ms, matches, result)
 
         if debug:
             n_vault = sum(1 for m in matches if m.get("display_mode") == "reference")

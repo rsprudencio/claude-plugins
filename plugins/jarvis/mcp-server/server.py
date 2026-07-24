@@ -620,11 +620,13 @@ def get_background_tasks():
     from tools.todoist_sync import todoist_sync_loop
     from tools.sync_worker import sync_worker_loop
     from tools.sync_pull import get_pull_sync_tasks
+    from tools.retrieval_telemetry import retrieval_telemetry_loop
 
     return [
         pattern_detection_loop(),
         todoist_sync_loop(),
         sync_worker_loop(),
+        retrieval_telemetry_loop(),
         *get_pull_sync_tasks(),
     ]
 
@@ -633,10 +635,15 @@ async def main():
     logger.info("Starting Jarvis Core MCP Server")
 
     # Initialize pgvector schema (idempotent — safe to call every startup)
+    from tools.schema import ensure_schema, check_model_consistency, ModelMismatchError
     try:
-        from tools.schema import ensure_schema, check_model_consistency
         ensure_schema()
         check_model_consistency()
+    except ModelMismatchError as mme:
+        # Mixed embedding spaces silently corrupt every search — refuse to
+        # serve, same as the HTTP transport.
+        logger.critical("FATAL: %s", mme)
+        raise SystemExit(1) from mme
     except Exception as e:
         logger.warning("Schema initialization deferred (database may not be ready): %s", e)
 
@@ -648,8 +655,17 @@ async def main():
         logger.warning("Schema registry rebuild deferred: %s", e)
 
     # Stdio clients have the same first-query latency constraint as HTTP hooks.
+    # A down model host must not prevent serving: retrieval fails open at
+    # runtime, so log loudly and continue degraded.
     from tools.embedding import warm_embedding_service
-    warm_embedding_service()
+    try:
+        warm_embedding_service()
+    except Exception as e:
+        logger.critical(
+            "Embedding warmup failed: %s — serving in DEGRADED mode; "
+            "embedding-dependent operations fail open until the model host "
+            "is reachable again", e,
+        )
 
     async with stdio_server() as (read_stream, write_stream):
         server_task = server.run(

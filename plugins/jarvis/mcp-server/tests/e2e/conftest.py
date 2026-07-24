@@ -66,6 +66,7 @@ def e2e_schema(e2e_database_url):
     from tools.schema import (
         LOCAL_SCHEMA_SQL, OBSIDIAN_SCHEMA_SQL, LOCAL_META_SQL,
         SYNC_SCHEMA_SQL, CONSOLIDATION_SCHEMA_SQL,
+        RETRIEVAL_TELEMETRY_SCHEMA_SQL, LEXICAL_SCHEMA_SQL,
     )
 
     conn = psycopg.connect(e2e_database_url, autocommit=True)
@@ -76,6 +77,9 @@ def e2e_schema(e2e_database_url):
         conn.execute(LOCAL_META_SQL)
         conn.execute(SYNC_SCHEMA_SQL)
         conn.execute(CONSOLIDATION_SCHEMA_SQL)
+        conn.execute(RETRIEVAL_TELEMETRY_SCHEMA_SQL)
+        # Phase 1 hybrid retrieval — lexical tsvector columns + channel column.
+        conn.execute(LEXICAL_SCHEMA_SQL)
     finally:
         conn.close()
 
@@ -191,7 +195,10 @@ def e2e_config(e2e_schema, tmp_path, monkeypatch):
     # ── Teardown: TRUNCATE tables, reset pool ─────────────────────
     try:
         conn = psycopg.connect(db_url, autocommit=True)
-        conn.execute("TRUNCATE local.memories, obsidian.documents, local.meta, local.sync_queue")
+        conn.execute(
+            "TRUNCATE local.memory_chunks, local.memories, obsidian.documents, "
+            "local.meta, local.sync_queue, local.retrieval_events CASCADE"
+        )
         conn.close()
     except Exception:
         pass

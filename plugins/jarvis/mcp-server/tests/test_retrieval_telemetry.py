@@ -1,0 +1,301 @@
+"""Unit contracts for retrieval telemetry and score diagnostics."""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import asdict
+
+
+def test_candidate_trace_cannot_hold_document_bodies():
+    from tools.retrieval_telemetry import CandidateTrace
+
+    fields = asdict(CandidateTrace(schema_name="local", doc_id="obs::1"))
+    assert "document" not in fields
+    assert "content" not in fields
+    assert fields["candidate_key"]
+
+
+def test_retrieval_telemetry_defaults_are_shadow_only(mock_config):
+    from tools.config import get_retrieval_telemetry_config
+
+    cfg = get_retrieval_telemetry_config()
+    assert cfg["enabled"] is True
+    assert cfg["retention_days"] == 30
+    assert cfg["candidate_detail_limit"] == 100
+    assert cfg["shadow"]["enabled"] is True
+    assert "threshold" not in cfg  # no live retrieval policy lives here
+
+
+def test_simulator_is_read_only_and_reports_label_readiness(monkeypatch):
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    rows = [
+        {"event_id": "a", "candidate_key": "1", "similarity": 0.90,
+         "raw_bge_logit": 1.2, "request_label": "useful", "candidate_label": "relevant"},
+        {"event_id": "b", "candidate_key": "2", "similarity": 0.70,
+         "raw_bge_logit": -4.0, "request_label": "noisy", "candidate_label": "irrelevant"},
+    ]
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: rows)
+    result = simulate_policy({"policy": "coarse+bge", "cosine_threshold": 0.85, "bge_logit_threshold": -2.5})
+    assert result["selected_count"] == 1
+    assert result["precision"] == 1.0
+    assert result["recall"] == 1.0
+    assert result["positive_request_recall"] == 1.0
+    assert result["negative_rejection_rate"] == 1.0
+    assert result["recommendation_ready"] is False
+    assert result["config_snippet"] == {"cosine_threshold": 0.85, "bge_logit_threshold": -2.5}
+
+
+def test_simulator_cosine_or_bge_rehearses_production_gate(monkeypatch):
+    """The 'cosine-or-bge' policy mirrors production's recall-additive gate:
+    keep = cosine-pass OR logit-pass. Evaluability requires a similarity (the
+    cosine clause always applies); a missing logit only forgoes the rescue —
+    it does NOT censor the row (unlike bge-only)."""
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    rows = [
+        # cosine passes → kept regardless of a poor logit.
+        {"event_id": "a", "candidate_key": "1", "similarity": 0.90,
+         "raw_bge_logit": -9.0, "request_label": "useful", "candidate_label": "relevant"},
+        # cosine fails, logit rescues → kept.
+        {"event_id": "b", "candidate_key": "2", "similarity": 0.50,
+         "raw_bge_logit": -1.0, "request_label": "useful", "candidate_label": "relevant"},
+        # cosine fails, logit fails → dropped.
+        {"event_id": "c", "candidate_key": "3", "similarity": 0.50,
+         "raw_bge_logit": -9.0, "request_label": "noisy", "candidate_label": "irrelevant"},
+        # cosine fails, NO logit → cosine decides (fail), still evaluable.
+        {"event_id": "d", "candidate_key": "4", "similarity": 0.50,
+         "raw_bge_logit": None, "request_label": "noisy", "candidate_label": "irrelevant"},
+    ]
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: rows)
+
+    result = simulate_policy({
+        "policy": "cosine-or-bge", "cosine_threshold": 0.85,
+        "bge_logit_threshold": -4.0,
+    })
+    # Similarity present on all four → all evaluable (the censoring difference).
+    assert result["scored_count"] == 4
+    assert result["unscored_count"] == 0
+    assert result["selected_count"] == 2  # a (cosine) + b (logit rescue)
+    assert result["precision"] == 1.0
+    assert result["recall"] == 1.0
+
+    # The same missing-logit row IS censored under bge-only.
+    bge = simulate_policy({"policy": "bge-only", "bge_logit_threshold": -4.0})
+    assert bge["unscored_count"] == 1
+    assert bge["scored_count"] == 3
+
+
+def test_structured_host_rerank_preserves_raw_logits(monkeypatch):
+    import tools.reranking as reranking
+
+    class Client:
+        def rerank(self, query, documents):
+            return [-2.0, 3.0]
+
+    monkeypatch.setattr(reranking, "_get_host_client", lambda config: Client())
+    result = reranking.rerank_detailed(
+        "query", ["a", "b"], [0.8, 0.7],
+        {"backend": "host", "model": "bge", "alpha": 0.7, "max_latency_ms": 5000},
+    )
+    assert result.applied is True
+    assert result.raw_logits == [-2.0, 3.0]
+    assert 0 < result.sigmoid_scores[0] < result.sigmoid_scores[1] < 1
+    assert result.backend == "host"
+    assert result.model == "bge"
+
+
+def test_record_event_is_fail_open(monkeypatch):
+    import tools.retrieval_telemetry as telemetry
+
+    monkeypatch.setattr(telemetry, "telemetry_enabled", lambda: True)
+    monkeypatch.setattr(telemetry, "_config", lambda: {
+        "enabled": True, "retention_days": 30, "candidate_detail_limit": 100,
+        "store_user_prompts": True, "shadow": {"enabled": False},
+    })
+    monkeypatch.setattr("tools.schema._get_pool", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+    assert telemetry.record_event(
+        purpose="context_injection", query="hello", candidates=[], funnel={},
+        latency={}, outcome="empty",
+    ) is None
+
+
+def test_schema_has_cascade_and_no_candidate_body_column():
+    from tools.schema import RETRIEVAL_TELEMETRY_SCHEMA_SQL
+
+    candidate_ddl = RETRIEVAL_TELEMETRY_SCHEMA_SQL.split(
+        "CREATE TABLE IF NOT EXISTS local.retrieval_candidates", 1
+    )[1].split("CREATE TABLE IF NOT EXISTS local.retrieval_feedback", 1)[0]
+    assert "ON DELETE CASCADE" in candidate_ddl
+    assert " document " not in candidate_ddl.lower()
+    assert " content " not in candidate_ddl.lower()
+
+
+def test_loop_runs_shadow_job_off_the_event_loop(monkeypatch):
+    """process_one_shadow_job blocks on psycopg + host HTTP calls; the async
+    loop must offload it (asyncio.to_thread) so /hook/prompt-context and MCP
+    traffic never queue behind a shadow rerank."""
+    import asyncio
+    import threading
+
+    import tools.retrieval_telemetry as telemetry
+
+    seen: dict[str, threading.Thread] = {}
+
+    def fake_job() -> bool:
+        seen["thread"] = threading.current_thread()
+        return False
+
+    monkeypatch.setattr(telemetry, "process_one_shadow_job", fake_job)
+    monkeypatch.setattr(telemetry, "cleanup_expired", lambda: 0)
+    monkeypatch.setattr(telemetry, "_config", lambda: {
+        "shadow": {"poll_seconds": 0.25, "max_jobs_per_second": 100},
+    })
+
+    async def run_one_iteration():
+        task = asyncio.ensure_future(telemetry.retrieval_telemetry_loop())
+        for _ in range(200):
+            if "thread" in seen:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run_one_iteration())
+
+    assert "thread" in seen, "shadow job never ran"
+    assert seen["thread"] is not threading.main_thread(), (
+        "shadow job executed on the event loop thread"
+    )
+
+
+def test_simulator_excludes_unscored_candidates_from_bge_metrics(monkeypatch):
+    """Candidates the shadow scorer never reached (NULL logit) must not count
+    as threshold rejections — that deflates bge-policy recall with data that
+    never measured BGE at all."""
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    rows = [
+        # Scored, relevant, passes the gate.
+        {"event_id": "a", "candidate_key": "1", "similarity": 0.90,
+         "raw_bge_logit": 1.2, "request_label": "useful", "candidate_label": "relevant"},
+        # Labeled relevant but never shadow-scored: censored, not a miss.
+        {"event_id": "b", "candidate_key": "2", "similarity": 0.88,
+         "raw_bge_logit": None, "request_label": "useful", "candidate_label": "relevant"},
+    ]
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: rows)
+
+    result = simulate_policy({"policy": "bge-only", "bge_logit_threshold": -2.5})
+    assert result["false_negative"] == 0
+    assert result["recall"] == 1.0
+    assert result["scored_count"] == 1
+    assert result["unscored_count"] == 1
+    assert result["labeled_unscored_count"] == 1
+    # Event b has no evaluable candidate under this policy at all.
+    assert result["requests_excluded_unscored"] == 1
+
+    # The same unscored row IS evaluable under cosine-only.
+    result = simulate_policy({"policy": "cosine-only", "cosine_threshold": 0.85})
+    assert result["scored_count"] == 2
+    assert result["true_positive"] == 2
+
+
+def test_rebuild_live_query_windows_matches_live_tokenizer_split(monkeypatch):
+    """The shadow scorer must split the prompt exactly as live retrieval did
+    (service tokenizer), or refuse — byte-fallback windows have different
+    boundaries and would score candidates against the wrong text."""
+    import tools.embedding as embedding
+    from tools.retrieval_telemetry import _rebuild_live_query_windows
+
+    class FakeService:
+        def tokenize(self, text, with_pieces=True):
+            # Few large pieces: tokenized split keeps the text in ONE window
+            # while the byte fallback would split it in two.
+            chunk = 100
+            return [
+                {"piece": text[i:i + chunk]} for i in range(0, len(text), chunk)
+            ]
+
+    long_text = "x" * 3000  # >2048 bytes, <2048 fake tokens
+
+    monkeypatch.setattr(embedding, "get_embedding_service", lambda: FakeService())
+    windows, error = _rebuild_live_query_windows(long_text, max_index=0)
+    assert error == ""
+    assert windows == [long_text]  # tokenizer path, not byte fallback
+
+    # Index beyond the rebuilt windows means the reconstruction diverged.
+    windows, error = _rebuild_live_query_windows(long_text, max_index=3)
+    assert windows == []
+    assert "exceeds rebuilt window count" in error
+
+
+def test_rebuild_live_query_windows_refuses_untokenizable_long_prompts(monkeypatch):
+    import tools.embedding as embedding
+    from tools.retrieval_telemetry import _rebuild_live_query_windows
+
+    class NoTokenizer:
+        pass
+
+    monkeypatch.setattr(embedding, "get_embedding_service", lambda: NoTokenizer())
+
+    # Short prompts are one window under any splitter — always safe.
+    windows, error = _rebuild_live_query_windows("short prompt", max_index=0)
+    assert windows == ["short prompt"]
+    assert error == ""
+
+    # Long prompts would byte-fallback to different boundaries — refuse.
+    windows, error = _rebuild_live_query_windows("y" * 3000, max_index=1)
+    assert windows == []
+    assert "tokenizer unavailable" in error
+
+
+def test_rebuild_live_query_windows_refuses_when_tokenizer_raises(monkeypatch):
+    """split_text_windows silently byte-falls back when tokenize raises (host
+    outage) — different boundaries than live. The rebuild must refuse, not
+    score candidates against byte-window slices marked 'complete'."""
+    import tools.embedding as embedding
+    from tools.retrieval_telemetry import _rebuild_live_query_windows
+
+    class FailingTokenizer:
+        def tokenize(self, text, with_pieces=True):
+            raise ConnectionError("host tokenizer timeout")
+
+    monkeypatch.setattr(embedding, "get_embedding_service", lambda: FailingTokenizer())
+
+    windows, error = _rebuild_live_query_windows("z" * 3000, max_index=0)
+    assert windows == []
+    assert "tokenizer failed" in error
+
+    # Short prompts never tokenize (single window under any splitter) — safe.
+    windows, error = _rebuild_live_query_windows("short", max_index=0)
+    assert windows == ["short"]
+    assert error == ""
+
+
+def test_candidate_row_cut_never_drops_returned_candidates():
+    """ANN overfetch can trace more rows than candidate_detail_limit; delivery
+    marking, shadow scoring, and label export all join on the returned rows,
+    so they must win the cut."""
+    from tools.retrieval_telemetry import CandidateTrace, _select_candidate_rows
+
+    rejected = [
+        CandidateTrace(schema_name="obsidian", doc_id=f"doc-{i}", vector_rank=i)
+        for i in range(1, 120)
+    ]
+    deep_returned = CandidateTrace(
+        schema_name="local", doc_id="memory-deep", vector_rank=130, returned=True
+    )
+
+    kept = _select_candidate_rows([*rejected, deep_returned], limit=100)
+    assert len(kept) == 100
+    assert any(c.doc_id == "memory-deep" for c in kept)
+
+    # Under the limit nothing is reordered or dropped.
+    kept = _select_candidate_rows(rejected[:5], limit=100)
+    assert [c.doc_id for c in kept] == [f"doc-{i}" for i in range(1, 6)]

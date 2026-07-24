@@ -600,6 +600,14 @@
       "schemas": { "type": "string", "default": "all", "description": "Which schemas to search: 'all' (default), 'local', 'obsidian', or comma-separated (e.g. 'local,remote_personio')" }
     },
 
+    "memory_retrieval_telemetry": {
+      "enabled": { "type": "boolean", "default": true, "description": "Persist score-only semantic retrieval traces without changing live selection" },
+      "retention_days": { "type": "integer", "default": 30, "description": "Trace and feedback retention period" },
+      "store_user_prompts": { "type": "boolean", "default": true, "description": "Store full user-facing prompts; internal document-derived searches remain hash/reference only" },
+      "candidate_detail_limit": { "type": "integer", "default": 100, "description": "Maximum candidate locator/score rows stored per retrieval" },
+      "shadow": { "type": "object", "description": "Durable host-BGE shadow scoring controls; shadow results never mutate live retrieval policy" }
+    },
+
     "memory_chunking": {
       "enabled": { "type": "boolean", "default": true, "description": "Enable markdown heading-based chunking for per-section embeddings" },
       "min_chunk_chars": { "type": "integer", "default": 200, "description": "Minimum chunk size before merging with adjacent chunk" },
@@ -622,12 +630,16 @@
     },
 
     "memory_reranking": {
-      "enabled": { "type": "boolean", "default": false, "description": "Enable cross-encoder reranking for query_vault() results. Disabled by default: ms-marco-MiniLM measured net-negative (\u22120.055 nDCG@10). Uses ONNX model (~23MB, downloaded on first use)." },
-      "candidate_count": { "type": "integer", "default": 100, "description": "How many results to over-fetch from pgvector for reranking" },
+      "enabled": { "type": "boolean", "default": false, "description": "Enable cross-encoder reranking for explicit recall and context enrichment. Disabled by default until a reranker backend is configured." },
+      "backend": { "type": "string", "default": "onnx", "options": ["onnx", "host"], "description": "Reranker inference backend. Host mode uses a native llama.cpp-compatible service." },
+      "model": { "type": "string", "default": "BAAI/bge-reranker-v2-m3", "description": "Stable reranker model identity/API alias" },
+      "candidate_count": { "type": "integer", "default": 20, "description": "How many results to over-fetch from pgvector for reranking" },
       "top_k": { "type": "integer", "default": 10, "description": "Legacy reranking cap; the caller's n_results decides the final result count" },
       "alpha": { "type": "float", "default": 0.7, "description": "Blend weight: 0.0=vector only, 1.0=reranker only, 0.7=recommended blend" },
-      "max_latency_ms": { "type": "integer", "default": 1000, "description": "Latency budget — if exceeded, falls back to vector scores" },
-      "batch_size": { "type": "integer", "default": 32, "description": "Tokenization batch size for ONNX inference" }
+      "max_latency_ms": { "type": "integer", "default": 1500, "description": "Latency budget — if exceeded, falls back to vector scores" },
+      "batch_size": { "type": "integer", "default": 32, "description": "Tokenization batch size for ONNX inference" },
+      "host_url": { "type": "string", "default": "http://host.docker.internal:8752", "description": "Native reranker service URL used by the host backend" },
+      "host_timeout_ms": { "type": "integer", "default": 1500, "description": "Per-request host reranker timeout" }
     },
 
     "memory_worklog": {

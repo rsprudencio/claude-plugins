@@ -184,7 +184,43 @@ def find_consolidation_candidates(
 
     # Step 5: Sort by total importance descending, cap at max_clusters
     clusters.sort(key=lambda c: c.total_importance, reverse=True)
-    return clusters[:max_clusters]
+    selected_clusters = clusters[:max_clusters]
+    try:
+        from .retrieval_telemetry import CandidateTrace, record_event
+
+        selected_ids = {
+            memory_id for cluster in selected_clusters for memory_id in cluster.memory_ids
+        }
+        record_event(
+            purpose="consolidation", query="", pipeline="ann-clustering",
+            user_facing=False, query_ref="local.active_memories",
+            candidates=[
+                CandidateTrace(
+                    schema_name="local", doc_id=str(memory["id"]),
+                    parent_id=str(memory["id"]), vector_rank=index,
+                    pre_score=float(memory["importance_score"]),
+                    terminal_reason="selected" if memory["id"] in selected_ids else "candidate_cap",
+                    returned=memory["id"] in selected_ids,
+                )
+                for index, memory in enumerate(memories, 1)
+            ],
+            funnel={
+                "memories_scanned": len(memories),
+                "clusters_found": len(clusters),
+                "clusters_returned": len(selected_clusters),
+                "members_returned": len(selected_ids),
+            },
+            latency={"total_ms": round((time.time() - start) * 1000, 2)},
+            outcome="results" if selected_clusters else "empty",
+            config_snapshot={
+                "similarity_threshold": similarity_threshold,
+                "min_cluster_size": min_cluster_size,
+                "max_clusters": max_clusters,
+            }, shadow_eligible=False,
+        )
+    except Exception:
+        pass
+    return selected_clusters
 
 
 def _load_cluster_contents(cluster: MemoryCluster) -> MemoryCluster:
@@ -305,9 +341,12 @@ def apply_consolidation(
     if cluster is None:
         return {"error": "No cluster attached to result"}
 
-    # Generate embedding for consolidated content
+    # Generate bounded search windows for consolidated canonical content.
     service = get_embedding_service()
-    embedding = service.encode(result.content)
+    from .document_index import prepare_document, replace_local_chunks
+
+    prepared = prepare_document(result.content, service)
+    embedding = prepared.canonical_embedding
 
     # Idempotency key from sorted source IDs
     idem_key = cluster.idempotency_key
@@ -344,6 +383,7 @@ def apply_consolidation(
                 (new_id, result.content, embedding, result.importance,
                  run_id, metadata_to_jsonb(meta)),
             )
+            replace_local_chunks(cur, new_id, prepared)
 
             # 2. UPDATE originals: supersede them
             cur.execute(

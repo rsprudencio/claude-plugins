@@ -7,6 +7,7 @@ from tools.chunking import (
     _find_heading_positions,
     _split_at_positions,
     _split_by_paragraphs,
+    _split_oversized_text,
     _merge_small_chunks,
     Chunk,
     ChunkResult,
@@ -130,6 +131,18 @@ class TestSplitByParagraphs:
     def test_empty_content(self):
         chunks = _split_by_paragraphs("", max_chars=100)
         assert chunks == []
+
+    def test_single_oversized_paragraph_is_hard_bounded(self):
+        chunks = _split_by_paragraphs("A" * 501, max_chars=100)
+        assert len(chunks) == 6
+        assert all(len(chunk) <= 100 for chunk in chunks)
+        assert "".join(chunks) == "A" * 501
+
+    def test_oversized_block_prefers_line_boundaries(self):
+        content = "\n".join(["line-" + str(i).zfill(2) for i in range(30)])
+        chunks = _split_oversized_text(content, max_chars=60)
+        assert all(len(chunk) <= 60 for chunk in chunks)
+        assert all(not chunk.startswith("\n") for chunk in chunks)
 
 
 class TestMergeSmallChunks:

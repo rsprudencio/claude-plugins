@@ -16,6 +16,7 @@ from tools.query import (
     _build_core_filter,
     _build_vault_filter,
     _semantic_deduplicate_context,
+    _search_query_windows,
     semantic_context,
 )
 from tools.ranking import compute_unified_score
@@ -77,6 +78,43 @@ class TestDisplayPath:
 
     def test_obs_prefix_stripped(self):
         assert _display_path("obs::1738857000000") == "1738857000000"
+
+
+def test_large_query_searches_every_bounded_window(monkeypatch):
+    from tools import query as query_module
+
+    monkeypatch.setattr(query_module, "_QUERY_WINDOW_TOKENS", 4)
+    monkeypatch.setattr(query_module, "_QUERY_WINDOW_OVERLAP", 1)
+    service = MagicMock()
+    service.tokenize.side_effect = lambda text, with_pieces=False: [
+        {"id": index, "piece": char} for index, char in enumerate(text)
+    ]
+    service.encode_batch.return_value = [[1.0], [2.0], [3.0]]
+
+    def search(vector, *_args, **_kwargs):
+        value = int(vector[0])
+        return [
+            {
+                "id": f"obs::{value}",
+                "_schema": "local",
+                "distance": 0.1,
+                "document": f"document {value}",
+            }
+        ]
+
+    with patch(
+        "tools.query._expand_query",
+        side_effect=lambda text, _config: {
+            "expanded": text,
+            "terms_added": [],
+            "intent": None,
+        },
+    ), patch("tools.query._cross_schema_search", side_effect=search) as cross_search:
+        rows, expansion = _search_query_windows("abcdefghij", service, 5)
+
+    assert [row["id"] for row in rows] == ["obs::1", "obs::2", "obs::3"]
+    assert expansion["base_window_count"] == 3
+    assert cross_search.call_count == 3
 
 
 class TestQueryVault:

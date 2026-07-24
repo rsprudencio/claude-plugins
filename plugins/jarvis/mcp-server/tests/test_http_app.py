@@ -56,6 +56,88 @@ def test_app_creates_successfully():
     assert callable(app)
 
 
+def _reloaded_app(monkeypatch, *, warm=lambda: 0.0, consistency=lambda: None):
+    monkeypatch.setattr("tools.embedding.warm_embedding_service", warm)
+    monkeypatch.setattr("tools.schema.ensure_schema", lambda: None)
+    monkeypatch.setattr("tools.schema.check_model_consistency", consistency)
+    monkeypatch.setattr("tools.schema_registry.rebuild_registry", lambda: None)
+    monkeypatch.setattr("server.get_background_tasks", lambda: [])
+    import http_app as mod
+
+    importlib.reload(mod)
+    return mod
+
+
+def test_startup_serves_degraded_when_embedding_warmup_fails(monkeypatch):
+    """A down model host must not zombie or kill the server at boot.
+
+    Runtime retrieval fails open when the host service dies, so startup must
+    behave the same: log loudly, complete startup, and serve MCP traffic.
+    """
+    def raise_warmup():
+        raise ConnectionError("model host unreachable")
+
+    mod = _reloaded_app(monkeypatch, warm=raise_warmup)
+    with TestClient(mod.app, raise_server_exceptions=False) as c:
+        assert c.get("/health").status_code == 200
+
+
+def test_model_mismatch_aborts_startup_instead_of_serving(monkeypatch):
+    """Mixed embedding spaces must abort startup via lifespan.startup.failed.
+
+    Raising (even SystemExit) from the lifespan handler is swallowed by
+    uvicorn's lifespan="auto" and leaves a zombie server; the ASGI
+    startup.failed message is the only reliable abort signal.
+    """
+    from tools.schema import ModelMismatchError
+
+    def raise_mismatch():
+        raise ModelMismatchError("database has 'old' but config specifies 'new'")
+
+    mod = _reloaded_app(monkeypatch, consistency=raise_mismatch)
+    with pytest.raises(ModelMismatchError):
+        with TestClient(mod.app, raise_server_exceptions=False):
+            pass
+
+
+def test_model_mismatch_emits_lifespan_startup_failed_message(monkeypatch):
+    """The load-bearing part of the abort is the ASGI startup.failed message —
+    uvicorn (lifespan="auto") ignores a bare raise from the handler and keeps
+    serving. Drive the lifespan protocol directly and assert the message is
+    sent; the raise-only variant would pass the TestClient test above but
+    reintroduce the zombie."""
+    import asyncio
+
+    from tools.schema import ModelMismatchError
+
+    def raise_mismatch():
+        raise ModelMismatchError("database has 'old' but config specifies 'new'")
+
+    mod = _reloaded_app(monkeypatch, consistency=raise_mismatch)
+
+    sent = []
+    inbox = [{"type": "lifespan.startup"}]
+
+    async def receive():
+        return inbox.pop(0)
+
+    async def send(message):
+        sent.append(message)
+
+    async def drive():
+        scope = {"type": "lifespan", "asgi": {"version": "3.0"}}
+        with pytest.raises(ModelMismatchError):
+            await mod.app(scope, receive, send)
+
+    asyncio.run(drive())
+
+    assert any(m.get("type") == "lifespan.startup.failed" for m in sent), (
+        "handler raised without sending lifespan.startup.failed — uvicorn "
+        "would keep serving as a zombie"
+    )
+    assert not any(m.get("type") == "lifespan.startup.complete" for m in sent)
+
+
 def test_health_endpoint(client):
     """GET /health should return minimal liveness response — no DB, no secrets."""
     response = client.get("/health")
@@ -156,6 +238,27 @@ def test_hook_prompt_context_malformed_body(client):
     )
     assert response.status_code == 400
     assert response.json()["success"] is False
+
+
+def test_retrieval_delivery_ack(client, monkeypatch):
+    """Hook delivery acknowledgement is additive and best-effort."""
+    import tools.retrieval_telemetry as telemetry
+
+    seen = {}
+
+    def fake_ack(trace_id, payload):
+        seen.update({"trace_id": trace_id, "payload": payload})
+        return True
+
+    monkeypatch.setattr(telemetry, "acknowledge_delivery", fake_ack)
+    response = client.put(
+        "/telemetry/retrieval/11111111-1111-1111-1111-111111111111/delivery",
+        json={"delivered_count": 1, "delivered_candidate_keys": ["abc"]},
+    )
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert seen["trace_id"] == "11111111-1111-1111-1111-111111111111"
+    assert seen["payload"]["delivered_candidate_keys"] == ["abc"]
 
 
 def test_hook_auto_extract_context_success(client, monkeypatch):

@@ -234,9 +234,12 @@ def content_write(
                     "deduplicated": True,
                 }
 
-        # Generate embedding
+        # Preserve canonical content while embedding bounded search windows.
         service = get_embedding_service()
-        embedding = service.encode(content)
+        from .document_index import prepare_document, replace_local_chunks
+
+        prepared = prepare_document(content, service)
+        embedding = prepared.canonical_embedding
 
         now = datetime.now(timezone.utc)
         now_ts = now
@@ -277,6 +280,7 @@ def content_write(
                         now_ts,
                     ),
                 )
+                replace_local_chunks(cur, doc_id, prepared)
 
                 # Transactional outbox: evaluate routing + enqueue sync
                 # within the same transaction as the memory INSERT
@@ -647,9 +651,12 @@ def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
                         "superseded_by"):
             metadata.pop(old_key, None)
 
-        # Re-embed the updated content
+        # Re-embed every bounded window while retaining canonical content.
         service = get_embedding_service()
-        embedding = service.encode(content)
+        from .document_index import prepare_document, replace_local_chunks
+
+        prepared = prepare_document(content, service)
+        embedding = prepared.canonical_embedding
 
         now = datetime.now(timezone.utc)
 
@@ -684,6 +691,7 @@ def content_upsert(doc_id: str, content: str, metadata: dict) -> dict:
                         metadata_to_jsonb(metadata),
                     ),
                 )
+                replace_local_chunks(cur, doc_id, prepared)
                 # Transactional outbox: evaluate routing + enqueue sync
                 try:
                     from .config import get_sync_config

@@ -175,9 +175,12 @@ def memory_write(
             else content
         )
 
-        # Generate embedding
+        # Preserve the full file while embedding bounded search windows.
         service = get_embedding_service()
-        embedding = service.encode(full_content)
+        from .document_index import prepare_document, replace_local_chunks
+
+        prepared = prepare_document(full_content, service)
+        embedding = prepared.canonical_embedding
 
         # Build remaining JSONB metadata (only non-column fields)
         jsonb_meta = {"name": name}
@@ -219,6 +222,7 @@ def memory_write(
                         now_iso,
                     ),
                 )
+                replace_local_chunks(cur, doc_id, prepared)
 
                 # Transactional outbox: evaluate routing + enqueue sync
                 # within the same transaction as the memory INSERT

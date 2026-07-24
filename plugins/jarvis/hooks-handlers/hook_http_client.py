@@ -60,13 +60,14 @@ def _join_url(base_url: str, endpoint_path: str) -> str:
     return f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}"
 
 
-def post_json(
+def _request_json(
+    method: str,
     endpoint_path: str,
     payload: dict,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     mcp_json_path: str | Path | None = None,
 ) -> dict:
-    """POST JSON payload to a local hook endpoint.
+    """Send JSON to a local hook endpoint.
 
     Returns a normalized contract:
       {"success": bool, "data": dict|None, "error": str}
@@ -78,7 +79,7 @@ def post_json(
     req = request.Request(
         url=url,
         data=body,
-        method="POST",
+        method=method,
         headers={"Content-Type": "application/json"},
     )
 
@@ -116,3 +117,25 @@ def post_json(
         detail = decoded.get("error") or "request_failed"
         return {"success": False, "data": decoded, "error": str(detail)}
     return {"success": True, "data": decoded, "error": ""}
+
+
+def post_json(
+    endpoint_path: str,
+    payload: dict,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    mcp_json_path: str | Path | None = None,
+) -> dict:
+    return _request_json(
+        "POST", endpoint_path, payload, timeout_seconds, mcp_json_path
+    )
+
+
+def put_json(
+    endpoint_path: str,
+    payload: dict,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    mcp_json_path: str | Path | None = None,
+) -> dict:
+    return _request_json(
+        "PUT", endpoint_path, payload, timeout_seconds, mcp_json_path
+    )
