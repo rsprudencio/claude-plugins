@@ -202,6 +202,7 @@ def get_chunking_config() -> dict:
         "max_chunk_chars": 1500,
         "heading_levels": [2, 3],
         "contextual_embeddings": True,
+        "contextual_summaries": {},
     }
     return _merge_with_defaults(defaults, _get_memory_section("chunking"))
 
@@ -217,6 +218,59 @@ def get_contextual_embeddings_enabled() -> bool:
     (requires a force-reindex to take effect on already-stored embeddings).
     """
     return bool(get_chunking_config().get("contextual_embeddings", True))
+
+
+def get_contextual_summaries_config() -> dict:
+    """Get LLM-generated document summary configuration with defaults.
+
+    Lives at ``memory.chunking.contextual_summaries``. One Haiku-written
+    situating sentence per FILE is cached in ``obsidian.document_context`` and
+    prepended (after the mechanical path/title line) to every fragment of that
+    file at embed and rerank time.
+
+    Keys:
+        enabled: master switch. False ⇒ mechanical augmentation only.
+        model: LLM used for generation (recorded alongside each cached summary).
+        max_chars: cap on the summary line inside the prefix.
+        body_excerpt_chars: how much of the document body the prompt may carry.
+        max_generations_per_run: hard ceiling on LLM calls per indexing run;
+            files beyond it degrade to mechanical for that run and are picked up
+            by the next one (their content_hash still misses the cache).
+        concurrency: parallel generation calls (small — this runs inside the
+            indexing path).
+
+    The nested dict is merged onto these defaults explicitly because
+    ``_merge_with_defaults`` is shallow: a user who sets only ``enabled`` must
+    still get the shipped model, caps, and concurrency.
+    """
+    defaults = {
+        "enabled": True,
+        "model": "claude-haiku-4-5-20251001",
+        "max_chars": 200,
+        "body_excerpt_chars": 2000,
+        "max_generations_per_run": 500,
+        "concurrency": 4,
+    }
+    return _merge_with_defaults(
+        defaults, get_chunking_config().get("contextual_summaries", {})
+    )
+
+
+def get_contextual_augmentation_mode() -> str:
+    """Resolve the active augmentation mode: 'none' | 'mechanical' | 'summary'.
+
+    These are three DIFFERENT embedding spaces, which is why the mode (not a
+    two-value flag) is what gets recorded in ``local.meta.embedding_config``
+    and stamped into retrieval telemetry. A two-value flag could not tell
+    "mechanical" from "summary" and would let a user silently run a mixed space.
+    """
+    from .chunk_context import MODE_MECHANICAL, MODE_NONE, MODE_SUMMARY
+
+    if not get_contextual_embeddings_enabled():
+        return MODE_NONE
+    if get_contextual_summaries_config().get("enabled", True):
+        return MODE_SUMMARY
+    return MODE_MECHANICAL
 
 
 def get_scoring_config() -> dict:
@@ -265,6 +319,11 @@ def get_retrieval_telemetry_config() -> dict:
             "retry_base_seconds": 30,
             "retry_backoff_factor": 4,
             "retry_max_seconds": 900,
+            # Shadow scoring is a background job: generous budgets, because the
+            # live path's 1.5s user-facing timeout systematically censored long
+            # multi-window prompts from the calibration corpus.
+            "host_timeout_ms": 15000,
+            "max_latency_ms": 60000,
         },
     }
     config = _merge_with_defaults(

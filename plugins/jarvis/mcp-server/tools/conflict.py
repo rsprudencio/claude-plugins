@@ -244,11 +244,38 @@ Return {{"contradicted": []}} if none are contradicted.
 """
 
 
-def _call_haiku_raw(prompt: str, max_tokens: int = 200) -> Optional[str]:
+DEFAULT_HAIKU_MODEL = "claude-haiku-4-5-20251001"
+
+
+def haiku_available() -> bool:
+    """Whether either Haiku backend could plausibly run in this process.
+
+    Mirrors the prerequisite logic of the hooks-handlers extraction pipeline
+    (``ANTHROPIC_API_KEY`` for the SDK path, a ``claude`` binary for the CLI
+    path). Callers use this to decide ONCE per run whether to attempt LLM work
+    at all, instead of paying a failed call per item.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    import shutil
+
+    return shutil.which("claude") is not None
+
+
+def _call_haiku_raw(
+    prompt: str,
+    max_tokens: int = 200,
+    model: Optional[str] = None,
+    timeout: int = 30,
+) -> Optional[str]:
     """Call Haiku and return raw response text (API first, CLI fallback).
 
     Lightweight wrapper -- avoids importing the hooks-handlers extraction
-    pipeline which parses responses into observation dicts.
+    pipeline which parses responses into observation dicts. Shared by conflict
+    verification and contextual document summaries (tools/context_summary.py);
+    ``model`` selects the API model (the CLI path always uses its ``haiku``
+    alias). Returns None on any failure — callers decide what a missing
+    response means.
     """
     # Try Anthropic SDK first
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -258,7 +285,7 @@ def _call_haiku_raw(prompt: str, max_tokens: int = 200) -> Optional[str]:
 
             client = anthropic.Anthropic(api_key=api_key)
             response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=model or DEFAULT_HAIKU_MODEL,
                 max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
@@ -283,7 +310,7 @@ def _call_haiku_raw(prompt: str, max_tokens: int = 200) -> Optional[str]:
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
             env=env,
         )
         if result.returncode == 0:

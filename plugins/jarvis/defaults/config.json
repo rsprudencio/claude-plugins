@@ -65,7 +65,9 @@
         "max_jobs_per_second": 1,
         "retry_base_seconds": 30,
         "retry_backoff_factor": 4,
-        "retry_max_seconds": 900
+        "retry_max_seconds": 900,
+        "host_timeout_ms": 15000,
+        "max_latency_ms": 60000
       }
     },
     "chunking": {
@@ -76,7 +78,15 @@
         2,
         3
       ],
-      "contextual_embeddings": true
+      "contextual_embeddings": true,
+      "contextual_summaries": {
+        "enabled": true,
+        "model": "claude-haiku-4-5-20251001",
+        "max_chars": 200,
+        "body_excerpt_chars": 2000,
+        "max_generations_per_run": 500,
+        "concurrency": 4
+      }
     },
     "scoring": {
       "enabled": true,

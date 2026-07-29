@@ -274,6 +274,30 @@ $$;
 VAULT_SCHEMA_SQL = OBSIDIAN_SCHEMA_SQL
 
 
+# LLM-generated document context: ONE situating sentence per FILE, cached.
+#
+# A separate table (not a column on obsidian.documents) because the summary is a
+# property of the FILE, not of the fragment: a 90-chunk document would otherwise
+# store 90 identical copies and every reindex would have to keep them in sync.
+# ``content_hash`` is the sha256 of the document text the summary was generated
+# from, so an unchanged file never re-calls the LLM across reindexes; a changed
+# file misses the cache and regenerates. ``model`` records which model wrote it.
+#
+# There is deliberately no FK to obsidian.documents: rows survive a
+# force-reindex (which deletes and reinserts every chunk), which is exactly the
+# cache-reuse property the table exists for. Orphans are harmless — they are
+# only ever read by parent_file lookup.
+DOCUMENT_CONTEXT_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS obsidian.document_context (
+    parent_file TEXT PRIMARY KEY,
+    summary TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    model TEXT NOT NULL,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
 # Phase 1 hybrid retrieval — statistical (lexical) recall channel.
 # Generated STORED tsvector columns + GIN indexes give a full-text recall
 # channel alongside the bi-encoder ANN channel. `to_tsvector('english', …)`
@@ -750,6 +774,8 @@ def ensure_schema() -> None:
             # Create both schemas and tables (idempotent)
             conn.execute(LOCAL_SCHEMA_SQL.format(dimensions=dims))
             conn.execute(OBSIDIAN_SCHEMA_SQL.format(dimensions=dims))
+            # Per-file LLM summary cache (idempotent; needs the obsidian schema)
+            conn.execute(DOCUMENT_CONTEXT_SCHEMA_SQL)
             conn.execute(LOCAL_META_SQL)
             conn.execute(RETRIEVAL_TELEMETRY_SCHEMA_SQL)
 
@@ -984,12 +1010,13 @@ def check_model_consistency() -> None:
         logger.info("Model consistency check skipped (JARVIS_SKIP_MODEL_CHECK=1)")
         return
 
-    from .config import get_contextual_embeddings_enabled, get_embedding_config
+    from .chunk_context import normalize_augmentation_mode
+    from .config import get_contextual_augmentation_mode, get_embedding_config
     from .embedding import get_embedding_model_identity
 
     emb = get_embedding_config()
     model_identity = get_embedding_model_identity(emb)
-    contextual = bool(get_contextual_embeddings_enabled())
+    contextual = get_contextual_augmentation_mode()
     stored = get_meta("embedding_config")
 
     if stored is None:
@@ -1028,17 +1055,23 @@ def check_model_consistency() -> None:
         )
 
     # Chunk-context augmentation is part of the embedding-space identity for
-    # vault chunks: flipping the flag (or upgrading) without re-embedding
-    # leaves a mixed space. WARN rather than refuse — the degradation is
-    # gradual ranking skew, not garbage, and refusing would take the embedded
-    # PostgreSQL down with the server, leaving no way to run the reindex.
-    stored_contextual = bool(stored.get("contextual_chunks", False))
+    # vault chunks: changing the MODE (none/mechanical/summary) without
+    # re-embedding leaves a mixed space. A two-value flag could not distinguish
+    # mechanical from summary augmentation, so the recorded value is the mode;
+    # legacy booleans are migrated on read (True → 'mechanical', False → 'none').
+    # WARN rather than refuse — the degradation is gradual ranking skew, not
+    # garbage, and refusing would take the embedded PostgreSQL down with the
+    # server, leaving no way to run the reindex.
+    stored_contextual = normalize_augmentation_mode(
+        stored.get("contextual_chunks", False)
+    )
     if stored_contextual != contextual:
         logger.critical(
             "Chunk-context augmentation mismatch: vault vectors were indexed "
-            "with contextual_chunks=%s but config now says %s. Vault ranking "
+            "in '%s' mode but config now says '%s'. Vault ranking "
             "is skewed until re-embedded — run jarvis_index_vault(force=true) "
             "or bin/reindex_embeddings.py --store obsidian (or restore "
-            "memory.chunking.contextual_embeddings).",
+            "memory.chunking.contextual_embeddings / "
+            "memory.chunking.contextual_summaries.enabled).",
             stored_contextual, contextual,
         )

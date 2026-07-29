@@ -757,6 +757,29 @@ def requeue_failed_shadow_jobs(max_age_days: int = 7) -> int:
     return int((row or {}).get("count", 0))
 
 
+def _shadow_rerank_config(live_config: dict, shadow: dict) -> dict:
+    """Widen the reranker budget for background shadow scoring.
+
+    Latency budgets in the reranking config exist to protect the USER-FACING
+    path (the injection hook has ~2.5s total). Shadow scoring is a background
+    job nobody waits for, and inheriting the tight live budget systematically
+    censors long multi-window prompts: measured 121/121 short prompts complete
+    vs 6/13 long prompts (>4k chars) failing with "model host request timed
+    out" — precisely the events the calibration corpus most needs. Trade
+    latency for completeness, never narrowing an already-generous live value.
+    """
+    merged = dict(live_config or {})
+    merged["host_timeout_ms"] = max(
+        int(merged.get("host_timeout_ms") or 1500),
+        int(shadow.get("host_timeout_ms", 15000)),
+    )
+    merged["max_latency_ms"] = max(
+        int(merged.get("max_latency_ms") or 1500),
+        int(shadow.get("max_latency_ms", 60000)),
+    )
+    return merged
+
+
 def _mark_shadow_skipped(pool, event_id: str, reason: str) -> None:
     with pool.connection() as conn:
         conn.execute(
@@ -862,7 +885,7 @@ def process_one_shadow_job() -> bool:
     event_id, query_text, query_ref, _, model_snapshot, attempts, config_snapshot = event
     max_attempts = max(1, int(shadow.get("max_attempts", 3)))
     try:
-        rerank_cfg = get_reranking_config()
+        rerank_cfg = _shadow_rerank_config(get_reranking_config(), shadow)
         expected_model = (model_snapshot or {}).get("reranker_model")
         if expected_model and expected_model != rerank_cfg.get("model"):
             _mark_shadow_skipped(

@@ -351,3 +351,46 @@ def test_shadow_claim_query_respects_next_attempt_gate():
     normalized = " ".join(source.split())
     assert "shadow_next_attempt_at IS NULL" in normalized
     assert "shadow_next_attempt_at <= now()" in normalized
+
+
+def test_shadow_scoring_widens_budget_beyond_live_hook_limits():
+    """The live reranker budget (1.5s) protects the user-facing hook. Shadow
+    scoring is a background job; inheriting that budget systematically censored
+    long multi-window prompts (measured: 121/121 short prompts complete vs 6/13
+    long prompts timing out)."""
+    import json
+    from pathlib import Path
+
+    from tools.retrieval_telemetry import _shadow_rerank_config
+
+    live = {"backend": "host", "model": "bge", "alpha": 0.7,
+            "host_timeout_ms": 1500, "max_latency_ms": 1500}
+    merged = _shadow_rerank_config(live, {})
+
+    assert merged["host_timeout_ms"] == 15000     # shadow default wins
+    assert merged["max_latency_ms"] == 60000
+    assert merged["model"] == "bge"               # identity untouched
+    assert live["host_timeout_ms"] == 1500        # live config not mutated
+
+    # Never narrows an already-generous live budget.
+    generous = _shadow_rerank_config(
+        {"host_timeout_ms": 90000, "max_latency_ms": 90000}, {}
+    )
+    assert generous["host_timeout_ms"] == 90000
+    assert generous["max_latency_ms"] == 90000
+
+    # Configurable through the shadow section, and None is tolerated.
+    tuned = _shadow_rerank_config(
+        {"host_timeout_ms": None, "max_latency_ms": None},
+        {"host_timeout_ms": 20000, "max_latency_ms": 120000},
+    )
+    assert (tuned["host_timeout_ms"], tuned["max_latency_ms"]) == (20000, 120000)
+
+    # Shipped defaults must actually carry generous shadow budgets.
+    defaults_path = (
+        Path(__file__).resolve().parents[2] / "defaults" / "config.json"
+    )
+    shipped = json.loads(defaults_path.read_text())[
+        "memory"]["retrieval_telemetry"]["shadow"]
+    assert shipped["host_timeout_ms"] >= 10000
+    assert shipped["max_latency_ms"] >= 30000
