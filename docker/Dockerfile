@@ -22,7 +22,7 @@ WORKDIR /build
 #   ANTHROPIC_API_KEY in the container is useless — the SDK import fails per
 #   call. Small pure-Python package; no model runtime or weights.
 RUN uv pip install --system --no-cache \
-    "mcp>=1.0.0" \
+    "mcp>=1.0.0,<2.0.0" \
     "numpy>=1.26.0" \
     "psycopg[pool]>=3.1.0" \
     "pgvector>=0.3.0" \

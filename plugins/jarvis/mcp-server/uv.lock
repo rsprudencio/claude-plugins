@@ -852,7 +852,7 @@ source = { directory = "../../../lib/jarvis-common" }
 
 [[package]]
 name = "jarvis-core"
-version = "3.5.2"
+version = "3.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "jarvis-common" },

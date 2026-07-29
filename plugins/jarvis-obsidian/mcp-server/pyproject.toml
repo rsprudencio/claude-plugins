@@ -5,7 +5,7 @@ description = "Jarvis Obsidian MCP Server - Git audit trail and PKM vault operat
 requires-python = ">=3.11"
 dependencies = [
     "jarvis-common",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
 ]
 
 [project.optional-dependencies]

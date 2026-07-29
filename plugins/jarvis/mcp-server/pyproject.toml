@@ -5,7 +5,7 @@ description = "Jarvis Tools MCP Server - Git and vault operations for JARVIS pro
 requires-python = ">=3.11"
 dependencies = [
     "jarvis-common",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2.0.0",
     "tokenizers>=0.13.0",
     "sentence-transformers[onnx]>=3.0.0",
     "onnxruntime>=1.17.0",
