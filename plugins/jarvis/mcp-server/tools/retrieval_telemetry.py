@@ -475,6 +475,27 @@ def get_event_documents(
     return out
 
 
+def _protect_labeled_event(event_id: str) -> None:
+    """Push a labeled event's expiry far out (secondary guard).
+
+    ``cleanup_expired`` already exempts labeled events; this makes the
+    protection visible in the data and survives any future code path that
+    deletes purely by ``expires_at``. Losing labels is silent and
+    unrecoverable, so it gets two independent guards.
+    """
+    try:
+        from .schema import execute_write
+
+        execute_write(
+            """UPDATE local.retrieval_events
+                  SET expires_at = GREATEST(expires_at, now() + interval '365 days')
+                WHERE id = %s::uuid""",
+            (event_id,),
+        )
+    except Exception as exc:  # never fail a label write over retention
+        logger.warning("Could not extend retention for labeled event %s: %s", event_id, exc)
+
+
 def put_event_feedback(event_id: str, payload: dict, user_name: Optional[str] = None) -> bool:
     verdict = str(payload.get("verdict", ""))
     if verdict not in {"useful", "mixed", "noisy", "missed", "unsure"}:
@@ -492,6 +513,7 @@ def put_event_feedback(event_id: str, payload: dict, user_name: Optional[str] = 
         (event_id, verdict, _json(payload.get("expected_missing_ids", [])),
          payload.get("note"), user_name),
     )
+    _protect_labeled_event(event_id)
     return True
 
 
@@ -510,6 +532,7 @@ def put_candidate_feedback(event_id: str, candidate_key: str, payload: dict, use
              user_name = EXCLUDED.user_name, updated_at = now()""",
         (event_id, candidate_key, verdict, payload.get("note"), user_name),
     )
+    _protect_labeled_event(event_id)
     return True
 
 
@@ -695,6 +718,45 @@ def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[di
     return out, missing
 
 
+def _shadow_backoff_seconds(shadow: dict, used_attempts: int) -> int:
+    """Exponential delay before the next shadow attempt.
+
+    Defaults give 30s → 120s → 480s, so three attempts span ~10 minutes — long
+    enough to outlive a model reload instead of burning the whole retry budget
+    inside one poll cycle.
+    """
+    base = max(1, int(shadow.get("retry_base_seconds", 30)))
+    factor = max(1, int(shadow.get("retry_backoff_factor", 4)))
+    cap = max(base, int(shadow.get("retry_max_seconds", 900)))
+    return min(cap, base * (factor ** max(0, used_attempts - 1)))
+
+
+def requeue_failed_shadow_jobs(max_age_days: int = 7) -> int:
+    """Return terminally-failed shadow events to the queue.
+
+    A transient model-host outage can exhaust an event's attempts; its
+    candidates then never receive logits and silently drop out of the
+    calibration corpus. This resets attempts so the (now backed-off) worker
+    can score them, bounded to events still inside their retention window.
+    """
+    from .schema import execute_query
+
+    row = execute_query(
+        """WITH requeued AS (
+               UPDATE local.retrieval_events
+                  SET shadow_status = 'pending', shadow_attempts = 0,
+                      shadow_error = NULL, shadow_finished_at = NULL,
+                      shadow_next_attempt_at = NULL
+                WHERE shadow_status = 'failed'
+                  AND expires_at > now()
+                  AND created_at >= now() - (%s * interval '1 day')
+               RETURNING 1
+           ) SELECT count(*) AS count FROM requeued""",
+        (max(1, int(max_age_days)),), fetch="one",
+    )
+    return int((row or {}).get("count", 0))
+
+
 def _mark_shadow_skipped(pool, event_id: str, reason: str) -> None:
     with pool.connection() as conn:
         conn.execute(
@@ -784,6 +846,8 @@ def process_one_shadow_job() -> bool:
                    FROM local.retrieval_events
                    WHERE shadow_status = 'pending'
                      AND created_at <= now() - (%s * interval '1 second')
+                     AND (shadow_next_attempt_at IS NULL
+                          OR shadow_next_attempt_at <= now())
                    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1""",
                 (max(0, float(shadow.get("delay_seconds", 2))),),
             ).fetchone()
@@ -881,25 +945,52 @@ def process_one_shadow_job() -> bool:
             conn.commit()
         return True
     except Exception as exc:
-        terminal = int(attempts or 0) + 1 >= max_attempts
+        used_attempts = int(attempts or 0) + 1
+        terminal = used_attempts >= max_attempts
+        # Exponential backoff between attempts. The model host takes tens of
+        # seconds to reload a model, so retrying every poll interval just burns
+        # max_attempts on a single outage and censors the event forever.
+        backoff_seconds = 0 if terminal else _shadow_backoff_seconds(shadow, used_attempts)
         with pool.connection() as conn:
             conn.execute(
                 """UPDATE local.retrieval_events SET shadow_status = %s,
-                          shadow_error = %s, shadow_finished_at = CASE WHEN %s THEN now() ELSE NULL END
+                          shadow_error = %s,
+                          shadow_finished_at = CASE WHEN %s THEN now() ELSE NULL END,
+                          shadow_next_attempt_at = CASE WHEN %s THEN NULL
+                              ELSE now() + (%s * interval '1 second') END
                    WHERE id = %s::uuid""",
-                ("failed" if terminal else "pending", str(exc)[:1000], terminal, event_id),
+                ("failed" if terminal else "pending", str(exc)[:1000], terminal,
+                 terminal, backoff_seconds, event_id),
             )
             conn.commit()
-        logger.debug("Shadow reranking deferred for %s: %s", event_id, exc)
+        logger.debug(
+            "Shadow reranking deferred for %s (attempt %d/%d, retry in %ss): %s",
+            event_id, used_attempts, max_attempts, backoff_seconds, exc,
+        )
         return True
 
 
 def cleanup_expired() -> int:
+    """Delete expired traces, but NEVER human-labeled ones.
+
+    Feedback rows CASCADE from their event, so retention would hard-delete
+    hand-labeled ground truth on a rolling window — the scarcest asset the
+    calibration work has. Labeled events are exempt from expiry entirely; the
+    raw trace (candidate scores) IS the training data and must outlive the
+    telemetry retention window.
+    """
     from .schema import execute_query
 
     row = execute_query(
         """WITH deleted AS (
-               DELETE FROM local.retrieval_events WHERE expires_at < now()
+               DELETE FROM local.retrieval_events e
+                WHERE e.expires_at < now()
+                  AND NOT EXISTS (
+                      SELECT 1 FROM local.retrieval_feedback f
+                       WHERE f.event_id = e.id)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM local.retrieval_candidate_feedback cf
+                       WHERE cf.event_id = e.id)
                RETURNING 1
            ) SELECT count(*) AS count FROM deleted""",
         fetch="one",
@@ -926,6 +1017,12 @@ async def retrieval_telemetry_loop() -> None:
             await asyncio.to_thread(process_one_shadow_job)
             if time.monotonic() - last_cleanup > 86400:
                 await asyncio.to_thread(cleanup_expired)
+                # Recover events whose attempts were exhausted by a transient
+                # model-host outage; bounded by age + retention, and attempts
+                # now carry real backoff between them.
+                requeued = await asyncio.to_thread(requeue_failed_shadow_jobs)
+                if requeued:
+                    logger.info("Requeued %d failed shadow scoring job(s)", requeued)
                 last_cleanup = time.monotonic()
         except asyncio.CancelledError:
             raise

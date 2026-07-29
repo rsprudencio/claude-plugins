@@ -299,3 +299,55 @@ def test_candidate_row_cut_never_drops_returned_candidates():
     # Under the limit nothing is reordered or dropped.
     kept = _select_candidate_rows(rejected[:5], limit=100)
     assert [c.doc_id for c in kept] == [f"doc-{i}" for i in range(1, 6)]
+
+
+def test_shadow_backoff_grows_and_caps():
+    """Retrying every poll cycle burned all attempts inside one host outage;
+    backoff must span long enough to outlive a model reload."""
+    from tools.retrieval_telemetry import _shadow_backoff_seconds
+
+    assert [_shadow_backoff_seconds({}, n) for n in (1, 2, 3)] == [30, 120, 480]
+    # Three attempts span ~10 minutes with shipped defaults.
+    assert sum(_shadow_backoff_seconds({}, n) for n in (1, 2)) >= 120
+    # Cap honored, config overridable through the shadow section.
+    assert _shadow_backoff_seconds({}, 9) == 900
+    assert _shadow_backoff_seconds({"retry_base_seconds": 5, "retry_backoff_factor": 2}, 3) == 20
+    assert _shadow_backoff_seconds({"retry_max_seconds": 60}, 5) == 60
+
+
+def test_cleanup_query_exempts_labeled_events():
+    """Labels CASCADE from their event, so retention would silently destroy
+    hand-labeled ground truth. The delete must exclude labeled events."""
+    import tools.schema as schema
+    from tools.retrieval_telemetry import cleanup_expired
+
+    captured = {}
+
+    def fake_execute_query(sql, params=None, fetch=None):
+        captured["sql"] = sql
+        return {"count": 0}
+
+    original = schema.execute_query
+    schema.execute_query = fake_execute_query
+    try:
+        cleanup_expired()
+    finally:
+        schema.execute_query = original
+
+    sql = " ".join(captured["sql"].split())
+    assert "DELETE FROM local.retrieval_events" in sql
+    assert "NOT EXISTS" in sql
+    assert "local.retrieval_feedback" in sql
+    assert "local.retrieval_candidate_feedback" in sql
+
+
+def test_shadow_claim_query_respects_next_attempt_gate():
+    """The claim query must skip events still inside their backoff window."""
+    import inspect
+
+    import tools.retrieval_telemetry as telemetry
+
+    source = inspect.getsource(telemetry.process_one_shadow_job)
+    normalized = " ".join(source.split())
+    assert "shadow_next_attempt_at IS NULL" in normalized
+    assert "shadow_next_attempt_at <= now()" in normalized

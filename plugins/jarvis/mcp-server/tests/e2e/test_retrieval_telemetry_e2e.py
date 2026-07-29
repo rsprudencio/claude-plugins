@@ -174,3 +174,153 @@ def test_event_documents_resolve_bodies_on_demand(e2e_config):
     full = get_event_documents(trace_id, candidate_key=local_hit.candidate_key)
     assert full[local_hit.candidate_key]["text"] == "the full memory body"
     assert full[local_hit.candidate_key]["truncated"] is False
+
+
+def test_labeled_events_survive_retention_expiry(e2e_config):
+    """Labels CASCADE from their event, so a 30-day TTL would hard-delete
+    hand-labeled ground truth on a rolling window. Labeled traces are exempt;
+    unlabeled expired traces still go."""
+    from tools.retrieval_telemetry import (
+        CandidateTrace, cleanup_expired, get_event, put_candidate_feedback,
+        put_event_feedback, record_event,
+    )
+    from tools.schema import _get_pool
+
+    pool = _get_pool()
+    candidate = CandidateTrace(schema_name="local", doc_id="obs::retained", vector_rank=1)
+    labeled = record_event(
+        purpose="context_injection", query="labeled trace", candidates=[candidate],
+        funnel={}, latency={}, outcome="results", shadow_eligible=False,
+    )
+    candidate_only = CandidateTrace(schema_name="local", doc_id="obs::cand", vector_rank=1)
+    candidate_labeled = record_event(
+        purpose="context_injection", query="candidate-labeled trace",
+        candidates=[candidate_only], funnel={}, latency={}, outcome="results",
+        shadow_eligible=False,
+    )
+    unlabeled = record_event(
+        purpose="context_injection", query="unlabeled trace", candidates=[],
+        funnel={}, latency={}, outcome="empty", shadow_eligible=False,
+    )
+
+    put_event_feedback(labeled, {"verdict": "useful", "expected_missing_ids": []})
+    put_candidate_feedback(candidate_labeled, candidate_only.candidate_key,
+                           {"verdict": "relevant"})
+
+    # Secondary guard: labeling pushes expiry out in the data itself.
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT id::text, expires_at > now() + interval '300 days' "
+            "FROM local.retrieval_events WHERE id = ANY(%s::uuid[])",
+            ([labeled, candidate_labeled],),
+        ).fetchall()
+    assert rows and all(extended for _, extended in rows), (
+        "labeling must extend expires_at"
+    )
+
+    # Force all three past their retention horizon (defeats the secondary
+    # guard on purpose, so the cleanup-query exemption is what is under test).
+    with pool.connection() as conn:
+        conn.execute(
+            "UPDATE local.retrieval_events SET expires_at = now() - interval '1 day' "
+            "WHERE id = ANY(%s::uuid[])",
+            ([labeled, candidate_labeled, unlabeled],),
+        )
+        conn.commit()
+
+    deleted = cleanup_expired()
+
+    assert deleted >= 1
+    assert get_event(labeled) is not None, "event-labeled trace was deleted"
+    assert get_event(candidate_labeled) is not None, "candidate-labeled trace was deleted"
+    assert get_event(unlabeled) is None, "unlabeled expired trace should be pruned"
+
+
+def test_shadow_failure_backs_off_and_can_be_requeued(e2e_config, monkeypatch):
+    """A transient model-host outage must not burn every attempt in one poll
+    cycle, and terminally-failed events must be recoverable."""
+    import tools.config as config
+    import tools.reranking as reranking
+    import tools.retrieval_telemetry as telemetry
+    from tools.schema import _get_pool
+
+    vector = "[" + ",".join(["0.01"] * 384) + "]"
+    pool = _get_pool()
+    with pool.connection() as conn:
+        conn.execute(
+            """INSERT INTO local.memories (id, document, embedding, category, scope, source)
+               VALUES ('obs::backoff', 'backoff document', %s::halfvec,
+                       'observation', 'global', 'test')
+               ON CONFLICT (id) DO NOTHING""",
+            (vector,),
+        )
+        conn.commit()
+
+    shadow_cfg = {
+        "enabled": True, "retention_days": 30, "store_user_prompts": True,
+        "candidate_detail_limit": 100,
+        "shadow": {"enabled": True, "candidate_count": 20, "delay_seconds": 0,
+                   "poll_seconds": 0.1, "max_attempts": 2, "max_jobs_per_second": 10,
+                   "retry_base_seconds": 300},
+    }
+    monkeypatch.setattr(telemetry, "_config", lambda: shadow_cfg)
+    monkeypatch.setattr(config, "get_reranking_config",
+                        lambda: {"backend": "host", "model": "bge-test", "alpha": 0.7})
+    # Host is down for every attempt.
+    def boom(*args, **kwargs):
+        raise RuntimeError("model host request failed: timed out")
+
+    monkeypatch.setattr(reranking, "rerank_raw", boom)
+
+    trace_id = telemetry.record_event(
+        purpose="context_injection", query="backoff probe",
+        candidates=[telemetry.CandidateTrace(
+            schema_name="local", doc_id="obs::backoff", chunk_index=0,
+            vector_rank=1, similarity=0.7, terminal_reason="cosine_rejected",
+        )],
+        funnel={}, latency={}, outcome="empty",
+        model_snapshot={"reranker_model": "bge-test"},
+    )
+
+    # Attempt 1 fails → pending with a future next-attempt gate.
+    assert telemetry.process_one_shadow_job() is True
+    with pool.connection() as conn:
+        status, next_at = conn.execute(
+            "SELECT shadow_status, shadow_next_attempt_at > now() "
+            "FROM local.retrieval_events WHERE id = %s::uuid", (trace_id,),
+        ).fetchone()
+    assert status == "pending"
+    assert next_at is True, "failed attempt must schedule a future retry"
+
+    # The backoff gate makes the claim query skip it — attempts are not burned.
+    assert telemetry.process_one_shadow_job() is False
+    with pool.connection() as conn:
+        attempts = conn.execute(
+            "SELECT shadow_attempts FROM local.retrieval_events WHERE id = %s::uuid",
+            (trace_id,),
+        ).fetchone()[0]
+    assert attempts == 1, "backoff window must not consume another attempt"
+
+    # Force the window open; the second (terminal) failure marks it failed.
+    with pool.connection() as conn:
+        conn.execute(
+            "UPDATE local.retrieval_events SET shadow_next_attempt_at = now() - interval '1 second' "
+            "WHERE id = %s::uuid", (trace_id,),
+        )
+        conn.commit()
+    assert telemetry.process_one_shadow_job() is True
+    with pool.connection() as conn:
+        status = conn.execute(
+            "SELECT shadow_status FROM local.retrieval_events WHERE id = %s::uuid",
+            (trace_id,),
+        ).fetchone()[0]
+    assert status == "failed"
+
+    # Recovery: requeue resets attempts so the event can be scored later.
+    assert telemetry.requeue_failed_shadow_jobs() >= 1
+    with pool.connection() as conn:
+        status, attempts, next_at = conn.execute(
+            "SELECT shadow_status, shadow_attempts, shadow_next_attempt_at "
+            "FROM local.retrieval_events WHERE id = %s::uuid", (trace_id,),
+        ).fetchone()
+    assert (status, attempts, next_at) == ("pending", 0, None)

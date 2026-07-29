@@ -46,7 +46,7 @@
     },
     "lexical": {
       "enabled": true,
-      "max_df_ratio": 0.10,
+      "max_df_ratio": 0.1,
       "max_terms": 8,
       "candidate_limit": 30,
       "lexical_rerank_slots": 10
@@ -62,14 +62,20 @@
         "delay_seconds": 2,
         "poll_seconds": 2,
         "max_attempts": 3,
-        "max_jobs_per_second": 1
+        "max_jobs_per_second": 1,
+        "retry_base_seconds": 30,
+        "retry_backoff_factor": 4,
+        "retry_max_seconds": 900
       }
     },
     "chunking": {
       "enabled": true,
       "min_chunk_chars": 200,
       "max_chunk_chars": 1500,
-      "heading_levels": [2, 3],
+      "heading_levels": [
+        2,
+        3
+      ],
       "contextual_embeddings": true
     },
     "scoring": {
@@ -155,7 +161,7 @@
           "schema": "my_context",
           "ssl_mode": "require",
           "enabled": false,
-          "description": "Example — replace with real values. Schema defaults to remote name if omitted."
+          "description": "Example \u2014 replace with real values. Schema defaults to remote name if omitted."
         }
       },
       "rules": [],

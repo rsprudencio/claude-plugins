@@ -260,6 +260,11 @@ def get_retrieval_telemetry_config() -> dict:
             "poll_seconds": 2,
             "max_attempts": 3,
             "max_jobs_per_second": 1,
+            # Backoff between failed attempts: 30s → 120s → 480s. Retrying
+            # every poll cycle burns all attempts inside one model-host outage.
+            "retry_base_seconds": 30,
+            "retry_backoff_factor": 4,
+            "retry_max_seconds": 900,
         },
     }
     config = _merge_with_defaults(

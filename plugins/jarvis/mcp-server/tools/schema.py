@@ -317,6 +317,12 @@ CREATE INDEX IF NOT EXISTS idx_local_tsv
 
 -- Retrieval channel provenance: 'semantic' | 'lexical' | 'both'.
 ALTER TABLE local.retrieval_candidates ADD COLUMN IF NOT EXISTS channel TEXT;
+
+-- Shadow retry backoff. Without a next-attempt gate a failed job is reclaimed
+-- on the very next poll, so max_attempts burns in seconds and a brief model-host
+-- outage permanently censors those events from the calibration corpus.
+ALTER TABLE local.retrieval_events
+    ADD COLUMN IF NOT EXISTS shadow_next_attempt_at TIMESTAMPTZ;
 """
 
 
