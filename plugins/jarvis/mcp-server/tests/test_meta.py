@@ -207,11 +207,104 @@ class TestModelConsistency:
 class TestContextualChunksIdentity:
     """Augmentation mode is part of the embedding-space identity."""
 
-    def test_first_run_records_contextual_flag(self, mock_config):
+    def test_first_run_records_contextual_mode(self, mock_config):
+        """The recorded value is the three-state MODE, not a boolean — a
+        boolean cannot tell 'mechanical' from 'summary' augmentation, which are
+        different embedding spaces."""
         from tools.schema import check_model_consistency, get_meta
 
         check_model_consistency()
-        assert get_meta("embedding_config")["contextual_chunks"] is True
+        # Shipped defaults enable both the prefix and LLM summaries.
+        assert get_meta("embedding_config")["contextual_chunks"] == "summary"
+
+    def test_first_run_records_mechanical_when_summaries_off(self, mock_config):
+        from tools.schema import check_model_consistency, get_meta
+
+        mock_config.set(
+            memory={"chunking": {"contextual_summaries": {"enabled": False}}}
+        )
+        check_model_consistency()
+        assert get_meta("embedding_config")["contextual_chunks"] == "mechanical"
+
+    def test_first_run_records_none_when_augmentation_off(self, mock_config):
+        from tools.schema import check_model_consistency, get_meta
+
+        mock_config.set(memory={"chunking": {"contextual_embeddings": False}})
+        check_model_consistency()
+        assert get_meta("embedding_config")["contextual_chunks"] == "none"
+
+    def test_legacy_true_reads_as_mechanical_and_warns_against_summary(
+        self, mock_config, caplog
+    ):
+        """Pre-3.6 databases recorded a boolean. True meant the mechanical
+        prefix, so under the summary default it MUST warn (different space)."""
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": True,  # legacy boolean
+        })
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()  # must not raise
+        assert any(
+            "'mechanical' mode but config now says 'summary'" in r.message
+            for r in caplog.records
+        )
+
+    def test_legacy_true_matches_mechanical_config_silently(self, mock_config, caplog):
+        """The migration must be a genuine equivalence: legacy True == the
+        'mechanical' mode, so a mechanical config re-reads as a match."""
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        mock_config.set(
+            memory={"chunking": {"contextual_summaries": {"enabled": False}}}
+        )
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": True,
+        })
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()
+        assert not caplog.records
+
+    def test_legacy_false_matches_disabled_config_silently(self, mock_config, caplog):
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        mock_config.set(memory={"chunking": {"contextual_embeddings": False}})
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": False,  # legacy boolean
+        })
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()
+        assert not caplog.records
+
+    def test_mechanical_to_summary_switch_warns(self, mock_config, caplog):
+        """Enabling summaries without a reindex is a mixed space — the exact
+        case a two-value flag could not detect."""
+        import logging
+
+        from tools.schema import check_model_consistency, set_meta
+
+        set_meta("embedding_config", {
+            "model": "ibm-granite/granite-embedding-small-english-r2",
+            "dimensions": 384,
+            "contextual_chunks": "mechanical",
+        })
+        with caplog.at_level(logging.CRITICAL):
+            check_model_consistency()
+        assert any(
+            "augmentation mismatch" in r.message.lower() for r in caplog.records
+        )
 
     def test_mismatch_warns_loudly_but_does_not_refuse(self, mock_config, caplog):
         """Mixed augmentation space is gradual skew, not garbage — and a fatal
@@ -231,7 +324,7 @@ class TestContextualChunksIdentity:
             check_model_consistency()  # must not raise
         assert any("augmentation mismatch" in r.message.lower() for r in caplog.records)
 
-    def test_matching_flag_stays_silent(self, mock_config, caplog):
+    def test_matching_mode_stays_silent(self, mock_config, caplog):
         import logging
 
         from tools.schema import check_model_consistency, set_meta
@@ -239,7 +332,7 @@ class TestContextualChunksIdentity:
         set_meta("embedding_config", {
             "model": "ibm-granite/granite-embedding-small-english-r2",
             "dimensions": 384,
-            "contextual_chunks": True,
+            "contextual_chunks": "summary",
         })
         with caplog.at_level(logging.CRITICAL):
             check_model_consistency()

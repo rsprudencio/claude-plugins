@@ -394,3 +394,137 @@ def test_shadow_scoring_widens_budget_beyond_live_hook_limits():
         "memory"]["retrieval_telemetry"]["shadow"]
     assert shipped["host_timeout_ms"] >= 10000
     assert shipped["max_latency_ms"] >= 30000
+
+
+# ── Augmentation-era separation for Phase-2 calibration ───────────────
+#
+# Mechanical-era and summary-era BGE logits are drawn from DIFFERENT rerank
+# input spaces — the same chunk measured −8.16 with the mechanical prefix and
+# +0.03 with its LLM summary. A sweep across the pooled set selects a threshold
+# correct for neither era, and the operator could not notice because the export
+# dropped config_snapshot, the only column carrying the era.
+
+
+def _era_rows():
+    return [
+        {"event_id": "m1", "candidate_key": "1", "similarity": 0.90,
+         "raw_bge_logit": -8.16, "request_label": "useful",
+         "candidate_label": "relevant", "contextual_augmentation": "mechanical"},
+        {"event_id": "m2", "candidate_key": "1", "similarity": 0.50,
+         "raw_bge_logit": -9.0, "request_label": "noisy",
+         "candidate_label": "irrelevant", "contextual_augmentation": "mechanical"},
+        {"event_id": "s1", "candidate_key": "1", "similarity": 0.90,
+         "raw_bge_logit": 0.03, "request_label": "useful",
+         "candidate_label": "relevant", "contextual_augmentation": "summary"},
+        {"event_id": "u1", "candidate_key": "1", "similarity": 0.60,
+         "raw_bge_logit": -5.0, "request_label": "noisy",
+         "candidate_label": "irrelevant", "contextual_augmentation": "unstamped"},
+    ]
+
+
+def test_simulator_reports_the_era_census_and_flags_mixing(monkeypatch):
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: _era_rows())
+    result = simulate_policy({"policy": "bge-only", "bge_logit_threshold": -4.0})
+    assert result["contextual_augmentation"] == "all"
+    assert result["augmentation_eras"] == {
+        "mechanical": 2, "summary": 1, "unstamped": 1,
+    }
+    assert result["augmentation_eras_mixed"] is True
+    assert result["candidate_count"] == 4
+
+
+def test_simulator_filters_to_one_era(monkeypatch):
+    """The fix: a threshold can be swept inside ONE embedding-space era."""
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: _era_rows())
+
+    summary_only = simulate_policy({
+        "policy": "bge-only", "bge_logit_threshold": -4.0,
+        "contextual_augmentation": "summary",
+    })
+    assert summary_only["contextual_augmentation"] == "summary"
+    assert summary_only["candidate_count"] == 1
+    assert summary_only["selected_count"] == 1  # +0.03 clears −4.0
+    assert summary_only["augmentation_eras_mixed"] is False
+    # The census still describes the WHOLE pool, so mixing stays visible.
+    assert summary_only["augmentation_eras"]["mechanical"] == 2
+
+    mechanical_only = simulate_policy({
+        "policy": "bge-only", "bge_logit_threshold": -4.0,
+        "contextual_augmentation": "mechanical",
+    })
+    assert mechanical_only["candidate_count"] == 2
+    assert mechanical_only["selected_count"] == 0  # −8.16 and −9.0 both fail
+    # Same threshold, opposite verdict — which is the whole point.
+    assert summary_only["selected_count"] != mechanical_only["selected_count"]
+
+
+def test_simulator_rejects_an_unknown_era(monkeypatch):
+    import pytest as _pytest
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: _era_rows())
+    with _pytest.raises(ValueError):
+        simulate_policy({"policy": "bge-only", "contextual_augmentation": "bogus"})
+
+
+def test_simulator_treats_missing_era_as_unstamped(monkeypatch):
+    """Rows from before any stamping must be bucketed, not dropped."""
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    rows = [{"event_id": "a", "candidate_key": "1", "similarity": 0.9,
+             "raw_bge_logit": 1.0, "request_label": None,
+             "candidate_label": None}]
+    monkeypatch.setattr(schema, "execute_query", lambda *a, **k: rows)
+    result = simulate_policy({"policy": "cosine-only"})
+    assert result["augmentation_eras"] == {"unstamped": 1}
+    assert simulate_policy({
+        "policy": "cosine-only", "contextual_augmentation": "unstamped",
+    })["candidate_count"] == 1
+
+
+def test_simulator_query_joins_the_events_table_for_the_era(monkeypatch):
+    import tools.schema as schema
+    from tools.retrieval_telemetry import simulate_policy
+
+    seen = {}
+
+    def capture(sql, params=None, **kwargs):
+        seen["sql"] = " ".join(sql.split()).lower()
+        return []
+
+    monkeypatch.setattr(schema, "execute_query", capture)
+    simulate_policy({"policy": "cosine-only"})
+    assert "local.retrieval_events" in seen["sql"]
+    assert "contextual_augmentation" in seen["sql"]
+    # Legacy boolean events must migrate, not vanish.
+    assert "contextual_embeddings" in seen["sql"]
+
+
+def test_export_carries_the_augmentation_era(monkeypatch):
+    import tools.schema as schema
+    from tools.retrieval_telemetry import export_labeled_events
+
+    seen = {}
+
+    def capture(sql, params=None, **kwargs):
+        seen["sql"] = " ".join(sql.split()).lower()
+        return [{"trace_id": "a", "contextual_augmentation": "summary"}]
+
+    monkeypatch.setattr(schema, "execute_query", capture)
+    rows = export_labeled_events()
+    assert "contextual_augmentation" in seen["sql"]
+    assert rows[0]["contextual_augmentation"] == "summary"
+
+
+def test_known_eras_are_declared():
+    from tools.retrieval_telemetry import AUGMENTATION_ERAS
+
+    assert set(AUGMENTATION_ERAS) == {"none", "mechanical", "summary", "unstamped"}

@@ -110,7 +110,7 @@ class TestFlushBatchAccounting:
         monkeypatch.setattr(
             memory_mod,
             "_upsert_batch",
-            lambda ids, docs, metas: [
+            lambda ids, docs, metas, summaries=None: [
                 {
                     "id": "vault::B.md#chunk-1",
                     "parent_file": "B.md",
@@ -135,7 +135,9 @@ class TestFlushBatchAccounting:
     def test_clean_batch_returns_zero_and_no_cleanup(self, monkeypatch):
         import tools.memory as memory_mod
 
-        monkeypatch.setattr(memory_mod, "_upsert_batch", lambda i, d, m: [])
+        monkeypatch.setattr(
+            memory_mod, "_upsert_batch", lambda i, d, m, s=None: []
+        )
         deleted = []
         monkeypatch.setattr(
             memory_mod, "_delete_existing_chunks", lambda p: deleted.append(p)

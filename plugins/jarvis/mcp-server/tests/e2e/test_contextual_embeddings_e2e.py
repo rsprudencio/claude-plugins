@@ -149,9 +149,9 @@ def test_title_only_term_retrieves_chunk_with_augmentation(e2e_config, monkeypat
     assert sim_on > 0.2, f"expected the augmented chunk to surface, got {sim_on}"
     assert result_on["results"][0]["path"] == _TARGET, "target should rank #1"
 
-    # ── Augmentation OFF (rollback switch) ────────────────────────────
+    # ── Augmentation OFF (rollback switch → mode 'none') ──────────────
     monkeypatch.setattr(
-        "tools.memory.get_contextual_embeddings_enabled", lambda: False
+        "tools.memory.get_contextual_augmentation_mode", lambda: "none"
     )
     reindexed = index_vault(force=True)
     assert reindexed["success"] is True

@@ -536,12 +536,35 @@ def put_candidate_feedback(event_id: str, candidate_key: str, payload: dict, use
     return True
 
 
+_AUGMENTATION_ERA_SQL = """\
+COALESCE(
+  e.config_snapshot->>'contextual_augmentation',
+  CASE
+    WHEN e.config_snapshot->>'contextual_embeddings' = 'true' THEN 'mechanical'
+    WHEN e.config_snapshot->>'contextual_embeddings' = 'false' THEN 'none'
+  END,
+  'unstamped')"""
+
+# The recorded augmentation eras a caller may filter calibration data to.
+# 'unstamped' covers events from before any augmentation marker existed.
+AUGMENTATION_ERAS = ("none", "mechanical", "summary", "unstamped")
+
+
 def export_labeled_events() -> list[dict]:
+    """Labeled events for offline threshold calibration.
+
+    Carries ``contextual_augmentation`` per event: mechanical-era and
+    summary-era logits are drawn from DIFFERENT embedding/rerank input spaces
+    (the same chunk measured −8.16 mechanical and +0.03 with its summary), so an
+    export that cannot separate them cannot be used to pick a threshold. It used
+    to drop ``config_snapshot`` entirely — the only column carrying the era.
+    """
     from .schema import execute_query
 
     return execute_query(
-        """SELECT e.id::text AS trace_id, e.created_at, e.purpose, e.query_text,
+        f"""SELECT e.id::text AS trace_id, e.created_at, e.purpose, e.query_text,
                   e.query_sha256, f.verdict, f.expected_missing_ids, f.note,
+                  {_AUGMENTATION_ERA_SQL} AS contextual_augmentation,
                   COALESCE(jsonb_agg(jsonb_build_object(
                     'candidate_key', c.candidate_key, 'schema', c.schema_name,
                     'doc_id', c.doc_id, 'similarity', c.similarity,
@@ -561,23 +584,48 @@ def export_labeled_events() -> list[dict]:
 
 
 def simulate_policy(payload: dict) -> dict:
-    """Evaluate thresholds against stored scores; never mutates live config."""
+    """Evaluate thresholds against stored scores; never mutates live config.
+
+    ``contextual_augmentation`` restricts the pool to ONE augmentation era
+    ('none' | 'mechanical' | 'summary' | 'unstamped'). Without it, a Phase-2
+    sweep pools logits produced from incommensurable rerank inputs — the same
+    chunk scores −8.16 with the mechanical prefix and +0.03 with its summary — so
+    the selected threshold is a compromise correct for neither era. The response
+    always reports ``augmentation_eras`` (candidate counts per era in the
+    unfiltered pool) so mixing is visible even when no filter is passed.
+    """
     policy = str(payload.get("policy", "cosine-only"))
     if policy not in {"cosine-only", "bge-only", "coarse+bge", "cosine-or-bge"}:
         raise ValueError("invalid policy")
+    era = str(payload.get("contextual_augmentation") or "").strip().lower()
+    if era and era not in AUGMENTATION_ERAS:
+        raise ValueError("invalid contextual_augmentation filter")
     cosine = float(payload.get("cosine_threshold", 0.85))
     bge = float(payload.get("bge_logit_threshold", -2.5))
     from .schema import execute_query
 
     rows = execute_query(
-        """SELECT c.event_id::text, c.candidate_key, c.similarity,
+        f"""SELECT c.event_id::text, c.candidate_key, c.similarity,
                   c.raw_bge_logit, f.verdict AS request_label,
-                  cf.verdict AS candidate_label
+                  cf.verdict AS candidate_label,
+                  {_AUGMENTATION_ERA_SQL} AS contextual_augmentation
            FROM local.retrieval_candidates c
+           LEFT JOIN local.retrieval_events e ON e.id = c.event_id
            LEFT JOIN local.retrieval_feedback f ON f.event_id = c.event_id
            LEFT JOIN local.retrieval_candidate_feedback cf
              ON cf.event_id = c.event_id AND cf.candidate_key = c.candidate_key"""
     )
+    # Era census over the FULL pool, before any filter — the number an operator
+    # needs to notice that their calibration set spans two spaces.
+    eras: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("contextual_augmentation") or "unstamped")
+        eras[key] = eras.get(key, 0) + 1
+    if era:
+        rows = [
+            row for row in rows
+            if str(row.get("contextual_augmentation") or "unstamped") == era
+        ]
     # BGE logits only exist for candidates the shadow scorer reached (top-N,
     # local/obsidian bodies, host backend active, job succeeded). Treating a
     # missing score as "rejected by the threshold" would count unscored
@@ -638,7 +686,11 @@ def simulate_policy(payload: dict) -> dict:
     neg_requests = len(negative_ids)
     enough = pos_requests >= 20 and neg_requests >= 20
     return {
-        "policy": policy, "candidate_count": len(rows), "selected_count": len(selected),
+        "policy": policy,
+        "contextual_augmentation": era or "all",
+        "augmentation_eras": eras,
+        "augmentation_eras_mixed": len(eras) > 1 and not era,
+        "candidate_count": len(rows), "selected_count": len(selected),
         "scored_count": len(scored), "unscored_count": len(unscored),
         "labeled_count": len(labeled), "labeled_unscored_count": labeled_unscored,
         "true_positive": tp, "false_positive": fp,
@@ -653,6 +705,41 @@ def simulate_policy(payload: dict) -> dict:
     }
 
 
+def _summary_cache_drifted(pool, event_id: str, event_created_at) -> bool:
+    """Whether any vault candidate's cached summary is newer than the event.
+
+    One indexed query against ``obsidian.document_context.generated_at``. True
+    means the text ``_fetch_candidate_documents`` would rebuild cannot be the
+    text the live reranker scored, so the event must be skipped rather than
+    mislabeled.
+
+    Fail-open (returns False) on any error, including a pre-migration database
+    with no ``document_context`` table: failing closed would censor every event
+    forever on a transient DB problem, and before this feature existed there was
+    no drift to detect.
+    """
+    if event_created_at is None:
+        return False
+    try:
+        with pool.connection() as conn:
+            row = conn.execute(
+                """SELECT 1
+                     FROM obsidian.document_context dc
+                    WHERE dc.generated_at > %s
+                      AND dc.parent_file IN (
+                            SELECT parent_file FROM local.retrieval_candidates
+                             WHERE event_id = %s::uuid
+                               AND schema_name = 'obsidian'
+                               AND parent_file IS NOT NULL)
+                    LIMIT 1""",
+                (event_created_at, event_id),
+            ).fetchone()
+        return row is not None
+    except Exception as exc:
+        logger.debug("Summary cache drift check unavailable for %s: %s", event_id, exc)
+        return False
+
+
 def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[dict], int]:
     """Resolve telemetry locators back to source text only for scoring.
 
@@ -662,10 +749,11 @@ def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[di
     shadow logits diverge from live logits and corrupt the calibration dataset.
     Local memories are never augmented (their embed/rerank path isn't either).
     """
-    from .chunk_context import augment_chunk_for_model
-    from .config import get_contextual_embeddings_enabled
+    from .chunk_context import augment_vault_row
+    from .config import get_contextual_augmentation_mode
+    from .context_summary import fetch_document_summaries
 
-    contextual_enabled = get_contextual_embeddings_enabled()
+    contextual_mode = get_contextual_augmentation_mode()
     refs = conn.execute(
         """SELECT candidate_key, schema_name, doc_id, chunk_index,
                   query_window_index, raw_bge_logit
@@ -674,13 +762,14 @@ def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[di
            ORDER BY vector_rank NULLS LAST LIMIT %s""",
         (event_id, limit),
     ).fetchall()
-    out = []
+    # Pass 1: resolve bodies (vault rows are held aside, un-augmented, so their
+    # summaries can be fetched in ONE query instead of one per candidate).
+    resolved: list[tuple] = []  # (key, window_index, document | None, vault_row | None)
     missing = 0
     for key, schema_name, doc_id, chunk_index, window_index, raw_logit in refs:
         if raw_logit is not None:
             continue
         missing += 1
-        document = None
         if schema_name == "local":
             row = conn.execute(
                 """SELECT COALESCE(
@@ -690,7 +779,7 @@ def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[di
                 (doc_id, chunk_index, doc_id),
             ).fetchone()
             if row and row[0] is not None:
-                document = row[0]
+                resolved.append((key, window_index, row[0], None))
         elif schema_name == "obsidian":
             row = conn.execute(
                 """SELECT document, title, chunk_heading, chunk_total, parent_file
@@ -698,23 +787,32 @@ def _fetch_candidate_documents(conn, event_id: str, limit: int) -> tuple[list[di
                 (doc_id,),
             ).fetchone()
             if row and row[0] is not None:
-                try:
-                    chunk_total = int(row[3] or 1)
-                except (ValueError, TypeError):
-                    chunk_total = 1
-                document = augment_chunk_for_model(
-                    row[0],
-                    path=row[4] or "",
-                    title=row[1] or "",
-                    heading_trail=row[2] or "",
-                    is_chunk=chunk_total > 1,
-                    enabled=contextual_enabled,
-                )
-        else:
-            # Remote mirrors may not have a stable local body. Mark partial.
-            document = None
-        if document is not None:
-            out.append({"candidate_key": key, "document": document, "query_window_index": window_index})
+                resolved.append((key, window_index, None, row))
+        # else: remote mirrors may not have a stable local body — partial.
+
+    # Pass 2: one batched summary lookup, then augment through the shared entry
+    # point so the resolved text is byte-identical to what the live reranker saw.
+    summaries = fetch_document_summaries(
+        [row[4] or "" for _key, _win, doc, row in resolved if row is not None],
+        conn=conn,
+    )
+    out = []
+    for key, window_index, document, row in resolved:
+        if row is not None:
+            document = augment_vault_row(
+                row[0],
+                parent_file=row[4] or "",
+                title=row[1] or "",
+                chunk_heading=row[2] or "",
+                chunk_total=row[3],
+                mode=contextual_mode,
+                summary=summaries.get(row[4] or ""),
+            )
+        out.append({
+            "candidate_key": key,
+            "document": document,
+            "query_window_index": window_index,
+        })
     return out, missing
 
 
@@ -865,7 +963,8 @@ def process_one_shadow_job() -> bool:
             )
             event = conn.execute(
                 """SELECT id::text, query_text, query_ref, query_window_count,
-                          model_snapshot, shadow_attempts, config_snapshot
+                          model_snapshot, shadow_attempts, config_snapshot,
+                          created_at
                    FROM local.retrieval_events
                    WHERE shadow_status = 'pending'
                      AND created_at <= now() - (%s * interval '1 second')
@@ -882,7 +981,10 @@ def process_one_shadow_job() -> bool:
                 )
     if not event:
         return False
-    event_id, query_text, query_ref, _, model_snapshot, attempts, config_snapshot = event
+    (
+        event_id, query_text, query_ref, _, model_snapshot, attempts,
+        config_snapshot, event_created_at,
+    ) = event
     max_attempts = max(1, int(shadow.get("max_attempts", 3)))
     try:
         rerank_cfg = _shadow_rerank_config(get_reranking_config(), shadow)
@@ -905,20 +1007,41 @@ def process_one_shadow_job() -> bool:
                     pool, event_id, "embedding model identity changed since retrieval"
                 )
                 return True
-        # Rerank input text depends on the chunk-context augmentation flag;
-        # scoring an old event under a different flag value would contaminate
-        # the calibration dataset. Events recorded before stamping (missing
-        # key) are scored as-is.
-        event_flag = (config_snapshot or {}).get("contextual_embeddings")
-        if event_flag is not None:
-            from .config import get_contextual_embeddings_enabled
+        # Rerank input text depends on the chunk-context augmentation MODE
+        # ('none' | 'mechanical' | 'summary'); scoring an old event under a
+        # different mode would contaminate the calibration dataset. Events
+        # recorded before the mode was stamped fall back to their legacy boolean
+        # (True == the mechanical prefix, which is all that existed then);
+        # events recorded before ANY stamping (both keys missing) are scored
+        # as-is.
+        event_mode = (config_snapshot or {}).get("contextual_augmentation")
+        if event_mode is None:
+            event_mode = (config_snapshot or {}).get("contextual_embeddings")
+        if event_mode is not None:
+            from .chunk_context import normalize_augmentation_mode
+            from .config import get_contextual_augmentation_mode
 
-            if bool(event_flag) != bool(get_contextual_embeddings_enabled()):
+            if normalize_augmentation_mode(event_mode) != get_contextual_augmentation_mode():
                 _mark_shadow_skipped(
                     pool, event_id,
                     "chunk-context augmentation mode changed since retrieval",
                 )
                 return True
+        # The mode guard above is necessary but NOT sufficient: the augmented
+        # rerank text is a function of the mode AND the live summary cache, and
+        # the cache is not stamped into the event. A summary generated between
+        # retrieval and shadow scoring passes the mode guard ('summary' both
+        # sides) and then produces a logit for text the live reranker never saw
+        # — silently populating the calibration corpus with unreachable scores
+        # (the mandate chunk would record +0.03 where the live path produced
+        # −8.16). Cheapest sound test: did any candidate's summary appear or
+        # change after this event was recorded?
+        if _summary_cache_drifted(pool, event_id, event_created_at):
+            _mark_shadow_skipped(
+                pool, event_id,
+                "document summary cache changed since retrieval",
+            )
+            return True
         with pool.connection() as conn:
             docs, missing_count = _fetch_candidate_documents(
                 conn, event_id, max(1, int(shadow.get("candidate_count", 20)))

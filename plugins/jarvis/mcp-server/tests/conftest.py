@@ -114,6 +114,8 @@ class InMemoryDB:
         self.core_rows = {}   # id -> row dict (local.memories)
         self.vault_rows = {}  # id -> row dict (obsidian.documents)
         self.meta_rows = {}   # key -> {key, value, updated_at}
+        # parent_file -> {summary, content_hash, model} (obsidian.document_context)
+        self.document_context_rows = {}
         # Backward compat alias — some tests may reference db.rows
         self.rows = self.core_rows
 
@@ -360,6 +362,21 @@ class InMemoryDB:
         self.core_rows.clear()
         self.vault_rows.clear()
         self.meta_rows.clear()
+        self.document_context_rows.clear()
+
+    # ── obsidian.document_context (per-file LLM summary cache) ─────────
+
+    def upsert_document_context(self, parent_file, summary, content_hash, model):
+        self.document_context_rows[parent_file] = {
+            "parent_file": parent_file,
+            "summary": summary,
+            "content_hash": content_hash,
+            "model": model,
+        }
+
+    def get_document_context(self, parent_file):
+        row = self.document_context_rows.get(parent_file)
+        return dict(row) if row else None
 
 
 # ── Mock psycopg cursor / connection / pool ────────────────────────────
@@ -386,6 +403,8 @@ def _detect_table(sql):
         return "sync_queue"
     primary = re.search(r"\b(?:FROM|INTO|UPDATE)\s+([A-Z0-9_.]+)", sql_upper)
     primary_table = primary.group(1) if primary else ""
+    if primary_table in ("OBSIDIAN.DOCUMENT_CONTEXT", "VAULT.DOCUMENT_CONTEXT"):
+        return "document_context"
     if primary_table == "LOCAL.MEMORY_CHUNKS":
         return "memory_chunks"
     if primary_table in ("LOCAL.MEMORIES", "CORE.MEMORIES"):
@@ -450,7 +469,9 @@ class MockCursor:
 
         # INSERT
         if sql_upper.lstrip().startswith("INSERT"):
-            if table == "meta":
+            if table == "document_context":
+                self._handle_document_context_insert(sql_norm, params)
+            elif table == "meta":
                 self._handle_meta_insert(sql_norm, params)
             elif table == "vault":
                 self._handle_vault_insert(sql_norm, params)
@@ -469,7 +490,9 @@ class MockCursor:
 
         # DELETE
         if sql_upper.lstrip().startswith("DELETE"):
-            if table == "vault":
+            if table == "document_context":
+                self._handle_document_context_delete(sql_norm, params)
+            elif table == "vault":
                 self._handle_vault_delete(sql_norm, params)
             elif table == "memory_chunks":
                 self.rowcount = 0
@@ -481,7 +504,9 @@ class MockCursor:
 
         # SELECT
         if sql_upper.lstrip().startswith("SELECT"):
-            if table == "meta":
+            if table == "document_context":
+                self._handle_document_context_select(sql_norm, params)
+            elif table == "meta":
                 self._handle_meta_select(sql_norm, params)
             elif table in ("vault",):
                 self._handle_vault_select(sql_norm, params)
@@ -647,6 +672,44 @@ class MockCursor:
         self._rows = []
 
     # ── Meta handlers ────────────────────────────────────────────────
+
+    # ── obsidian.document_context handlers ─────────────────────────────
+
+    def _handle_document_context_insert(self, sql, params):
+        """INSERT INTO obsidian.document_context ... ON CONFLICT DO UPDATE."""
+        parent_file, summary, content_hash, model = (list(params) + [None] * 4)[:4]
+        self.db.upsert_document_context(parent_file, summary, content_hash, model)
+        self.rowcount = 1
+        self._description = None
+        self._rows = []
+
+    def _handle_document_context_delete(self, sql, params):
+        """DELETE FROM obsidian.document_context WHERE parent_file = ANY(%s)."""
+        wanted = params[0] if params else []
+        if isinstance(wanted, (str, bytes)):
+            wanted = [wanted]
+        removed = 0
+        for key in list(self.db.document_context_rows):
+            if not wanted or key in set(wanted):
+                del self.db.document_context_rows[key]
+                removed += 1
+        self.rowcount = removed
+        self._description = None
+        self._rows = []
+
+    def _handle_document_context_select(self, sql, params):
+        """SELECT parent_file, summary, content_hash ... WHERE parent_file = ANY(%s)."""
+        wanted = params[0] if params else []
+        if isinstance(wanted, (str, bytes)):
+            wanted = [wanted]
+        self._description = [
+            _Col("parent_file"), _Col("summary"), _Col("content_hash")
+        ]
+        self._rows = [
+            (row["parent_file"], row["summary"], row["content_hash"])
+            for key, row in self.db.document_context_rows.items()
+            if not wanted or key in set(wanted)
+        ]
 
     def _handle_meta_insert(self, sql, params):
         """INSERT INTO core.meta (key, value) VALUES (%s, %s) ON CONFLICT DO UPDATE."""
@@ -1385,6 +1448,29 @@ def no_config(mock_config):
     """No config file exists."""
     mock_config.delete_file()
     return mock_config
+
+
+@pytest.fixture(autouse=True)
+def no_real_llm_calls(monkeypatch):
+    """Hermeticity guard: no test may reach a real LLM.
+
+    ``claude`` is on PATH on developer machines, so anything that reaches
+    ``_call_haiku_raw`` would spawn real ``claude -p`` subprocesses (network,
+    credits, 30s timeouts). Stubbing the single lowest-level call keeps the
+    surrounding degradation logic under test: a None response is exactly what an
+    unreachable backend produces.
+
+    Indexing no longer generates summaries at all (generation lives in
+    bin/generate_summaries.py), so this mainly guards the generator tests and
+    conflict verification. Tests that WANT generation override it (monkeypatch
+    inside the test wins) or inject a ``generator`` / patch
+    ``generate_document_summary``.
+    """
+    import tools.conflict as conflict_module
+
+    monkeypatch.setattr(
+        conflict_module, "_call_haiku_raw", lambda *args, **kwargs: None
+    )
 
 
 @pytest.fixture(autouse=True)

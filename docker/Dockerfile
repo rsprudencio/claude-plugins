@@ -17,11 +17,16 @@ WORKDIR /build
 # Retrieval inference is host-only. Keep the image free of model runtimes and weights.
 # Core: mcp, numpy, psycopg, pgvector
 # Todoist: todoist-api-python
+# anthropic: Haiku backend for conflict verification and, via
+#   bin/generate_summaries.py, contextual document summaries. Without it an
+#   ANTHROPIC_API_KEY in the container is useless — the SDK import fails per
+#   call. Small pure-Python package; no model runtime or weights.
 RUN uv pip install --system --no-cache \
     "mcp>=1.0.0" \
     "numpy>=1.26.0" \
     "psycopg[pool]>=3.1.0" \
     "pgvector>=0.3.0" \
+    "anthropic>=0.40.0" \
     "todoist-api-python>=3.0.0" \
     "requests>=2.31.0" \
     "boto3>=1.34.0" \

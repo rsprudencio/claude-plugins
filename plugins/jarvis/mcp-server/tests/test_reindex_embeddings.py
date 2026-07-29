@@ -205,3 +205,133 @@ def test_obsidian_staging_embeds_context_augmented_text(monkeypatch):
     # Staging stores only ids + vectors — raw text is never modified anywhere.
     sql = " ".join(str(c.args[0]) for c in conn.execute.call_args_list)
     assert "UPDATE obsidian.documents" not in sql
+
+
+# ── Achieved augmentation state ───────────────────────────────────────
+#
+# This script READS the summary cache and never generates. With an empty cache
+# it therefore re-embeds mechanically — and it used to then stamp local.meta
+# with the CONFIGURED mode ('summary'), disarming check_model_consistency
+# forever. The startup warning even recommended running it, so following the
+# code's own advice permanently hid the fact that the feature was inert.
+
+
+def _obsidian_conn(rows, summary_rows):
+    conn = MagicMock()
+    select_cursor = MagicMock()
+    select_cursor.fetchall.return_value = rows
+    summary_cursor = MagicMock()
+    summary_cursor.fetchall.return_value = summary_rows
+
+    def execute(sql, params=None, *args, **kwargs):
+        normalized = " ".join(str(sql).split()).lower()
+        if "from obsidian.document_context" in normalized:
+            return summary_cursor
+        if "select id, document" in normalized:
+            return select_cursor
+        return MagicMock()
+
+    conn.execute.side_effect = execute
+    return conn
+
+
+def _stage_obsidian(monkeypatch, summary_rows):
+    import tools.config as config
+
+    monkeypatch.setattr(config, "get_contextual_augmentation_mode", lambda: "summary")
+    monkeypatch.setattr(
+        config, "get_contextual_summaries_config",
+        lambda: {"enabled": True, "max_chars": 200},
+    )
+    rows = [
+        ("vault::notes/a.md#chunk-0", "frag a", "A", "S", 3, "notes/a.md"),
+        ("vault::notes/b.md#chunk-0", "frag b", "B", "S", 2, "notes/b.md"),
+        ("vault::notes/whole.md", "whole", "W", "", 1, "notes/whole.md"),
+    ]
+    conn = _obsidian_conn(rows, summary_rows)
+    service = MagicMock()
+    service.encode_batch.side_effect = lambda texts, batch_size=16: [
+        [0.0] * 384 for _ in texts
+    ]
+    coverage = {}
+    stage_store(
+        conn, STORES["obsidian"], service, dimensions=384, batch_size=16,
+        coverage=coverage,
+    )
+    return coverage
+
+
+def test_stage_store_counts_summary_coverage_per_file(monkeypatch):
+    coverage = _stage_obsidian(
+        monkeypatch,
+        [("notes/a.md", "A situating sentence naming Igor as manager.", "h")],
+    )
+    # Whole-document rows are never augmented, so they are not candidates.
+    assert coverage["chunked_files"] == {"notes/a.md", "notes/b.md"}
+    assert coverage["files_with_summary"] == {"notes/a.md"}
+
+
+def test_stage_store_reports_zero_coverage_for_an_empty_cache(monkeypatch):
+    coverage = _stage_obsidian(monkeypatch, [])
+    assert coverage["chunked_files"] == {"notes/a.md", "notes/b.md"}
+    assert coverage.get("files_with_summary", set()) == set()
+
+
+def test_stage_store_coverage_is_optional(monkeypatch):
+    """Callers that do not care (and the byte-identity test) must still work."""
+    import tools.config as config
+
+    monkeypatch.setattr(config, "get_contextual_augmentation_mode", lambda: "summary")
+    rows = [("vault::notes/a.md#chunk-0", "frag", "A", "S", 3, "notes/a.md")]
+    conn = _obsidian_conn(rows, [])
+    service = MagicMock()
+    service.encode_batch.side_effect = lambda texts, batch_size=16: [
+        [0.0] * 384 for _ in texts
+    ]
+    assert stage_store(
+        conn, STORES["obsidian"], service, dimensions=384, batch_size=16
+    ) == 1
+
+
+def test_apply_staged_records_the_supplied_state_not_the_config(monkeypatch):
+    """The honest-identity fix, at the SQL boundary."""
+    import json
+
+    import tools.config as config
+
+    monkeypatch.setattr(config, "get_contextual_augmentation_mode", lambda: "summary")
+
+    conn = MagicMock()
+    counts = iter([1, 1, 0])  # live count, staged count, other-store count
+
+    def execute(sql, params=None, *args, **kwargs):
+        normalized = " ".join(str(sql).split()).lower()
+        cursor = MagicMock()
+        if "select count(*)" in normalized:
+            cursor.fetchone.return_value = (next(counts),)
+        cursor.rowcount = 1
+        return cursor
+
+    conn.execute.side_effect = execute
+    conn.transaction.return_value = MagicMock(
+        __enter__=lambda self: self, __exit__=lambda self, *a: False
+    )
+
+    apply_staged(
+        conn, [(STORES["obsidian"], 1)],
+        model_identity="m", dimensions=384, backend="mock",
+        contextual_state="mechanical",
+        contextual_coverage={"chunked_files": 12, "files_with_summary": 0},
+    )
+    payloads = [
+        json.loads(call.args[1][0])
+        for call in conn.execute.call_args_list
+        if call.args and len(call.args) > 1 and call.args[1]
+        and "embedding_config" in " ".join(str(call.args[0]).split())
+    ]
+    assert payloads, "embedding_config was never recorded"
+    record = payloads[-1]
+    assert record["contextual_chunks"] == "mechanical"
+    assert record["contextual_coverage"] == {
+        "chunked_files": 12, "files_with_summary": 0,
+    }

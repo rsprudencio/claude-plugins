@@ -999,6 +999,37 @@ _REINDEX_REMEDY = (
 )
 
 
+def _augmentation_remedy(target_mode: str) -> str:
+    """The remediation that can actually reach ``target_mode``.
+
+    This text used to name ``bin/reindex_embeddings.py`` for every case. That
+    script reads the summary cache and NEVER generates, so for a summary-mode
+    target with an empty cache it re-embeds everything mechanically and then
+    relabels local.meta as 'summary' — disarming the very warning that sent the
+    operator there. Reaching a summary space is inherently TWO steps: fill the
+    cache out of band, then re-embed.
+    """
+    from .chunk_context import MODE_SUMMARY
+
+    if target_mode == MODE_SUMMARY:
+        return (
+            "Reaching 'summary' mode takes TWO steps, in this order: "
+            "(1) generate the per-file summaries out of band — "
+            "bin/generate_summaries.py (Docker: docker exec -e ANTHROPIC_API_KEY "
+            "-w /app/jarvis-core <container> python bin/generate_summaries.py); "
+            "(2) re-embed with jarvis_index_vault(force=true). Step 2 alone "
+            "(or bin/reindex_embeddings.py, which only READS the summary cache) "
+            "cannot produce a summary-mode space. To stay mechanical instead, "
+            "set memory.chunking.contextual_summaries.enabled=false and re-embed."
+        )
+    return (
+        "Re-embed with jarvis_index_vault(force=true) or "
+        "bin/reindex_embeddings.py --store all (or restore "
+        "memory.chunking.contextual_embeddings / "
+        "memory.chunking.contextual_summaries.enabled to match the stored space)."
+    )
+
+
 def check_model_consistency() -> None:
     """Verify embedding config matches what's stored in local.meta.
 
@@ -1010,7 +1041,9 @@ def check_model_consistency() -> None:
         logger.info("Model consistency check skipped (JARVIS_SKIP_MODEL_CHECK=1)")
         return
 
-    from .chunk_context import normalize_augmentation_mode
+    from .chunk_context import (
+        MODE_PARTIAL_SUMMARY, MODE_SUMMARY, normalize_recorded_augmentation,
+    )
     from .config import get_contextual_augmentation_mode, get_embedding_config
     from .embedding import get_embedding_model_identity
 
@@ -1062,16 +1095,28 @@ def check_model_consistency() -> None:
     # WARN rather than refuse — the degradation is gradual ranking skew, not
     # garbage, and refusing would take the embedded PostgreSQL down with the
     # server, leaving no way to run the reindex.
-    stored_contextual = normalize_augmentation_mode(
+    stored_contextual = normalize_recorded_augmentation(
         stored.get("contextual_chunks", False)
     )
+    coverage = stored.get("contextual_coverage") or {}
     if stored_contextual != contextual:
         logger.critical(
             "Chunk-context augmentation mismatch: vault vectors were indexed "
-            "in '%s' mode but config now says '%s'. Vault ranking "
-            "is skewed until re-embedded — run jarvis_index_vault(force=true) "
-            "or bin/reindex_embeddings.py --store obsidian (or restore "
-            "memory.chunking.contextual_embeddings / "
-            "memory.chunking.contextual_summaries.enabled).",
+            "in '%s' mode but config now says '%s'. Vault ranking is skewed "
+            "until re-embedded. %s",
             stored_contextual, contextual,
+            _augmentation_remedy(contextual),
+        )
+    if stored_contextual == MODE_PARTIAL_SUMMARY:
+        # Distinct from a mismatch, and NOT fixable by re-embedding alone: some
+        # chunked files carry their LLM summary and some do not, so the vault
+        # occupies two embedding spaces at once. The cache has to be filled
+        # BEFORE the re-embed or the same partial state comes straight back.
+        logger.critical(
+            "Chunk-context augmentation is PARTIAL: only %s of %s chunked vault "
+            "files were embedded with their LLM summary, so vault vectors span "
+            "two embedding spaces. %s",
+            coverage.get("files_with_summary", "?"),
+            coverage.get("chunked_files", "?"),
+            _augmentation_remedy(MODE_SUMMARY),
         )

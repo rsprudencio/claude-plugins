@@ -85,7 +85,8 @@
         "max_chars": 200,
         "body_excerpt_chars": 2000,
         "max_generations_per_run": 500,
-        "concurrency": 4
+        "concurrency": 4,
+        "timeout_seconds": 30
       }
     },
     "scoring": {

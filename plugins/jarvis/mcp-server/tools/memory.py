@@ -24,10 +24,10 @@ from .config import (
     get_chunking_config,
     get_scoring_config,
     get_memory_config,
-    get_contextual_embeddings_enabled,
+    get_contextual_augmentation_mode,
 )
 from .chunking import chunk_document
-from .chunk_context import augment_chunk_for_model
+from .chunk_context import augment_vault_row
 from .scoring import compute_importance
 from .secret_scan import scan_for_secrets
 from .namespaces import vault_id
@@ -327,7 +327,7 @@ def _split_columns_metadata(meta: dict) -> tuple:
     return columns, jsonb
 
 
-def _upsert_batch(ids: list, docs: list, metas: list) -> list:
+def _upsert_batch(ids: list, docs: list, metas: list, summaries: Optional[dict] = None) -> list:
     """Embed and upsert a batch of documents into obsidian.documents.
 
     Each row is inserted inside its own transaction/savepoint
@@ -355,24 +355,24 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> list:
     # each fragment so the bi-encoder sees the chunk's document identity, while
     # the stored `document` column (inserted below) stays byte-identical. Only
     # genuine chunks (chunk_total > 1) get a prefix; whole-document rows already
-    # begin with their own title. See tools/chunk_context.py.
-    contextual_enabled = get_contextual_embeddings_enabled()
-    embed_inputs = []
-    for doc, meta in zip(docs, metas):
-        try:
-            chunk_total = int(meta.get("chunk_total", 1) or 1)
-        except (ValueError, TypeError):
-            chunk_total = 1
-        embed_inputs.append(
-            augment_chunk_for_model(
-                doc,
-                path=meta.get("parent_file", ""),
-                title=meta.get("title", ""),
-                heading_trail=meta.get("chunk_heading", ""),
-                is_chunk=chunk_total > 1,
-                enabled=contextual_enabled,
-            )
+    # begin with their own title. In 'summary' mode the file's cached LLM
+    # sentence rides along (resolved by the caller, one lookup per batch); a
+    # file without one degrades to the mechanical prefix.
+    # See tools/chunk_context.py — the SAME entry point every other site uses.
+    mode = get_contextual_augmentation_mode()
+    summaries = summaries or {}
+    embed_inputs = [
+        augment_vault_row(
+            doc,
+            parent_file=meta.get("parent_file", ""),
+            title=meta.get("title", ""),
+            chunk_heading=meta.get("chunk_heading", ""),
+            chunk_total=meta.get("chunk_total", 1),
+            mode=mode,
+            summary=summaries.get(meta.get("parent_file", "")),
         )
+        for doc, meta in zip(docs, metas)
+    ]
     embeddings = service.encode_batch(embed_inputs)
 
     failures: list = []
@@ -443,8 +443,77 @@ def _upsert_batch(ids: list, docs: list, metas: list) -> list:
     return failures
 
 
+def _build_summary_request(relative_path: str, content: str, title: str):
+    """Build one file's summary CACHE-LOOKUP key, or None when not applicable.
+
+    Despite the name inherited from the generation era, this builds a lookup
+    key, not a work item: it carries the file's ``content_hash`` so the index
+    path can tell a valid cached summary from a stale one. Nothing here calls an
+    LLM.
+
+    Returns None when summary mode is off (so no work and no import cost is
+    incurred on the mechanical path) or when the inputs can't be assembled.
+    """
+    try:
+        from .config import get_contextual_embeddings_enabled, get_contextual_summaries_config
+        from .context_summary import build_summary_request
+
+        # Deliberately NOT gated on summary mode. In mechanical/none mode the
+        # chunks are embedded without a summary, so any cache row for this file
+        # is stale the moment the content changes — and the readers are
+        # hash-blind by design. Building the request anyway lets
+        # resolve_indexed_summaries DELETE those rows, which is what keeps the
+        # documented rollback (contextual_summaries.enabled=false) from arming
+        # the cache to serve stale sentences after the next flip back on.
+        # Only a fully disabled augmentation ('none') can skip the work: then
+        # no site consults the cache at all.
+        if not get_contextual_embeddings_enabled():
+            return None
+        return build_summary_request(
+            relative_path,
+            content,
+            title=title,
+            fmt=detect_format(relative_path),
+            config=get_contextual_summaries_config(),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not prepare contextual summary input for %s: %s",
+            relative_path, exc,
+        )
+        return None
+
+
+def _lookup_batch_summaries(requests: list):
+    """Resolve a batch's cached summaries. CACHE ONLY — never generates.
+
+    Generation used to happen right here, inline in the indexing and vault-write
+    paths. That single choice is what made the feature unshippable: it could
+    never succeed in the container, the per-run spend cap was applied per
+    10-chunk flush, configured concurrency was scoped to a flush, and every
+    ``jarvis_store`` write blocked the MCP event loop on an untimed LLM call
+    (~30 min worst case). Generation now lives ONLY in
+    ``bin/generate_summaries.py``.
+
+    Also drops cache rows that no longer describe the content being indexed —
+    see ``context_summary.resolve_indexed_summaries``. Never raises.
+
+    Returns an ``IndexSummaryResolution`` (``.summaries``, ``.requested``).
+    """
+    from .context_summary import IndexSummaryResolution, resolve_indexed_summaries
+
+    if not requests:
+        return IndexSummaryResolution()
+    try:
+        return resolve_indexed_summaries(None, requests)
+    except Exception as exc:
+        logger.warning("Contextual summary lookup failed for batch: %s", exc)
+        return IndexSummaryResolution(requested=len(requests))
+
+
 def _flush_batch(
-    batch_ids: list, batch_docs: list, batch_meta: list, errors: list
+    batch_ids: list, batch_docs: list, batch_meta: list, errors: list,
+    summaries: Optional[dict] = None,
 ) -> tuple:
     """Upsert a batch with per-row isolation and account failures honestly.
 
@@ -465,7 +534,7 @@ def _flush_batch(
     if not batch_ids:
         return 0, 0
     try:
-        row_failures = _upsert_batch(batch_ids, batch_docs, batch_meta)
+        row_failures = _upsert_batch(batch_ids, batch_docs, batch_meta, summaries)
     except Exception as batch_err:
         logger.error("Batch upsert failed: %s", batch_err)
         row_failures = [
@@ -503,22 +572,86 @@ def _flush_batch(
     return len(failed_files), chunks_failed
 
 
-def _record_contextual_meta() -> None:
-    """Stamp the current augmentation flag into the embedding-space identity.
+def resolve_achieved_augmentation(
+    chunked_files: int, files_with_summary: int, mode: Optional[str] = None
+) -> str:
+    """The augmentation state this run ACTUALLY produced, not the configured one.
+
+    Recording the config mode was a lie with teeth: a force reindex with no LLM
+    reachable embedded everything mechanically, stamped 'summary', and thereby
+    silenced the only warning that would ever have prompted another reindex. The
+    operator saw ``success: true`` and unchanged retrieval quality forever.
+
+    * configured 'none'/'mechanical' → itself (no summary can be involved).
+    * configured 'summary' →
+        - ``summary`` when EVERY chunked file was embedded with its summary
+          (vacuously true when a run had no chunked files at all — there is no
+          mechanically-augmented vault vector to be inconsistent with),
+        - ``mechanical`` when none were,
+        - ``partial-summary`` otherwise: a genuinely mixed space.
+    """
+    from .chunk_context import (
+        MODE_MECHANICAL, MODE_PARTIAL_SUMMARY, MODE_SUMMARY,
+    )
+
+    mode = mode or get_contextual_augmentation_mode()
+    if mode != MODE_SUMMARY:
+        return mode
+    if files_with_summary >= chunked_files:
+        return MODE_SUMMARY
+    if files_with_summary <= 0:
+        return MODE_MECHANICAL
+    return MODE_PARTIAL_SUMMARY
+
+
+def _count_chunked_files() -> int:
+    """Chunked vault files in the whole store (the coverage denominator).
+
+    A force reindex only sees the files it did not skip, so the recorded
+    embedding-space coverage has to be measured against the store instead.
+    Returns 0 on any failure (callers then fall back to run-local counters).
+    """
+    try:
+        row = execute_query(
+            "SELECT count(DISTINCT parent_file) AS cnt FROM obsidian.documents "
+            "WHERE chunk_total > 1 AND parent_file IS NOT NULL",
+            fetch="one",
+        )
+        return int((row or {}).get("cnt", 0) or 0)
+    except Exception as exc:
+        logger.warning("Could not count chunked vault files: %s", exc)
+        return 0
+
+
+def _record_contextual_meta(
+    chunked_files: int = 0, files_with_summary: int = 0
+) -> str:
+    """Stamp the ACHIEVED augmentation state into the embedding-space identity.
+
+    Records 'none' | 'mechanical' | 'summary' | 'partial-summary' plus the
+    coverage counts behind the verdict, so ``check_model_consistency`` can tell
+    a real summary space from a mechanical one wearing its label.
 
     Best-effort: only updates an existing local.meta record (first-run
-    recording belongs to check_model_consistency).
+    recording belongs to check_model_consistency). Returns the state it computed
+    (even if the write failed) so the caller can report it.
     """
+    achieved = resolve_achieved_augmentation(chunked_files, files_with_summary)
     try:
         from .schema import get_meta, set_meta
 
         stored = get_meta("embedding_config")
         if stored is None:
-            return
-        stored["contextual_chunks"] = bool(get_contextual_embeddings_enabled())
+            return achieved
+        stored["contextual_chunks"] = achieved
+        stored["contextual_coverage"] = {
+            "chunked_files": int(chunked_files),
+            "files_with_summary": int(files_with_summary),
+        }
         set_meta("embedding_config", stored)
     except Exception as exc:
         logger.warning("Could not record contextual_chunks in local.meta: %s", exc)
+    return achieved
 
 
 def index_vault(
@@ -583,6 +716,14 @@ def index_vault(
     batch_ids = []
     batch_docs = []
     batch_meta = []
+    # One cache-lookup key per chunked FILE in the current batch
+    # (see _lookup_batch_summaries — cache reads only, never generation).
+    batch_summary_requests = []
+    # Coverage: how many chunked files COULD carry a summary vs how many
+    # actually were embedded with one. Drives the recorded embedding-space
+    # identity, so it must count files, not chunks.
+    summary_candidates = 0
+    summaries_used = 0
 
     secret_detection_enabled = get_memory_config().get("secret_detection", True)
     secrets_skipped = 0
@@ -640,6 +781,12 @@ def index_vault(
             batch_ids.extend(ids)
             batch_docs.extend(docs)
             batch_meta.extend(metas)
+            # Only genuinely chunked files can carry a prefix, so only they need
+            # a summary — no LLM spend on whole-document rows.
+            if n_chunks > 1:
+                request = _build_summary_request(relative, content, title)
+                if request is not None:
+                    batch_summary_requests.append(request)
             files_indexed += 1
             chunks_total += n_chunks
 
@@ -649,12 +796,17 @@ def index_vault(
             # isolation lives in _upsert_batch; here we keep the counters
             # honest by backing out any files whose rows failed.
             if len(batch_ids) >= _BATCH_SIZE:
+                resolution = _lookup_batch_summaries(batch_summary_requests)
+                summary_candidates += resolution.requested
+                summaries_used += resolution.resolved
                 files_failed, chunks_failed = _flush_batch(
-                    batch_ids, batch_docs, batch_meta, errors
+                    batch_ids, batch_docs, batch_meta, errors,
+                    resolution.summaries,
                 )
                 files_indexed -= files_failed
                 chunks_total -= chunks_failed
                 batch_ids, batch_docs, batch_meta = [], [], []
+                batch_summary_requests = []
 
             # Progress every 50 files
             if files_indexed % 50 == 0:
@@ -667,8 +819,11 @@ def index_vault(
             errors.append({"file": relative, "error": str(e)})
 
     # Flush remaining
+    resolution = _lookup_batch_summaries(batch_summary_requests)
+    summary_candidates += resolution.requested
+    summaries_used += resolution.resolved
     files_failed, chunks_failed = _flush_batch(
-        batch_ids, batch_docs, batch_meta, errors
+        batch_ids, batch_docs, batch_meta, errors, resolution.summaries,
     )
     files_indexed -= files_failed
     chunks_total -= chunks_failed
@@ -681,11 +836,34 @@ def index_vault(
 
     duration = round(time.time() - start, 2)
 
-    # A clean FULL force run re-embedded every vault chunk under the current
-    # augmentation flag — record that in the embedding-space identity so the
-    # startup consistency check stops warning about a mixed space.
+    # A clean FULL force run re-embedded every vault chunk — record what it
+    # ACTUALLY produced in the embedding-space identity. Recording the config
+    # mode here is what let a summary-less reindex silence the consistency
+    # check forever.
+    contextual_mode = get_contextual_augmentation_mode()
+    achieved = resolve_achieved_augmentation(
+        summary_candidates, summaries_used, contextual_mode
+    )
     if force and not directory and not errors:
-        _record_contextual_meta()
+        # Coverage must be measured against the WHOLE store, not just the files
+        # this run touched. index_vault skips sensitive dirs (default) and
+        # secret-bearing files BEFORE the force-delete, so their previous-era
+        # rows survive; scoring the verdict on the run's own counters stamped a
+        # mixed space with a clean 'summary' label and no warning.
+        store_chunked = _count_chunked_files()
+        untouched = max(0, store_chunked - summary_candidates)
+        if untouched:
+            logger.warning(
+                "Force reindex left %d chunked vault file(s) untouched "
+                "(sensitive directories and secret-flagged files are skipped by "
+                "default); their vectors keep whatever augmentation they were "
+                "built with. Recording partial coverage — re-run with "
+                "include_sensitive=true to cover them.",
+                untouched,
+            )
+        achieved = _record_contextual_meta(
+            max(store_chunked, summary_candidates), summaries_used
+        )
 
     result = {
         "success": True,
@@ -695,7 +873,25 @@ def index_vault(
         "errors": errors,
         "duration_seconds": duration,
         "collection_total": total,
+        # Honest augmentation reporting for THIS run's files: `success: true`
+        # used to be indistinguishable between "every chunk carries its summary"
+        # and "zero summaries exist and nothing will ever tell you". On a full
+        # force run this equals the recorded whole-vault state; on a partial or
+        # incremental run it describes only the files just indexed (and
+        # local.meta is deliberately left alone).
+        "contextual_augmentation": achieved,
+        "summary_candidates": summary_candidates,
+        "summaries_used": summaries_used,
     }
+    if contextual_mode == "summary" and summaries_used < summary_candidates:
+        result["summaries_missing"] = summary_candidates - summaries_used
+        result["summary_hint"] = (
+            "Summary mode is configured but "
+            f"{summary_candidates - summaries_used} of {summary_candidates} "
+            "chunked files had no cached summary, so they were embedded with the "
+            "mechanical prefix. Run bin/generate_summaries.py, then "
+            "jarvis_index_vault(force=true)."
+        )
     if secrets_skipped:
         result["secrets_skipped"] = secrets_skipped
     return result
@@ -757,7 +953,16 @@ def index_file(relative_path: str) -> dict:
         # failures and returns them rather than raising, so a single-file
         # index must surface those explicitly instead of reporting success.
         _delete_existing_chunks(relative_path)
-        failures = _upsert_batch(ids, docs, metas)
+        # CACHE LOOKUP ONLY. Every vault write reaches here (store.py auto-index),
+        # on the MCP event loop, so an LLM call here froze /health, every other
+        # tool, and the background loops for the duration of the request.
+        summaries = {}
+        if n_chunks > 1:
+            request = _build_summary_request(relative_path, content, title)
+            summaries = _lookup_batch_summaries(
+                [request] if request else []
+            ).summaries
+        failures = _upsert_batch(ids, docs, metas, summaries)
         if failures:
             return {
                 "success": False,

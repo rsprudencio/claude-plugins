@@ -297,6 +297,10 @@ class SimulationRequest(BaseModel):
     policy: str = "cosine-only"
     cosine_threshold: float = 0.85
     bge_logit_threshold: float = -2.5
+    # Augmentation era filter ('' = all eras pooled). Mechanical-era and
+    # summary-era BGE logits come from different rerank input spaces, so a
+    # threshold swept across both is correct for neither.
+    contextual_augmentation: str = ""
 
 
 # Sort definitions per context: local (single table) vs remote (r/c JOIN aliases)
@@ -1826,7 +1830,7 @@ function renderRetrieval(s, events, filters) {
   h+='<div class="rt-split"><div class="rt-panel"><div class="detail-section-title">Events</div><table class="rt-table"><tr><th>Time</th><th>Purpose</th><th>Outcome</th><th>ANN → returned</th><th>Shadow</th></tr>';
   (events||[]).forEach(e=>{var f=e.funnel||{}; h+='<tr data-id="'+escA(e.id)+'" onclick="loadRetrievalEvent(this.dataset.id)"><td>'+esc(fmtTime(e.created_at))+'</td><td>'+esc(e.purpose)+'</td><td>'+esc(e.outcome)+'</td><td>'+esc(String(f.ann_unique||0))+' → '+esc(String(f.budget_selected!=null?f.budget_selected:(f.returned||0)))+'</td><td>'+esc(e.shadow_status||'')+'</td></tr>';});
   h+='</table></div><div id="rt-detail" class="rt-panel"><div class="empty">Select an event to inspect its funnel and candidates.</div></div></div>';
-  h+='<div class="rt-panel" style="margin-top:12px"><div class="detail-section-title">Policy simulator (read-only)</div><div class="rt-controls"><select id="sim-policy"><option>cosine-only</option><option>bge-only</option><option>coarse+bge</option><option>cosine-or-bge</option></select><label>cosine <input id="sim-cos" type="number" step="0.01" value="0.85" style="width:75px"></label><label>BGE logit <input id="sim-bge" type="number" step="0.1" value="-2.5" style="width:75px"></label><button class="mbtn" onclick="runSimulation()">Simulate</button></div><pre id="sim-result" class="detail-content">No live configuration is changed.</pre></div>';
+  h+='<div class="rt-panel" style="margin-top:12px"><div class="detail-section-title">Policy simulator (read-only)</div><div class="rt-controls"><select id="sim-policy"><option>cosine-only</option><option>bge-only</option><option>coarse+bge</option><option>cosine-or-bge</option></select><label>cosine <input id="sim-cos" type="number" step="0.01" value="0.85" style="width:75px"></label><label>BGE logit <input id="sim-bge" type="number" step="0.1" value="-2.5" style="width:75px"></label><label>era <select id="sim-era"><option value="">all (mixed)</option><option value="summary">summary</option><option value="mechanical">mechanical</option><option value="none">none</option><option value="unstamped">unstamped</option></select></label><button class="mbtn" onclick="runSimulation()">Simulate</button></div><pre id="sim-result" class="detail-content">No live configuration is changed. Pick an augmentation era before calibrating a threshold — mechanical-era and summary-era logits are not comparable.</pre></div>';
   el.innerHTML=h;
   if (rtEvent) renderRetrievalEvent();
 }
@@ -2014,7 +2018,7 @@ function saveCandidateFeedback(sel){
     })
     .catch(err=>{sel.style.borderColor='var(--red)';alert('Label save failed: '+err);});
 }
-function runSimulation(){var payload={policy:document.getElementById('sim-policy').value,cosine_threshold:Number(document.getElementById('sim-cos').value),bge_logit_threshold:Number(document.getElementById('sim-bge').value)};fetch('/api/retrieval/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json()).then(x=>{document.getElementById('sim-result').textContent=JSON.stringify(x,null,2)+'\\n\\nCopy config snippet: '+JSON.stringify(x.config_snippet);});}
+function runSimulation(){var payload={policy:document.getElementById('sim-policy').value,cosine_threshold:Number(document.getElementById('sim-cos').value),bge_logit_threshold:Number(document.getElementById('sim-bge').value),contextual_augmentation:document.getElementById('sim-era').value};fetch('/api/retrieval/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(r=>r.json()).then(x=>{var warn=x.augmentation_eras_mixed?'\\n\\nWARNING: this pool mixes augmentation eras ('+JSON.stringify(x.augmentation_eras)+'). Pick one era before trusting a threshold.':'';document.getElementById('sim-result').textContent=JSON.stringify(x,null,2)+warn+'\\n\\nCopy config snippet: '+JSON.stringify(x.config_snippet);});}
 
 var adminLoaded = false;
 var adminAutoRefresh = null;

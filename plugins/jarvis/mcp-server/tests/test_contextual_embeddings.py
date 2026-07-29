@@ -105,11 +105,11 @@ class TestIndexingEmbedAugmentation:
         assert all(not t.startswith("Document:") for t in single_inputs)
 
     def test_config_off_passthrough(self, mock_config, monkeypatch):
-        """With contextual_embeddings disabled, chunks are embedded raw."""
+        """With contextual_embeddings disabled (mode 'none'), chunks are raw."""
         cap = self._install_capture(monkeypatch)
         _write_files(mock_config)
         monkeypatch.setattr(
-            "tools.memory.get_contextual_embeddings_enabled", lambda: False
+            "tools.memory.get_contextual_augmentation_mode", lambda: "none"
         )
 
         from tools.memory import index_vault
@@ -189,7 +189,7 @@ class TestQueryRerankAugmentation:
         mock_config.set(memory={"reranking": {"enabled": True, "backend": "host"}})
         captured = self._capture_rerank(monkeypatch)
         monkeypatch.setattr(
-            "tools.query.get_contextual_embeddings_enabled", lambda: False
+            "tools.query.get_contextual_augmentation_mode", lambda: "none"
         )
 
         from tools.query import query_vault
@@ -344,3 +344,51 @@ def test_query_vault_stamps_augmentation_flag_into_telemetry(mock_config, monkey
     result = query_module.query_vault("stamping test", n_results=3)
     assert result["success"] is True
     assert captured["config_snapshot"]["contextual_embeddings"] is True
+
+
+def test_mechanical_mode_still_drops_stale_summary_rows(mock_config):
+    """H3-1: the documented rollback (contextual_summaries.enabled=false) used to
+    skip cache cleanup entirely, so an edit made while mechanical left a stale
+    row that readers — hash-blind by design — served after the next flip back on.
+    Building the request must not be gated on summary mode."""
+    import tools.memory as memory
+    from tools.config import get_contextual_augmentation_mode
+
+    mock_config.set(memory={"chunking": {
+        "enabled": True, "contextual_embeddings": True,
+        "contextual_summaries": {"enabled": False},
+    }})
+    assert get_contextual_augmentation_mode() == "mechanical"
+
+    request = memory._build_summary_request("notes/mandate.md", "fresh body", "Mandate")
+    assert request is not None, "mechanical mode must still resolve (to clean) the cache"
+    assert request.parent_file == "notes/mandate.md"
+    assert request.content_hash
+
+    # Fully disabled augmentation needs no cache work at all.
+    mock_config.set(memory={"chunking": {
+        "enabled": True, "contextual_embeddings": False,
+        "contextual_summaries": {"enabled": False},
+    }})
+    assert memory._build_summary_request("notes/mandate.md", "fresh body", "Mandate") is None
+
+
+def test_coverage_denominator_counts_the_whole_store(mock_config, monkeypatch):
+    """H2-1: index_vault skips sensitive/secret files BEFORE the force-delete, so
+    their previous-era rows survive. Scoring the verdict on the run's own
+    counters stamped a mixed space as clean 'summary' with no warning."""
+    import tools.memory as memory
+
+    captured = {}
+
+    def fake_resolve(chunked, with_summary, mode=None):
+        captured["args"] = (chunked, with_summary)
+        return "partial-summary"
+
+    monkeypatch.setattr(memory, "_count_chunked_files", lambda: 10)
+    monkeypatch.setattr(memory, "resolve_achieved_augmentation", fake_resolve)
+    monkeypatch.setattr(memory, "execute_query", lambda *a, **k: None)
+
+    state = memory._record_contextual_meta(10, 6)
+    assert captured["args"] == (10, 6)
+    assert state == "partial-summary"

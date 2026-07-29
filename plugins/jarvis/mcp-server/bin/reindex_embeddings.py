@@ -109,8 +109,19 @@ def require_maintenance_ownership(conn, specs: list[StoreSpec]) -> None:
             )
 
 
-def stage_store(conn, spec: StoreSpec, service, dimensions: int, batch_size: int) -> int:
-    """Generate a complete replacement set without modifying the live table."""
+def stage_store(
+    conn, spec: StoreSpec, service, dimensions: int, batch_size: int,
+    coverage: dict | None = None,
+) -> int:
+    """Generate a complete replacement set without modifying the live table.
+
+    ``coverage``, when supplied, accumulates the augmentation coverage this
+    staging pass ACHIEVED — ``chunked_files`` and ``files_with_summary`` as sets
+    of ``parent_file`` — so ``main`` can record the honest embedding-space
+    identity instead of restating the configured mode. This script only READS
+    the summary cache, so an empty cache produces a mechanical space; saying
+    otherwise is what previously disarmed the startup consistency check.
+    """
     conn.execute(
         f"CREATE TEMP TABLE {spec.staging_table} ("
         f"id TEXT PRIMARY KEY, embedding halfvec({dimensions}) NOT NULL"
@@ -177,21 +188,43 @@ def stage_store(conn, spec: StoreSpec, service, dimensions: int, batch_size: int
             if spec.contextual:
                 # Must mirror the live index path (tools/memory.py) — embedding
                 # the stored raw text would strip the document-context prefix.
-                from tools.chunk_context import augment_chunk_for_model
-                from tools.config import get_contextual_embeddings_enabled
+                # Summaries are READ from the cache here, never generated: a
+                # re-embed reproduces the space the index built, and generating
+                # would silently change it mid-migration.
+                from tools.chunk_context import augment_vault_row
+                from tools.config import get_contextual_augmentation_mode
+                from tools.context_summary import fetch_document_summaries
 
-                contextual_enabled = get_contextual_embeddings_enabled()
+                contextual_mode = get_contextual_augmentation_mode()
+                summaries = fetch_document_summaries(
+                    [row[5] or "" for row in batch], conn=conn
+                )
                 embed_inputs = [
-                    augment_chunk_for_model(
+                    augment_vault_row(
                         row[1],
-                        path=row[5] or "",
+                        parent_file=row[5] or "",
                         title=row[2] or "",
-                        heading_trail=row[3] or "",
-                        is_chunk=int(row[4] or 1) > 1,
-                        enabled=contextual_enabled,
+                        chunk_heading=row[3] or "",
+                        chunk_total=row[4],
+                        mode=contextual_mode,
+                        summary=summaries.get(row[5] or ""),
                     )
                     for row in batch
                 ]
+                if coverage is not None:
+                    for row in batch:
+                        parent_file = row[5] or ""
+                        try:
+                            is_chunk = int(row[4] or 1) > 1
+                        except (TypeError, ValueError):
+                            is_chunk = False
+                        if not parent_file or not is_chunk:
+                            continue
+                        coverage.setdefault("chunked_files", set()).add(parent_file)
+                        if summaries.get(parent_file):
+                            coverage.setdefault(
+                                "files_with_summary", set()
+                            ).add(parent_file)
             else:
                 embed_inputs = [row[1] for row in batch]
             embeddings = service.encode_batch(embed_inputs, batch_size=batch_size)
@@ -216,8 +249,15 @@ def apply_staged(
     model_identity: str,
     dimensions: int,
     backend: str,
+    contextual_state: str | None = None,
+    contextual_coverage: dict | None = None,
 ) -> dict[str, int]:
-    """Atomically replace live vectors while preserving ``updated_at`` values."""
+    """Atomically replace live vectors while preserving ``updated_at`` values.
+
+    ``contextual_state`` is the augmentation state the staging pass ACHIEVED
+    (see ``stage_store``'s ``coverage``); it falls back to the configured mode
+    only when the caller has nothing better, e.g. a non-contextual store.
+    """
     applied: dict[str, int] = {}
     with conn.transaction():
         for spec, expected_count in staged:
@@ -291,22 +331,29 @@ def apply_staged(
                 ", ".join(stale_stores),
             )
         else:
-            from tools.config import get_contextual_embeddings_enabled
+            from tools.config import get_contextual_augmentation_mode
 
+            record = {
+                "model": model_identity,
+                "dimensions": dimensions,
+                "vector_type": "halfvec",
+                "backend": backend,
+                # The ACHIEVED state, not a restatement of config: 'mechanical',
+                # 'summary' and 'partial-summary' are different embedding spaces,
+                # and this script cannot generate the summaries that would make
+                # 'summary' true.
+                "contextual_chunks": (
+                    contextual_state or get_contextual_augmentation_mode()
+                ),
+            }
+            if contextual_coverage is not None:
+                record["contextual_coverage"] = contextual_coverage
             conn.execute(
                 """INSERT INTO local.meta (key, value)
                    VALUES ('embedding_config', %s::jsonb)
                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
                 (
-                    json.dumps(
-                        {
-                            "model": model_identity,
-                            "dimensions": dimensions,
-                            "vector_type": "halfvec",
-                            "backend": backend,
-                            "contextual_chunks": bool(get_contextual_embeddings_enabled()),
-                        }
-                    ),
+                    json.dumps(record),
                 ),
             )
     return applied
@@ -330,7 +377,10 @@ def main() -> int:
         format="%(levelname)s: %(message)s",
     )
 
-    from tools.config import get_embedding_config, get_postgres_config
+    from tools.config import (
+        get_contextual_augmentation_mode, get_embedding_config,
+        get_postgres_config,
+    )
     from tools.embedding import get_embedding_model_identity, get_embedding_service
 
     pg_url = args.pg_url or os.environ.get("POSTGRES_URL") or get_postgres_config()["url"]
@@ -357,6 +407,7 @@ def main() -> int:
         require_maintenance_ownership(conn, specs)
         conn.commit()
 
+        coverage: dict = {}
         staged = [
             (
                 spec,
@@ -366,16 +417,44 @@ def main() -> int:
                     service,
                     dimensions=service.dimensions,
                     batch_size=args.batch_size,
+                    coverage=coverage,
                 ),
             )
             for spec in specs
         ]
+        # Honest augmentation state: this script READS the summary cache, so an
+        # empty cache means a mechanical space no matter what config says.
+        from tools.memory import resolve_achieved_augmentation
+
+        chunked_files = len(coverage.get("chunked_files", set()))
+        files_with_summary = len(coverage.get("files_with_summary", set()))
+        contextual_state = None
+        contextual_coverage = None
+        if any(spec.contextual for spec in specs):
+            contextual_state = resolve_achieved_augmentation(
+                chunked_files, files_with_summary
+            )
+            contextual_coverage = {
+                "chunked_files": chunked_files,
+                "files_with_summary": files_with_summary,
+            }
+            if contextual_state != get_contextual_augmentation_mode():
+                logger.warning(
+                    "Augmentation coverage: %d/%d chunked vault files had a "
+                    "cached summary, so the re-embedded space is '%s' (config "
+                    "says '%s'). This script never generates summaries — run "
+                    "bin/generate_summaries.py first, then re-embed.",
+                    files_with_summary, chunked_files, contextual_state,
+                    get_contextual_augmentation_mode(),
+                )
         applied = apply_staged(
             conn,
             staged,
             model_identity=model_identity,
             dimensions=service.dimensions,
             backend=service.backend,
+            contextual_state=contextual_state,
+            contextual_coverage=contextual_coverage,
         )
         result = {
             "success": True,
@@ -385,6 +464,9 @@ def main() -> int:
             "rows": applied,
             "duration_seconds": round(time.perf_counter() - started, 3),
         }
+        if contextual_state is not None:
+            result["contextual_augmentation"] = contextual_state
+            result["summary_coverage"] = contextual_coverage
         print(json.dumps(result, sort_keys=True))
         return 0
     finally:

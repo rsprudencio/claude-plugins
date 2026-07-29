@@ -362,6 +362,19 @@
       "jarvis_collection_stats": {
         "purpose": "Memory system health: document count, sample entries, index status",
         "params": ["sample_size", "detailed"]
+      },
+      "contextual_summaries_workflow": {
+        "_note": "Generation is OUT OF BAND. Indexing, vault writes, and retrieval only READ the summary cache (obsidian.document_context) — no runtime path ever calls an LLM.",
+        "operator_sequence": [
+          "1. bin/generate_summaries.py  — fill the per-file summary cache (needs an LLM: the OAuth 'claude' CLI on the host, or ANTHROPIC_API_KEY in the container)",
+          "2. jarvis_index_vault(force=true)  — embed the summaries into vault chunk vectors"
+        ],
+        "host_example": "cd plugins/jarvis/mcp-server && uv run python bin/generate_summaries.py --vault ~/my-vault --limit 200 --concurrency 4",
+        "docker_example": "docker exec -e ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\" -w /app/jarvis-core <container> python bin/generate_summaries.py --limit 200",
+        "flags": ["--pg-url", "--vault", "--limit", "--concurrency", "--timeout", "--force", "--only", "--dry-run", "--verbose"],
+        "idempotent": "Files whose cached content_hash still matches are skipped without an LLM call; --limit defers the remainder to the next run.",
+        "verification": "jarvis_index_vault reports contextual_augmentation ('summary' | 'partial-summary' | 'mechanical'), summary_candidates and summaries_used. Anything other than 'summary' means step 1 has not fully landed, and the startup consistency check says so on every boot.",
+        "note": "bin/reindex_embeddings.py only READS the cache — it can never produce a summary-mode space on its own."
       }
     },
 
@@ -612,7 +625,9 @@
       "enabled": { "type": "boolean", "default": true, "description": "Enable markdown heading-based chunking for per-section embeddings" },
       "min_chunk_chars": { "type": "integer", "default": 200, "description": "Minimum chunk size before merging with adjacent chunk" },
       "max_chunk_chars": { "type": "integer", "default": 1500, "description": "Maximum chunk size before paragraph splitting" },
-      "heading_levels": { "type": "array", "default": [2, 3], "description": "Which heading levels to split on" }
+      "heading_levels": { "type": "array", "default": [2, 3], "description": "Which heading levels to split on" },
+      "contextual_embeddings": { "type": "boolean", "default": true, "description": "Prepend a 'Document: <path> — <title> › <heading>' prefix when embedding/reranking fragments (stored text unchanged). Rollback switch; changing it requires jarvis_index_vault(force=true)" },
+      "contextual_summaries": { "type": "object", "description": "One LLM-written situating sentence per FILE, cached in obsidian.document_context and added to the prefix so relational queries ('goals my manager Igor gave me') can match. Keys: enabled, model, max_chars (bounds generation AND the prefix line), body_excerpt_chars, max_generations_per_run, concurrency, timeout_seconds. Generation is OUT OF BAND — run bin/generate_summaries.py, then jarvis_index_vault(force=true); the cap/concurrency/timeout keys are that script's defaults. Changing 'enabled' changes the embedding space" }
     },
 
     "memory_scoring": {

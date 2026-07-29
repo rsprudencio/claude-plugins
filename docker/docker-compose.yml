@@ -28,6 +28,10 @@ services:
       # Set POSTGRES_URL for external PG (team deployments)
       - POSTGRES_URL=${POSTGRES_URL:-}
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      # Haiku backend. Only needed to run bin/generate_summaries.py in-container
+      # (docker exec ... python bin/generate_summaries.py) and for conflict
+      # verification; no runtime path calls an LLM.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - JARVIS_AUTOCRLF=${JARVIS_AUTOCRLF:-false}
       - JARVIS_INTERNAL_TOKEN=${JARVIS_INTERNAL_TOKEN:-}
       # Native inference runs on the host; the image contains no model runtime or weights.

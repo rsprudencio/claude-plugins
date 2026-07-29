@@ -52,3 +52,46 @@ def test_retrieval_event_documents_route(monkeypatch):
 
     client.get("/api/retrieval/events/t1/documents?candidate_key=abc123")
     assert captured["candidate_key"] == "abc123"
+
+
+def test_simulator_passes_the_augmentation_era_filter(monkeypatch):
+    """Phase-2 calibration must be able to restrict the pool to one augmentation
+    era: mechanical-era and summary-era BGE logits are not comparable (the same
+    chunk scored -8.16 and +0.03), so a threshold swept across both is correct
+    for neither."""
+    seen = {}
+    monkeypatch.setattr(
+        telemetry, "simulate_policy",
+        lambda payload: seen.update(payload) or {"policy": payload["policy"]},
+    )
+    client = TestClient(app_module.app)
+
+    client.post(
+        "/api/retrieval/simulate",
+        json={"policy": "bge-only", "contextual_augmentation": "summary"},
+    )
+    assert seen["contextual_augmentation"] == "summary"
+
+    # Absent means "all eras pooled" — and the caller can see that in the reply.
+    seen.clear()
+    client.post("/api/retrieval/simulate", json={"policy": "bge-only"})
+    assert seen["contextual_augmentation"] == ""
+
+
+def test_simulator_rejects_an_invalid_era(monkeypatch):
+    def boom(payload):
+        raise ValueError("invalid contextual_augmentation filter")
+
+    monkeypatch.setattr(telemetry, "simulate_policy", boom)
+    response = TestClient(app_module.app).post(
+        "/api/retrieval/simulate",
+        json={"policy": "bge-only", "contextual_augmentation": "bogus"},
+    )
+    assert response.status_code == 400
+
+
+def test_simulator_ui_exposes_the_era_selector():
+    response = TestClient(app_module.app).get("/")
+    assert 'id="sim-era"' in response.text
+    assert 'value="summary"' in response.text
+    assert "augmentation_eras_mixed" in response.text

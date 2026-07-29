@@ -21,9 +21,10 @@ from .paths import get_path, SENSITIVE_PATHS
 from .namespaces import parse_id, ALL_TYPES, schema_for_id, SCHEMA_LOCAL, SCHEMA_OBSIDIAN
 from .expansion import expand_query as _expand_query
 from .config import (
-    get_context_enrichment_config, get_contextual_embeddings_enabled,
-    get_decay_config, get_expansion_config, get_lexical_config,
-    get_ranking_config, get_reranking_config, get_staleness_config,
+    get_context_enrichment_config, get_contextual_augmentation_mode,
+    get_contextual_embeddings_enabled, get_decay_config, get_expansion_config,
+    get_lexical_config, get_ranking_config, get_reranking_config,
+    get_staleness_config,
 )
 from .format_support import detect_format
 from .ranking import DEFAULT_IMPORTANCE_WEIGHT, compute_unified_score, score_memory
@@ -38,33 +39,56 @@ _QUERY_WINDOW_TOKENS = 2048
 _QUERY_WINDOW_OVERLAP = 128
 
 
-def _rerank_doc_text(entry: dict, enabled: bool) -> str:
+def _rerank_doc_text(entry: dict, mode: str, summaries: Optional[dict] = None) -> str:
     """Return the text to hand the reranker for one candidate entry.
 
     The cross-encoder must see exactly what the embedder saw, so vault (obsidian)
     fragments are augmented with the same document-context prefix used at index
-    time (see tools/chunk_context.py). The entry's stored ``document`` is left
-    untouched — only this returned copy carries the prefix. Local memories are
-    never augmented (their embed path isn't either), so live and shadow scores
-    stay consistent per schema.
+    time — including the file's cached LLM summary in 'summary' mode (see
+    tools/chunk_context.py and tools/context_summary.py). The entry's stored
+    ``document`` is left untouched — only this returned copy carries the prefix.
+    Local memories are never augmented (their embed path isn't either), so live
+    and shadow scores stay consistent per schema.
+
+    ``summaries`` is the batch cache lookup from ``_rerank_summaries`` — one
+    query per rerank batch, never per row, and never a generation.
     """
-    from .chunk_context import augment_chunk_for_model
+    from .chunk_context import MODE_NONE, augment_vault_row
 
     document = entry.get("document") or ""
     meta = entry.get("metadata", {}) or {}
-    is_vault = entry.get("_schema") == "obsidian"
-    try:
-        chunk_total = int(meta.get("chunk_total", 1) or 1)
-    except (ValueError, TypeError):
-        chunk_total = 1
-    return augment_chunk_for_model(
+    if entry.get("_schema") != "obsidian":
+        return document
+    parent_file = entry.get("parent_file") or meta.get("parent_file", "")
+    return augment_vault_row(
         document,
-        path=entry.get("parent_file") or meta.get("parent_file", ""),
+        parent_file=parent_file,
         title=meta.get("title", ""),
-        heading_trail=meta.get("chunk_heading", ""),
-        is_chunk=is_vault and chunk_total > 1,
-        enabled=enabled,
+        chunk_heading=meta.get("chunk_heading", ""),
+        chunk_total=meta.get("chunk_total", 1),
+        mode=mode,
+        summary=(summaries or {}).get(parent_file),
     )
+
+
+def _rerank_summaries(entries: list) -> dict:
+    """Batched, read-only summary lookup for one rerank batch.
+
+    Collects the vault fragments' parent files and resolves their cached
+    summaries in a single query. Returns ``{}`` outside 'summary' mode or on any
+    failure — the rerank text then falls back to the mechanical prefix.
+    """
+    try:
+        from .context_summary import fetch_document_summaries
+
+        parent_files = {
+            entry.get("parent_file") or (entry.get("metadata") or {}).get("parent_file", "")
+            for entry in entries
+            if entry.get("_schema") == "obsidian"
+        }
+        return fetch_document_summaries([f for f in parent_files if f])
+    except Exception:
+        return {}
 
 
 def _record_empty_trace(
@@ -1418,8 +1442,11 @@ def query_vault(
         deduped_list = sorted(
             best_per_file.values(), key=lambda e: e["relevance"], reverse=True
         )
-        contextual_enabled = get_contextual_embeddings_enabled()
-        docs = [_rerank_doc_text(e, contextual_enabled) for e in deduped_list]
+        contextual_mode = get_contextual_augmentation_mode()
+        batch_summaries = _rerank_summaries(deduped_list)
+        docs = [
+            _rerank_doc_text(e, contextual_mode, batch_summaries) for e in deduped_list
+        ]
         vscores = [e["relevance"] for e in deduped_list]
         query_texts = [e.get("_query_window", query) for e in deduped_list]
         clear_last_rerank_result()
@@ -1594,7 +1621,11 @@ def query_vault(
                 "n_results": n_results,
                 "reranking_enabled": bool(reranking_config.get("enabled")),
                 "reranking_alpha": reranking_config.get("alpha"),
+                # Both keys: the boolean stays for pre-3.6 readers, the mode is
+                # what shadow scoring's augmentation-identity guard compares
+                # (mechanical and summary are different embedding spaces).
                 "contextual_embeddings": get_contextual_embeddings_enabled(),
+                "contextual_augmentation": get_contextual_augmentation_mode(),
                 "schemas": schemas or ["all"],
             },
             shadow_eligible=telemetry_user_facing,
@@ -1942,8 +1973,11 @@ def semantic_context(
         candidates = sorted(
             best_per_file.values(), key=lambda e: e["relevance"], reverse=True
         )
-        contextual_enabled = get_contextual_embeddings_enabled()
-        docs = [_rerank_doc_text(e, contextual_enabled) for e in candidates]
+        contextual_mode = get_contextual_augmentation_mode()
+        batch_summaries = _rerank_summaries(candidates)
+        docs = [
+            _rerank_doc_text(e, contextual_mode, batch_summaries) for e in candidates
+        ]
         vscores = [e["relevance"] for e in candidates]
         query_texts = [e.get("_query_window", query) for e in candidates]
         clear_last_rerank_result()
@@ -2270,7 +2304,11 @@ def semantic_context(
                 "max_results": max_results,
                 "reranking_enabled": bool(reranking_config.get("enabled")),
                 "reranking_alpha": reranking_config.get("alpha"),
+                # Both keys: the boolean stays for pre-3.6 readers, the mode is
+                # what shadow scoring's augmentation-identity guard compares
+                # (mechanical and summary are different embedding spaces).
                 "contextual_embeddings": get_contextual_embeddings_enabled(),
+                "contextual_augmentation": get_contextual_augmentation_mode(),
                 "schemas": schemas or ["all"],
             },
         )

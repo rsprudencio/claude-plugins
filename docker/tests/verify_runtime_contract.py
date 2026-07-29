@@ -118,12 +118,26 @@ def verify_host_only_image() -> None:
     assert not os.path.exists("/app/models"), "in-container model directory found"
 
 
+def verify_llm_backend_importable() -> None:
+    """`anthropic` must be present so an ANTHROPIC_API_KEY is actually usable.
+
+    The image previously shipped without it, so a key in the container produced
+    one failed `import anthropic` per file — hundreds of warnings and zero
+    summaries. bin/generate_summaries.py in-container depends on this.
+    """
+    assert importlib.util.find_spec("anthropic"), (
+        "anthropic SDK missing: ANTHROPIC_API_KEY would be unusable and "
+        "bin/generate_summaries.py could not run in-container"
+    )
+
+
 def main() -> int:
     import requests  # Direct Jarvis dependency; must be explicit in the image.
 
     verify_todoist_surface()
     verify_app_imports()
     verify_host_only_image()
+    verify_llm_backend_importable()
     print(
         json.dumps(
             {

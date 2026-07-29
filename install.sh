@@ -605,6 +605,11 @@ services:
       - JARVIS_HOME=/config
       - JARVIS_VAULT_PATH=/vault
       - TODOIST_API_TOKEN=\${TODOIST_API_TOKEN:-}
+      # Optional: lets you generate contextual document summaries in-container
+      #   docker exec -w /app/jarvis-core <container> python bin/generate_summaries.py
+      # No runtime path calls an LLM; leave it empty to generate on the host with
+      # the OAuth 'claude' CLI instead.
+      - ANTHROPIC_API_KEY=\${ANTHROPIC_API_KEY:-}
       - AURORA_PASSWORD=\${AURORA_PASSWORD:-}
     stop_grace_period: 30s
     restart: unless-stopped

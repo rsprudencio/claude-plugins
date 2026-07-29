@@ -247,15 +247,36 @@ Return {{"contradicted": []}} if none are contradicted.
 DEFAULT_HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 
+def anthropic_sdk_available() -> bool:
+    """Whether ``import anthropic`` would actually succeed in this process.
+
+    An API key alone is NOT a usable backend: the shipped Docker image had the
+    key plumbed but no ``anthropic`` package, so an availability probe that
+    trusted the env var returned True and then failed once per file — hundreds
+    of warnings and zero results. ``find_spec`` answers the real question
+    without paying the import.
+    """
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("anthropic") is not None
+    except Exception:
+        return False
+
+
 def haiku_available() -> bool:
     """Whether either Haiku backend could plausibly run in this process.
 
-    Mirrors the prerequisite logic of the hooks-handlers extraction pipeline
-    (``ANTHROPIC_API_KEY`` for the SDK path, a ``claude`` binary for the CLI
-    path). Callers use this to decide ONCE per run whether to attempt LLM work
-    at all, instead of paying a failed call per item.
+    Mirrors the prerequisite logic of the hooks-handlers extraction pipeline,
+    but verifies each backend's REAL prerequisites rather than a proxy:
+
+    * SDK path — ``ANTHROPIC_API_KEY`` **and** an importable ``anthropic``.
+    * CLI path — a ``claude`` binary on PATH.
+
+    Callers use this to decide ONCE per run whether to attempt LLM work at all,
+    instead of paying a failed call per item.
     """
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if os.environ.get("ANTHROPIC_API_KEY") and anthropic_sdk_available():
         return True
     import shutil
 
@@ -276,6 +297,10 @@ def _call_haiku_raw(
     ``model`` selects the API model (the CLI path always uses its ``haiku``
     alias). Returns None on any failure — callers decide what a missing
     response means.
+
+    ``timeout`` bounds BOTH backends. It used to reach only the CLI subprocess,
+    leaving the SDK on its own defaults (10 minutes × 2 retries ≈ 30 minutes of
+    blocking for a 200-token request).
     """
     # Try Anthropic SDK first
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -283,7 +308,9 @@ def _call_haiku_raw(
         try:
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key)
+            client = anthropic.Anthropic(
+                api_key=api_key, timeout=float(timeout), max_retries=1
+            )
             response = client.messages.create(
                 model=model or DEFAULT_HAIKU_MODEL,
                 max_tokens=max_tokens,

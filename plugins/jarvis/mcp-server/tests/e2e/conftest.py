@@ -67,6 +67,7 @@ def e2e_schema(e2e_database_url):
         LOCAL_SCHEMA_SQL, OBSIDIAN_SCHEMA_SQL, LOCAL_META_SQL,
         SYNC_SCHEMA_SQL, CONSOLIDATION_SCHEMA_SQL,
         RETRIEVAL_TELEMETRY_SCHEMA_SQL, LEXICAL_SCHEMA_SQL,
+        DOCUMENT_CONTEXT_SCHEMA_SQL,
     )
 
     conn = psycopg.connect(e2e_database_url, autocommit=True)
@@ -74,6 +75,8 @@ def e2e_schema(e2e_database_url):
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute(LOCAL_SCHEMA_SQL.format(dimensions=384))
         conn.execute(OBSIDIAN_SCHEMA_SQL.format(dimensions=384))
+        # Per-file LLM summary cache (contextual summaries).
+        conn.execute(DOCUMENT_CONTEXT_SCHEMA_SQL)
         conn.execute(LOCAL_META_SQL)
         conn.execute(SYNC_SCHEMA_SQL)
         conn.execute(CONSOLIDATION_SCHEMA_SQL)
@@ -182,6 +185,18 @@ def e2e_config(e2e_schema, tmp_path, monkeypatch):
         ("mock", 384, "cpu", "mock"),
     )
 
+    # ── Hermeticity: no real LLM calls ────────────────────────────
+    # Contextual document summaries run inside the indexing path and `claude`
+    # is on PATH on developer machines; a None response is exactly what an
+    # unreachable backend produces. Tests that want generation override this.
+    import tools.conflict as conflict_module
+    import tools.context_summary as context_summary_module
+
+    monkeypatch.setattr(
+        conflict_module, "_call_haiku_raw", lambda *a, **k: None
+    )
+    context_summary_module.reset_unavailable_warning()
+
     # ── Reset pool so it connects to the e2e database ─────────────
     schema_module.reset_pool()
 
@@ -197,7 +212,8 @@ def e2e_config(e2e_schema, tmp_path, monkeypatch):
         conn = psycopg.connect(db_url, autocommit=True)
         conn.execute(
             "TRUNCATE local.memory_chunks, local.memories, obsidian.documents, "
-            "local.meta, local.sync_queue, local.retrieval_events CASCADE"
+            "obsidian.document_context, local.meta, local.sync_queue, "
+            "local.retrieval_events CASCADE"
         )
         conn.close()
     except Exception:

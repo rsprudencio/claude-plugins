@@ -228,16 +228,24 @@ def get_contextual_summaries_config() -> dict:
     prepended (after the mechanical path/title line) to every fragment of that
     file at embed and rerank time.
 
+    Generation itself is OUT OF BAND — ``bin/generate_summaries.py``. Indexing,
+    vault writes, and retrieval only ever READ the cache, so none of these keys
+    can add latency or cost to a runtime path.
+
     Keys:
         enabled: master switch. False ⇒ mechanical augmentation only.
         model: LLM used for generation (recorded alongside each cached summary).
-        max_chars: cap on the summary line inside the prefix.
+        max_chars: cap on the summary sentence — enforced at generation AND on
+            the prefix line at every augmentation site.
         body_excerpt_chars: how much of the document body the prompt may carry.
-        max_generations_per_run: hard ceiling on LLM calls per indexing run;
-            files beyond it degrade to mechanical for that run and are picked up
-            by the next one (their content_hash still misses the cache).
-        concurrency: parallel generation calls (small — this runs inside the
-            indexing path).
+        max_generations_per_run: default ceiling on LLM calls for ONE
+            ``bin/generate_summaries.py`` run (``--limit`` overrides). Files
+            beyond it keep mechanical augmentation and are picked up by the next
+            run — their content_hash still misses the cache.
+        concurrency: default parallel generation calls for that script
+            (``--concurrency`` overrides).
+        timeout_seconds: per-call wall clock for one generation
+            (``--timeout`` overrides).
 
     The nested dict is merged onto these defaults explicitly because
     ``_merge_with_defaults`` is shallow: a user who sets only ``enabled`` must
@@ -250,6 +258,7 @@ def get_contextual_summaries_config() -> dict:
         "body_excerpt_chars": 2000,
         "max_generations_per_run": 500,
         "concurrency": 4,
+        "timeout_seconds": 30,
     }
     return _merge_with_defaults(
         defaults, get_chunking_config().get("contextual_summaries", {})

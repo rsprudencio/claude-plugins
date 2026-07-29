@@ -29,9 +29,14 @@ Two augmentation modes exist, and they are DIFFERENT embedding spaces:
 ``augment_vault_row`` is the single entry point every vault augmentation site
 calls, so all four sites (index embed, both query rerank paths, shadow scorer,
 reindexer) produce byte-identical text by construction rather than by four
-copies of the same keyword plumbing.
+copies of the same keyword plumbing. That is also why the summary-line cap is
+resolved from config INSIDE ``augment_vault_row`` (``summary_max_chars=None``)
+rather than at the four call sites: a per-site keyword would be four chances to
+diverge, and four chances to forget — which is exactly how the configured
+``max_chars`` came to be ignored in favour of a hardcoded default.
 
-Everything here is pure and deterministic.
+The prefix builders (``build_chunk_context`` / ``augment_chunk_for_model``) are
+pure and deterministic. ``augment_vault_row`` is the one config-aware wrapper.
 """
 
 from __future__ import annotations
@@ -52,16 +57,27 @@ MODE_MECHANICAL = "mechanical"
 MODE_SUMMARY = "summary"
 AUGMENTATION_MODES = (MODE_NONE, MODE_MECHANICAL, MODE_SUMMARY)
 
+# A RECORDED-ONLY state: config can never resolve to it, but an indexing run
+# CAN produce it — some chunked files were embedded with their LLM summary and
+# some (no cached summary yet, or generation never ran) with the mechanical
+# prefix only. That is a genuinely mixed embedding space, and recording the
+# configured 'summary' for it is the lie that made a summary-less reindex look
+# like a success. It is deliberately absent from AUGMENTATION_MODES so it can
+# never be mistaken for a live mode by the augmentation or shadow-guard paths.
+MODE_PARTIAL_SUMMARY = "partial-summary"
+RECORDED_AUGMENTATION_STATES = AUGMENTATION_MODES + (MODE_PARTIAL_SUMMARY,)
+
 
 def normalize_augmentation_mode(value) -> str:
-    """Coerce any recorded/stamped augmentation marker to a canonical mode.
+    """Coerce any recorded/stamped augmentation marker to a canonical LIVE mode.
 
     Accepts the three canonical strings and MIGRATES the legacy boolean form
     that pre-3.6 databases and telemetry events recorded:
     ``True`` → ``"mechanical"`` (all pre-3.6 augmentation was mechanical),
-    ``False`` → ``"none"``. Anything unrecognized (including ``None``) also
-    reads as ``"none"``, which is the conservative answer: an unknown marker
-    must never be mistaken for a match against a real mode.
+    ``False`` → ``"none"``. Anything unrecognized (including ``None`` and the
+    recorded-only ``"partial-summary"``) reads as ``"none"``, which is the
+    conservative answer: an unknown marker must never be mistaken for a match
+    against a real mode.
     """
     if isinstance(value, bool):
         return MODE_MECHANICAL if value else MODE_NONE
@@ -70,6 +86,40 @@ def normalize_augmentation_mode(value) -> str:
         if candidate in AUGMENTATION_MODES:
             return candidate
     return MODE_NONE
+
+
+def normalize_recorded_augmentation(value) -> str:
+    """Like ``normalize_augmentation_mode`` but also accepts 'partial-summary'.
+
+    Used ONLY where a *recorded* embedding-space identity is read back (
+    ``local.meta.embedding_config['contextual_chunks']``), because that is the
+    one place the mixed state can legitimately appear. Keeping it out of the
+    live normalizer means a partial marker can never silently satisfy an
+    augmentation-identity comparison.
+    """
+    if isinstance(value, str) and value.strip().lower() == MODE_PARTIAL_SUMMARY:
+        return MODE_PARTIAL_SUMMARY
+    return normalize_augmentation_mode(value)
+
+
+def resolve_summary_max_chars() -> int:
+    """Configured cap for the summary line, or the shipped default.
+
+    ``memory.chunking.contextual_summaries.max_chars`` bounds BOTH generation
+    (the prompt's budget and ``clean_summary``) and the prefix line — otherwise
+    raising it spends tokens on text that every augmentation site then truncates
+    away. Fail-soft: any config problem yields the shipped default rather than
+    breaking augmentation.
+    """
+    try:
+        from .config import get_contextual_summaries_config
+
+        value = int(get_contextual_summaries_config().get(
+            "max_chars", DEFAULT_SUMMARY_MAX_CHARS
+        ) or 0)
+    except Exception:
+        return DEFAULT_SUMMARY_MAX_CHARS
+    return value if value > 0 else DEFAULT_SUMMARY_MAX_CHARS
 
 
 def _derive_title_from_path(path: str) -> str:
@@ -226,26 +276,33 @@ def augment_vault_row(
     mode: str = MODE_SUMMARY,
     summary: Optional[str] = None,
     max_chars: int = DEFAULT_MAX_CHARS,
-    summary_max_chars: int = DEFAULT_SUMMARY_MAX_CHARS,
+    summary_max_chars: Optional[int] = None,
 ) -> str:
     """Augment ONE obsidian.documents row — the shared four-site entry point.
 
     Takes the raw column values every site already has (``document``,
     ``parent_file``, ``title``, ``chunk_heading``, ``chunk_total``) plus the
     resolved augmentation ``mode`` and the file's cached ``summary``. Coercing
-    ``chunk_total`` and mapping mode → behavior HERE (rather than in four
-    call sites) is what makes index embed, both query rerank paths, the shadow
-    scorer, and the reindexer byte-identical by construction:
+    ``chunk_total``, resolving the configured summary cap, and mapping mode →
+    behavior HERE (rather than in four call sites) is what makes index embed,
+    both query rerank paths, the shadow scorer, and the reindexer byte-identical
+    by construction:
 
     * ``mode == "none"``      → stored text, unchanged.
     * ``mode == "mechanical"``→ path/title/heading prefix; ``summary`` ignored.
     * ``mode == "summary"``   → mechanical prefix + summary line when a summary
       is available; falls back to the mechanical prefix when it is not (per-file
-      degradation, e.g. an LLM failure for that one document).
+      degradation, e.g. no cached summary for that one document).
+
+    ``summary_max_chars=None`` (the default every site uses) reads the cap from
+    ``memory.chunking.contextual_summaries.max_chars``; pass an explicit int
+    only in tests that want to pin it.
     """
     mode = normalize_augmentation_mode(mode)
     if mode == MODE_NONE:
         return document or ""
+    if summary_max_chars is None:
+        summary_max_chars = resolve_summary_max_chars()
     try:
         total = int(chunk_total or 1)
     except (ValueError, TypeError):
